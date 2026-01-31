@@ -87,8 +87,33 @@ CREATE TABLE IF NOT EXISTS openclaw_sessions (
   openclaw_session_id TEXT NOT NULL,
   channel TEXT,
   status TEXT DEFAULT 'active',
+  session_type TEXT DEFAULT 'persistent',
+  task_id TEXT REFERENCES tasks(id),
+  ended_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Task activities table (for real-time activity log)
+CREATE TABLE IF NOT EXISTS task_activities (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent_id TEXT REFERENCES agents(id),
+  activity_type TEXT NOT NULL,
+  message TEXT NOT NULL,
+  metadata TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Task deliverables table (files, URLs, artifacts)
+CREATE TABLE IF NOT EXISTS task_deliverables (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  deliverable_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  path TEXT,
+  description TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Indexes for performance
@@ -97,4 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_agent_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+CREATE INDEX IF NOT EXISTS idx_activities_task ON task_activities(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_deliverables_task ON task_deliverables(task_id);
+CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_task ON openclaw_sessions(task_id);
 `;

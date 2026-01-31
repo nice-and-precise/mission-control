@@ -102,8 +102,37 @@ export interface OpenClawSession {
   openclaw_session_id: string;
   channel?: string;
   status: string;
+  session_type: 'persistent' | 'subagent';
+  task_id?: string;
+  ended_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+export type ActivityType = 'spawned' | 'updated' | 'completed' | 'file_created' | 'status_changed';
+
+export interface TaskActivity {
+  id: string;
+  task_id: string;
+  agent_id?: string;
+  activity_type: ActivityType;
+  message: string;
+  metadata?: string;
+  created_at: string;
+  // Joined fields
+  agent?: Agent;
+}
+
+export type DeliverableType = 'file' | 'url' | 'artifact';
+
+export interface TaskDeliverable {
+  id: string;
+  task_id: string;
+  deliverable_type: DeliverableType;
+  title: string;
+  path?: string;
+  description?: string;
+  created_at: string;
 }
 
 // API request/response types
@@ -171,4 +200,23 @@ export interface OpenClawHistoryMessage {
 // Agent with OpenClaw session info (extended for UI use)
 export interface AgentWithOpenClaw extends Agent {
   openclawSession?: OpenClawSession | null;
+}
+
+// Real-time SSE event types
+export type SSEEventType =
+  | 'task_updated'
+  | 'task_created'
+  | 'activity_logged'
+  | 'deliverable_added'
+  | 'agent_spawned'
+  | 'agent_completed';
+
+export interface SSEEvent {
+  type: SSEEventType;
+  payload: Task | TaskActivity | TaskDeliverable | {
+    taskId: string;
+    sessionId: string;
+    agentName?: string;
+    summary?: string;
+  };
 }

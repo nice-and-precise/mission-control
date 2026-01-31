@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
-import { queryOne, run, query } from '@/lib/db';
+import { queryOne, queryAll, run } from '@/lib/db';
 import type { Task, Agent, OpenClawSession } from '@/lib/types';
 
 /**
@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
  */
 export async function GET() {
   try {
-    const recentCompletions = query(
+    const recentCompletions = queryAll(
       `SELECT e.*, a.name as agent_name, t.title as task_title
        FROM events e
        LEFT JOIN agents a ON e.agent_id = a.id

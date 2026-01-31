@@ -14,6 +14,7 @@ export function AgentsSidebar() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [connectingAgentId, setConnectingAgentId] = useState<string | null>(null);
+  const [activeSubAgents, setActiveSubAgents] = useState(0);
 
   // Load OpenClaw session status for all agents on mount
   useEffect(() => {
@@ -36,6 +37,27 @@ export function AgentsSidebar() {
       loadOpenClawSessions();
     }
   }, [agents.length]);
+
+  // Load active sub-agent count
+  useEffect(() => {
+    const loadSubAgentCount = async () => {
+      try {
+        const res = await fetch('/api/openclaw/sessions?session_type=subagent&status=active');
+        if (res.ok) {
+          const sessions = await res.json();
+          setActiveSubAgents(sessions.length);
+        }
+      } catch (error) {
+        console.error('Failed to load sub-agent count:', error);
+      }
+    };
+
+    loadSubAgentCount();
+
+    // Poll every 10 seconds to keep count updated
+    const interval = setInterval(loadSubAgentCount, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleConnectToOpenClaw = async (agent: Agent, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent selecting the agent
@@ -96,6 +118,17 @@ export function AgentsSidebar() {
             </span>
           </div>
         </div>
+
+        {/* Active Sub-Agents Counter */}
+        {activeSubAgents > 0 && (
+          <div className="mb-3 px-3 py-2 bg-green-500/10 border border-green-500/20 rounded-lg">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-green-400">●</span>
+              <span className="text-mc-text">Active Sub-Agents:</span>
+              <span className="font-bold text-green-400">{activeSubAgents}</span>
+            </div>
+          </div>
+        )}
 
         {/* Filter Tabs */}
         <div className="flex gap-1">

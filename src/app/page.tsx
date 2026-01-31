@@ -7,6 +7,7 @@ import { MissionQueue } from '@/components/MissionQueue';
 import { LiveFeed } from '@/components/LiveFeed';
 import { ChatPanel } from '@/components/ChatPanel';
 import { useMissionControl } from '@/lib/store';
+import { useSSE } from '@/hooks/useSSE';
 
 export default function MissionControlPage() {
   const {
@@ -20,6 +21,9 @@ export default function MissionControlPage() {
   } = useMissionControl();
 
   const [showChat, setShowChat] = useState(false);
+
+  // Connect to SSE for real-time updates
+  useSSE();
 
   // Initial data load
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryOne, run } from '@/lib/db';
+import { broadcast } from '@/lib/events';
 import type { Task, UpdateTaskRequest, Agent } from '@/lib/types';
 
 // GET /api/tasks/[id] - Get a single task
@@ -143,6 +144,14 @@ export async function PATCH(
     run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
 
     const task = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+
+    // Broadcast task update via SSE
+    if (task) {
+      broadcast({
+        type: 'task_updated',
+        payload: task,
+      });
+    }
 
     // Trigger auto-dispatch if needed
     if (shouldDispatch) {
