@@ -2,7 +2,7 @@
 
 AI Agent Orchestration Dashboard for OpenClaw.
 
-![Mission Control](https://via.placeholder.com/800x400?text=Mission+Control+Dashboard)
+![Mission Control](docs/images/mission_control.png)
 
 ## Features
 
