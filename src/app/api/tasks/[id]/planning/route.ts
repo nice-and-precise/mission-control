@@ -15,21 +15,28 @@ function getMessagesFromTranscript(sessionKey: string): Array<{ role: string; co
     const sessionsDir = join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
     const sessionsFile = join(sessionsDir, 'sessions.json');
     
-    if (!existsSync(sessionsFile)) return [];
+    if (!existsSync(sessionsFile)) {
+      console.log('[Planning] Sessions file not found');
+      return [];
+    }
     
     const sessions = JSON.parse(readFileSync(sessionsFile, 'utf-8'));
-    const session = Object.values(sessions).find((s: unknown) => 
-      (s as { key: string }).key === sessionKey
-    ) as { transcriptPath?: string; sessionId?: string } | undefined;
     
-    if (!session) return [];
+    // Sessions are stored with key as the object key, not a property
+    const session = sessions[sessionKey] as { sessionId?: string } | undefined;
     
-    // Try to find transcript file
-    const transcriptPath = session.transcriptPath 
-      ? join(sessionsDir, session.transcriptPath)
-      : join(sessionsDir, `${session.sessionId}.jsonl`);
+    if (!session) {
+      console.log('[Planning] Session not found for key:', sessionKey);
+      return [];
+    }
     
-    if (!existsSync(transcriptPath)) return [];
+    // Transcript file is named after sessionId
+    const transcriptPath = join(sessionsDir, `${session.sessionId}.jsonl`);
+    
+    if (!existsSync(transcriptPath)) {
+      console.log('[Planning] Transcript file not found:', transcriptPath);
+      return [];
+    }
     
     // Parse JSONL transcript
     const content = readFileSync(transcriptPath, 'utf-8');
@@ -54,6 +61,7 @@ function getMessagesFromTranscript(sessionKey: string): Array<{ role: string; co
       }
     }
     
+    console.log('[Planning] Found', messages.length, 'assistant messages in transcript');
     return messages;
   } catch (err) {
     console.error('[Planning] Failed to read transcript:', err);

@@ -14,15 +14,13 @@ function getMessagesFromTranscript(sessionKey: string): Array<{ role: string; co
     if (!existsSync(sessionsFile)) return [];
     
     const sessions = JSON.parse(readFileSync(sessionsFile, 'utf-8'));
-    const session = Object.values(sessions).find((s: unknown) => 
-      (s as { key: string }).key === sessionKey
-    ) as { transcriptPath?: string; sessionId?: string } | undefined;
+    
+    // Sessions are stored with key as the object key, not a property
+    const session = sessions[sessionKey] as { sessionId?: string } | undefined;
     
     if (!session) return [];
     
-    const transcriptPath = session.transcriptPath 
-      ? join(sessionsDir, session.transcriptPath)
-      : join(sessionsDir, `${session.sessionId}.jsonl`);
+    const transcriptPath = join(sessionsDir, `${session.sessionId}.jsonl`);
     
     if (!existsSync(transcriptPath)) return [];
     
