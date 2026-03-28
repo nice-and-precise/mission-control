@@ -48,7 +48,10 @@ export async function GET(request: NextRequest) {
         
         // Get agent count
         const agentCount = db.prepare(
-          'SELECT COUNT(*) as count FROM agents WHERE workspace_id = ?'
+          `SELECT COUNT(*) as count
+           FROM agents
+           WHERE workspace_id = ?
+             AND COALESCE(scope, 'workspace') = 'workspace'`
         ).get(workspace.id) as { count: number };
         
         return {

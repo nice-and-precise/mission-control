@@ -20,6 +20,24 @@ if (!(GLOBAL_EVENT_CACHE_KEY in globalThis)) {
 
 const globalProcessedEvents = (globalThis as unknown as Record<string, Map<string, number>>)[GLOBAL_EVENT_CACHE_KEY];
 
+export function buildGatewayEventDedupPayload(data: any): Record<string, unknown> {
+  return {
+    type: data.type,
+    seq: data.seq,
+    runId: data.payload?.runId,
+    stream: data.payload?.stream,
+    event: data.event,
+    sessionKey: data.payload?.sessionKey,
+    payloadSeq: data.payload?.seq,
+    payloadEventId: data.payload?.__openclaw?.id,
+    payloadEventSeq: data.payload?.__openclaw?.seq,
+    timestamp: data.payload?.timestamp,
+    payloadHash: data.payload
+      ? createHash('sha256').update(JSON.stringify(data.payload)).digest('hex').slice(0, 16)
+      : null,
+  };
+}
+
 export class OpenClawClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -46,15 +64,7 @@ export class OpenClawClient extends EventEmitter {
    */
   private generateEventId(data: any): string {
     // Create a canonical string representation of the event
-    const canonical = JSON.stringify({
-      type: data.type,
-      seq: data.seq,
-      runId: data.payload?.runId,
-      stream: data.payload?.stream,
-      event: data.event,
-      // Include hash of payload for content-aware deduplication
-      payloadHash: data.payload ? createHash('sha256').update(JSON.stringify(data.payload)).digest('hex').slice(0, 16) : null
-    });
+    const canonical = JSON.stringify(buildGatewayEventDedupPayload(data));
 
     // Hash the canonical representation for a fixed-length ID
     return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
@@ -126,6 +136,7 @@ export class OpenClawClient extends EventEmitter {
         // Perform cleanup even if no new events have arrived
         this.performCacheCleanup();
       }, this.PERIODIC_CLEANUP_INTERVAL_MS);
+      timer.unref?.();
 
       // Store the timer globally so all instances share it
       (globalThis as Record<string, unknown>)[GLOBAL_CACHE_CLEANUP_KEY] = timer;
@@ -427,7 +438,14 @@ export class OpenClawClient extends EventEmitter {
 
   // Session management methods
   async listSessions(): Promise<OpenClawSessionInfo[]> {
-    return this.call<OpenClawSessionInfo[]>('sessions.list');
+    const result = await this.call<{ sessions?: OpenClawSessionInfo[] } | OpenClawSessionInfo[]>('sessions.list');
+    if (Array.isArray(result)) {
+      return result;
+    }
+    if (result && typeof result === 'object' && Array.isArray((result as { sessions?: OpenClawSessionInfo[] }).sessions)) {
+      return (result as { sessions: OpenClawSessionInfo[] }).sessions;
+    }
+    return [];
   }
 
   async getSessionHistory(sessionId: string): Promise<unknown[]> {

@@ -2,6 +2,9 @@
 
 This guide walks you through setting up Mission Control for production use with proper configuration management.
 
+> [!NOTE]
+> This guide uses generic setup examples. For the verified state of this local fork, including the active machine override to `/Users/jordan/Projects`, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
+
 ## ⚠️ Security First
 
 **NEVER commit sensitive data to the repository!** This includes:
@@ -45,8 +48,8 @@ OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 OPENCLAW_GATEWAY_TOKEN=your-token-here
 
 # Workspace Paths
-WORKSPACE_BASE_PATH=~/Documents/Shared
-PROJECTS_PATH=~/Documents/Shared/projects
+WORKSPACE_BASE_PATH=/var/lib/mission-control/workspace
+PROJECTS_PATH=/var/lib/mission-control/workspace/projects
 
 # API URL (auto-detected if not set)
 MISSION_CONTROL_URL=http://localhost:4000
@@ -84,8 +87,8 @@ Best for:
 
 Variables in `.env.local`:
 ```bash
-WORKSPACE_BASE_PATH=~/Documents/Shared
-PROJECTS_PATH=~/Documents/Shared/projects
+WORKSPACE_BASE_PATH=/var/lib/mission-control/workspace
+PROJECTS_PATH=/var/lib/mission-control/workspace/projects
 MISSION_CONTROL_URL=http://your-server-ip:4000
 OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 ```
@@ -112,7 +115,7 @@ Settings stored in browser localStorage:
 Mission Control organizes files in a structured workspace:
 
 ```
-~/Documents/Shared/              # Base workspace
+/var/lib/mission-control/workspace/    # Base workspace
 ├── projects/                    # All projects
 │   ├── [PROJECT_NAME_1]/       # Individual project
 │   │   ├── deliverables/       # Task deliverables
@@ -127,8 +130,8 @@ Mission Control organizes files in a structured workspace:
 
 **Via Environment Variables:**
 ```bash
-WORKSPACE_BASE_PATH=~/Documents/Shared
-PROJECTS_PATH=~/Documents/Shared/projects
+WORKSPACE_BASE_PATH=/var/lib/mission-control/workspace
+PROJECTS_PATH=/var/lib/mission-control/workspace/projects
 ```
 
 **Via Settings UI:**
@@ -283,8 +286,8 @@ ls -la mission-control.db
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_PATH` | `./mission-control.db` | SQLite database file path |
-| `WORKSPACE_BASE_PATH` | `~/Documents/Shared` | Base directory for workspace |
-| `PROJECTS_PATH` | `~/Documents/Shared/projects` | Directory for project folders |
+| `WORKSPACE_BASE_PATH` | Example: `/var/lib/mission-control/workspace` | Base directory for workspace |
+| `PROJECTS_PATH` | Example: `/var/lib/mission-control/workspace/projects` | Directory for project folders |
 | `MISSION_CONTROL_URL` | Auto-detected | API URL for agent orchestration |
 | `OPENCLAW_GATEWAY_URL` | `ws://127.0.0.1:18789` | Gateway WebSocket URL |
 | `OPENCLAW_GATEWAY_TOKEN` | (empty) | Authentication token |
@@ -310,9 +313,9 @@ ls -la mission-control.db
 ## 📖 Further Reading
 
 - [Agent Protocol Documentation](docs/AGENT_PROTOCOL.md)
+- [Local Fork Status](docs/CURRENT_LOCAL_STATUS.md)
 - [Real-Time Implementation](REALTIME_IMPLEMENTATION_SUMMARY.md)
 - [the orchestrator Orchestration Guide](src/lib/orchestration.ts)
-- [Verification Checklist](VERIFICATION_CHECKLIST.md)
 
 ---
 

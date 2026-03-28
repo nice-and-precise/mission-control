@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { v4 as uuidv4 } from 'uuid';
 import { createHmac } from 'crypto';
-import { queryOne, queryAll, run } from '@/lib/db';
-import type { Task, Agent, OpenClawSession } from '@/lib/types';
+import { queryAll } from '@/lib/db';
+import { processAgentSignal } from '@/lib/agent-signals';
 
 /**
  * Verify HMAC-SHA256 signature of webhook request
@@ -62,143 +61,34 @@ export async function POST(request: NextRequest) {
     }
 
     const body = JSON.parse(rawBody);
-    const now = new Date().toISOString();
-
-    // Handle direct task_id completion
     if (body.task_id) {
-      const task = queryOne<Task & { assigned_agent_name?: string }>(
-        `SELECT t.*, a.name as assigned_agent_name
-         FROM tasks t
-         LEFT JOIN agents a ON t.assigned_agent_id = a.id
-         WHERE t.id = ?`,
-        [body.task_id]
-      );
-
-      if (!task) {
-        return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-      }
-
-      // Only move to testing if not already in testing, review, or done
-      // (Don't overwrite user's approval or testing results)
-      if (task.status !== 'testing' && task.status !== 'review' && task.status !== 'done') {
-        run(
-          'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
-          ['testing', now, task.id]
-        );
-      }
-
-      // Log completion
-      run(
-        `INSERT INTO events (id, type, agent_id, task_id, message, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          uuidv4(),
-          'task_completed',
-          task.assigned_agent_id,
-          task.id,
-          `${task.assigned_agent_name} completed: ${body.summary || 'Task finished'}`,
-          now
-        ]
-      );
-
-      // Set agent back to standby
-      if (task.assigned_agent_id) {
-        run(
-          'UPDATE agents SET status = ?, updated_at = ? WHERE id = ?',
-          ['standby', now, task.assigned_agent_id]
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-        task_id: task.id,
-        new_status: 'testing',
-        message: 'Task moved to testing for automated verification'
+      const result = await processAgentSignal({
+        taskId: body.task_id,
+        message: body.message || `TASK_COMPLETE: ${body.summary || 'Task finished'}`,
       });
+
+      if (!result.handled) {
+        return NextResponse.json({ error: 'No completion signal found in payload' }, { status: 400 });
+      }
+
+      return NextResponse.json({ success: true, task_id: result.taskId, signal: result.signal, error: result.error || null });
     }
 
     // Handle session-based completion (from message parsing)
     if (body.session_id && body.message) {
-      // Parse TASK_COMPLETE message
-      const completionMatch = body.message.match(/TASK_COMPLETE:\s*(.+)/i);
-      if (!completionMatch) {
+      const result = await processAgentSignal({
+        sessionId: body.session_id,
+        message: body.message,
+      });
+
+      if (!result.handled) {
         return NextResponse.json(
-          { error: 'Invalid completion message format. Expected: TASK_COMPLETE: [summary]' },
+          { error: 'Invalid completion message format. Expected a TASK_COMPLETE/BLOCKED/TEST_PASS/TEST_FAIL/VERIFY_PASS/VERIFY_FAIL signal.' },
           { status: 400 }
         );
       }
 
-      const summary = completionMatch[1].trim();
-
-      // Find agent by session
-      const session = queryOne<OpenClawSession>(
-        'SELECT * FROM openclaw_sessions WHERE openclaw_session_id = ? AND status = ?',
-        [body.session_id, 'active']
-      );
-
-      if (!session) {
-        return NextResponse.json(
-          { error: 'Session not found or inactive' },
-          { status: 404 }
-        );
-      }
-
-      // Find active task for this agent
-      const task = queryOne<Task & { assigned_agent_name?: string }>(
-        `SELECT t.*, a.name as assigned_agent_name
-         FROM tasks t
-         LEFT JOIN agents a ON t.assigned_agent_id = a.id
-         WHERE t.assigned_agent_id = ? 
-           AND t.status IN ('assigned', 'in_progress')
-         ORDER BY t.updated_at DESC
-         LIMIT 1`,
-        [session.agent_id]
-      );
-
-      if (!task) {
-        return NextResponse.json(
-          { error: 'No active task found for this agent' },
-          { status: 404 }
-        );
-      }
-
-      // Only move to testing if not already in testing, review, or done
-      // (Don't overwrite user's approval or testing results)
-      if (task.status !== 'testing' && task.status !== 'review' && task.status !== 'done') {
-        run(
-          'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
-          ['testing', now, task.id]
-        );
-      }
-
-      // Log completion with summary
-      run(
-        `INSERT INTO events (id, type, agent_id, task_id, message, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          uuidv4(),
-          'task_completed',
-          session.agent_id,
-          task.id,
-          `${task.assigned_agent_name} completed: ${summary}`,
-          now
-        ]
-      );
-
-      // Set agent back to standby
-      run(
-        'UPDATE agents SET status = ?, updated_at = ? WHERE id = ?',
-        ['standby', now, session.agent_id]
-      );
-
-      return NextResponse.json({
-        success: true,
-        task_id: task.id,
-        agent_id: session.agent_id,
-        summary,
-        new_status: 'testing',
-        message: 'Task moved to testing for automated verification'
-      });
+      return NextResponse.json({ success: true, task_id: result.taskId, signal: result.signal, error: result.error || null });
     }
 
     return NextResponse.json(

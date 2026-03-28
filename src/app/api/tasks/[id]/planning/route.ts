@@ -3,6 +3,7 @@ import { getDb, queryAll, queryOne, run } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
 import { extractJSON } from '@/lib/planning-utils';
+import { cleanupTaskScopedAgents } from '@/lib/planning-agents';
 // File system imports removed - using OpenClaw API instead
 
 // Planning session prefix for OpenClaw (must match agent:main: format)
@@ -27,6 +28,8 @@ export async function GET(
       planning_complete?: number;
       planning_spec?: string;
       planning_agents?: string;
+      status_reason?: string;
+      planning_dispatch_error?: string;
     } | undefined;
     
     if (!task) {
@@ -48,6 +51,8 @@ export async function GET(
       }
     }
 
+    const lockedSpec = getDb().prepare('SELECT id FROM planning_specs WHERE task_id = ?').get(taskId) as { id: string } | undefined;
+
     return NextResponse.json({
       taskId,
       sessionKey: task.planning_session_key,
@@ -57,6 +62,10 @@ export async function GET(
       spec: task.planning_spec ? JSON.parse(task.planning_spec) : null,
       agents: task.planning_agents ? JSON.parse(task.planning_agents) : null,
       isStarted: messages.length > 0,
+      isApproved: !!lockedSpec,
+      taskStatus: task.status,
+      statusReason: task.status_reason || null,
+      dispatchError: lockedSpec ? (task.planning_dispatch_error || null) : null,
     });
   } catch (error) {
     console.error('Failed to get planning state:', error);
@@ -207,6 +216,7 @@ export async function DELETE(
     }
 
     // Clear planning-related fields
+    cleanupTaskScopedAgents(taskId);
     run(`
       UPDATE tasks
       SET planning_session_key = NULL,
@@ -214,10 +224,15 @@ export async function DELETE(
           planning_complete = 0,
           planning_spec = NULL,
           planning_agents = NULL,
+          planning_dispatch_error = NULL,
+          assigned_agent_id = NULL,
+          status_reason = NULL,
           status = 'inbox',
           updated_at = datetime('now')
       WHERE id = ?
     `, [taskId]);
+
+    run('DELETE FROM planning_specs WHERE task_id = ?', [taskId]);
 
     // Broadcast task update
     const updatedTask = queryOne('SELECT * FROM tasks WHERE id = ?', [taskId]);

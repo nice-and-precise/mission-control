@@ -3,8 +3,12 @@ import path from 'path';
 import fs from 'fs';
 import { schema } from './schema';
 import { runMigrations } from './migrations';
+import { ensureCatalogSyncScheduled } from '@/lib/agent-catalog-sync';
+import { ensureHealthCheckScheduled } from '@/lib/agent-health-scheduler';
+import { attachChatListener } from '@/lib/chat-listener';
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'mission-control.db');
+const SHOULD_BOOT_RUNTIME_SIDE_EFFECTS = process.env.NODE_ENV !== 'test';
 
 let db: Database.Database | null = null;
 
@@ -22,6 +26,18 @@ export function getDb(): Database.Database {
     // Run migrations for schema updates
     // This handles both new and existing databases
     runMigrations(db);
+
+    if (SHOULD_BOOT_RUNTIME_SIDE_EFFECTS) {
+      // Test workers should not attach long-lived runtime hooks just to open a throwaway DB.
+      import('@/lib/autopilot/recovery').then(({ recoverOrphanedCycles }) =>
+        recoverOrphanedCycles().catch(err => console.warn('[Recovery] Failed:', err))
+      );
+
+      // Keep Mission Control's agent catalog synced with OpenClaw-installed agents
+      ensureCatalogSyncScheduled();
+      ensureHealthCheckScheduled();
+      attachChatListener();
+    }
     
     if (isNewDb) {
       console.log('[DB] New database created at:', DB_PATH);

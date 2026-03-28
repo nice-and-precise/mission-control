@@ -1,34 +1,20 @@
 import { NextResponse } from 'next/server';
-import { getOpenClawClient } from '@/lib/openclaw/client';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 // GET /api/openclaw/sessions/[id]/history - Get conversation history
-export async function GET(request: Request, { params }: RouteParams) {
-  try {
-    const { id } = await params;
-    const client = getOpenClawClient();
+export async function GET(_request: Request, { params }: RouteParams) {
+  const { id } = await params;
 
-    if (!client.isConnected()) {
-      try {
-        await client.connect();
-      } catch {
-        return NextResponse.json(
-          { error: 'Failed to connect to OpenClaw Gateway' },
-          { status: 503 }
-        );
-      }
-    }
-
-    const history = await client.getSessionHistory(id);
-    return NextResponse.json({ history });
-  } catch (error) {
-    console.error('Failed to get OpenClaw session history:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(
+    {
+      error: 'Session history is not available from the OpenClaw Gateway RPC surface Mission Control currently uses.',
+      session_id: id,
+      supported: false,
+      suggestion: 'Use /api/openclaw/sessions/[id] for session metadata or the live task stream for current output.',
+    },
+    { status: 501 }
+  );
 }

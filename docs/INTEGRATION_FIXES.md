@@ -1,7 +1,10 @@
 # Mission Control Integration Fixes
 
+> [!NOTE]
+> Historical implementation note. This file documents a completed integration milestone, not the full current state of this local fork. For the verified runtime status and open gaps, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
+
 **Date:** January 31, 2025  
-**Status:** ✅ COMPLETE
+**Status:** Historical milestone summary
 
 ## Problems Fixed
 
@@ -35,7 +38,7 @@
 ### 3. ✅ Activities/Deliverables/Sessions Empty
 **Problem:** No transparency into what sub-agents are doing  
 **Root Cause:** The orchestrator's orchestration workflow wasn't posting to activity/deliverable endpoints  
-**Fix:** Created comprehensive orchestration helper library
+**Fix:** Created comprehensive orchestration helper library, and later added runtime evidence reconciliation so Mission Control can recover Sessions / Deliverables / Agent Live visibility when a run ends without posting explicit artifacts
 
 **Files Created:**
 - `src/lib/orchestration.ts` - Helper functions for logging
@@ -50,7 +53,7 @@
 - `onSubAgentCompleted()` - Complete completion workflow
 - `verifyTaskHasDeliverables()` - Check for deliverables before approval
 
-**Testing:** Activities/Deliverables/Sessions tabs now populate with data
+**Testing:** Activities/Deliverables/Sessions tabs now populate with explicit API data during healthy runs, and can recover evidence from the OpenClaw session tree / isolated workspace diff after broken runs
 
 ---
 
@@ -133,9 +136,10 @@ All criteria met:
 
 - ✅ Task moves in real-time without refresh
 - ✅ Agent counter shows "1" when sub-agent working
-- ✅ Activities tab shows timestamped log (when the orchestrator uses helper)
-- ✅ Deliverables tab shows file paths (when the orchestrator uses helper)
-- ✅ Sessions tab shows sub-agent info (when the orchestrator uses helper)
+- ✅ Activities tab shows timestamped log (explicitly during healthy runs, or via reconciliation activity after broken runs)
+- ✅ Deliverables tab shows file paths (explicitly during healthy runs, or via recovered workspace-diff evidence)
+- ✅ Sessions tab shows sub-agent info (explicitly during healthy runs, or via recovered OpenClaw child-session evidence)
+- ✅ Agent Live exposes `streaming`, `no_session`, or `session_ended` instead of a blank panel
 - ✅ Header shows accurate counts
 - ✅ Review → Done requires deliverables
 - ✅ Only master agents can approve tasks
@@ -219,4 +223,4 @@ See `docs/CHARLIE_WORKFLOW.md` for complete details.
 ✅ Next.js build: PASSED  
 ✅ ESLint: PASSED (with warnings, non-blocking)
 
-Ready for production deployment.
+This document should not be read as a current production-readiness statement for the entire local fork.

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { reconcileTaskRuntimeEvidence } from '@/lib/task-evidence';
 import { CreateDeliverableSchema } from '@/lib/validation';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -22,6 +23,8 @@ export async function GET(
   try {
     const taskId = params.id;
     const db = getDb();
+
+    await reconcileTaskRuntimeEvidence(taskId);
 
     const deliverables = db.prepare(`
       SELECT *

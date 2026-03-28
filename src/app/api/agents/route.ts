@@ -7,15 +7,34 @@ import type { Agent, CreateAgentRequest } from '@/lib/types';
 export async function GET(request: NextRequest) {
   try {
     const workspaceId = request.nextUrl.searchParams.get('workspace_id');
+    const includeTaskAgents = request.nextUrl.searchParams.get('include_task_agents') === 'true';
+    const taskId = request.nextUrl.searchParams.get('task_id');
     
     let agents: Agent[];
     if (workspaceId) {
-      agents = queryAll<Agent>(`
-        SELECT * FROM agents WHERE workspace_id = ? ORDER BY is_master DESC, name ASC
-      `, [workspaceId]);
+      if (includeTaskAgents && taskId) {
+        agents = queryAll<Agent>(`
+          SELECT *
+          FROM agents
+          WHERE workspace_id = ?
+            AND (COALESCE(scope, 'workspace') = 'workspace' OR (COALESCE(scope, 'workspace') = 'task' AND task_id = ?))
+          ORDER BY COALESCE(scope, 'workspace') ASC, is_master DESC, name ASC
+        `, [workspaceId, taskId]);
+      } else {
+        agents = queryAll<Agent>(`
+          SELECT *
+          FROM agents
+          WHERE workspace_id = ?
+            AND COALESCE(scope, 'workspace') = 'workspace'
+          ORDER BY is_master DESC, name ASC
+        `, [workspaceId]);
+      }
     } else {
       agents = queryAll<Agent>(`
-        SELECT * FROM agents ORDER BY is_master DESC, name ASC
+        SELECT *
+        FROM agents
+        WHERE COALESCE(scope, 'workspace') = 'workspace'
+        ORDER BY is_master DESC, name ASC
       `);
     }
     return NextResponse.json(agents);

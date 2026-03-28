@@ -1,14 +1,19 @@
 # Real-Time Integration Testing Guide
 
+> [!NOTE]
+> This guide covers the realtime feature surface. For the verified state of this local fork, including current known gaps and machine-specific overrides, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
+
 ## Quick Start
 
 ```bash
-cd ~/Documents/Shared/mission-control
+cd /path/to/mission-control
 npm install
 npm run dev
 ```
 
 Open http://localhost:4000 (production server) or http://localhost:4000 (local)
+
+If `MC_API_TOKEN` is configured, add `-H "Authorization: Bearer <token>"` to the API requests below.
 
 ## Test Scenarios
 
@@ -49,6 +54,7 @@ Open http://localhost:4000 (production server) or http://localhost:4000 (local)
 
 ```bash
 curl -X POST http://localhost:4000/api/tasks/TASK_ID/activities \
+  -H "Authorization: Bearer <MC_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "activity_type": "updated",
@@ -73,11 +79,12 @@ curl -X POST http://localhost:4000/api/tasks/TASK_ID/activities \
 
 ```bash
 curl -X POST http://localhost:4000/api/tasks/TASK_ID/deliverables \
+  -H "Authorization: Bearer <MC_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "deliverable_type": "file",
     "title": "Implementation Report",
-    "path": "~/Documents/report.md",
+    "path": "/absolute/path/to/report.md",
     "description": "Detailed implementation report"
   }'
 ```
@@ -98,6 +105,7 @@ curl -X POST http://localhost:4000/api/tasks/TASK_ID/deliverables \
 
 ```bash
 curl -X POST http://localhost:4000/api/tasks/TASK_ID/subagent \
+  -H "Authorization: Bearer <MC_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "openclaw_session_id": "agent:main:subagent:test-123",
@@ -144,7 +152,7 @@ curl -X POST http://localhost:4000/api/tasks/TASK_ID/subagent \
 
 **Verify tables exist:**
 ```bash
-cd ~/Documents/Shared/mission-control
+cd /path/to/mission-control
 sqlite3 mission-control.db
 
 .tables
@@ -166,7 +174,10 @@ sqlite3 mission-control.db
 
 1. **the orchestrator (main agent) creates task:**
    ```bash
+   TOKEN="${MC_API_TOKEN:-your-token}"
+
    curl -X POST http://localhost:4000/api/tasks \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
        "title": "Build authentication system",
@@ -182,6 +193,7 @@ sqlite3 mission-control.db
    
    # Log triage activity
    curl -X POST http://localhost:4000/api/tasks/$TASK_ID/activities \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
        "activity_type": "updated",
@@ -190,6 +202,7 @@ sqlite3 mission-control.db
    
    # Update status to assigned
    curl -X PATCH http://localhost:4000/api/tasks/$TASK_ID \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"status": "assigned"}'
    ```
@@ -198,6 +211,7 @@ sqlite3 mission-control.db
    ```bash
    # Register sub-agent
    curl -X POST http://localhost:4000/api/tasks/$TASK_ID/subagent \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
        "openclaw_session_id": "agent:main:subagent:dev-auth",
@@ -206,6 +220,7 @@ sqlite3 mission-control.db
    
    # Log spawn activity
    curl -X POST http://localhost:4000/api/tasks/$TASK_ID/activities \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
        "activity_type": "spawned",
@@ -217,16 +232,18 @@ sqlite3 mission-control.db
    ```bash
    # Add file deliverable
    curl -X POST http://localhost:4000/api/tasks/$TASK_ID/deliverables \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
        "deliverable_type": "file",
        "title": "auth.ts",
-       "path": "~/project/src/auth.ts",
+       "path": "/absolute/path/to/project/src/auth.ts",
        "description": "JWT authentication implementation"
      }'
    
    # Log file creation
    curl -X POST http://localhost:4000/api/tasks/$TASK_ID/activities \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
        "activity_type": "file_created",
@@ -238,6 +255,7 @@ sqlite3 mission-control.db
    ```bash
    # Log completion
    curl -X POST http://localhost:4000/api/tasks/$TASK_ID/activities \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
        "activity_type": "completed",
@@ -246,6 +264,7 @@ sqlite3 mission-control.db
    
    # Move to review
    curl -X PATCH http://localhost:4000/api/tasks/$TASK_ID \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"status": "review"}'
    ```
@@ -281,6 +300,7 @@ for (let i = 0; i < 50; i++) {
 ```bash
 for i in {1..100}; do
   curl -X POST http://localhost:4000/api/tasks/TASK_ID/activities \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"activity_type\": \"updated\", \"message\": \"Test $i\"}" &
 done

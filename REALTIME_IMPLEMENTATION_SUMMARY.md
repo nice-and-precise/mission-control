@@ -1,8 +1,11 @@
 # Real-Time Integration Implementation Summary
 
-**Date:** January 31, 2026  
+> [!NOTE]
+> Historical implementation summary for the realtime feature set. For the verified current state of this detached local fork, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
+
+**Date:** January 31, 2026, updated March 26, 2026  
 **Project:** Mission Control  
-**Status:** ✅ Complete and Production-Ready
+**Status:** Historical implementation milestone with later runtime-evidence updates; not the canonical current-status page
 
 ## 🎯 What Was Built
 
@@ -44,6 +47,9 @@ A comprehensive real-time integration system for Mission Control that provides f
 - `PATCH /api/tasks/[id]` - Now broadcasts SSE events on update
 - `POST /api/tasks` - Now broadcasts SSE events on creation
 - All task operations trigger real-time notifications
+- `GET /api/tasks/[id]/deliverables` - Reconciles workspace-diff evidence before reading
+- `GET /api/tasks/[id]/subagent` - Reconciles OpenClaw child sessions before reading
+- `GET /api/tasks/[id]/agent-stream` - Resolves the full task session tree and emits `session_ended` when appropriate
 
 ### 3. Frontend Components ✅
 
@@ -54,6 +60,8 @@ A comprehensive real-time integration system for Mission Control that provides f
 - `src/components/ActivityLog.tsx` - Timeline view of task activities
 - `src/components/DeliverablesList.tsx` - File/URL/artifact display
 - `src/components/SessionsList.tsx` - Sub-agent session tracking
+- `src/components/AgentLiveTab.tsx` - Live streaming + terminal state view for task-linked sessions
+  - Includes explicit `no_session` and `session_ended` empty states instead of a blank waiting panel
 
 **Enhanced Components:**
 - `src/components/TaskModal.tsx` - Redesigned with tabbed interface
@@ -61,6 +69,7 @@ A comprehensive real-time integration system for Mission Control that provides f
   - Activity tab: Chronological activity log
   - Deliverables tab: Output files and links
   - Sessions tab: Sub-agent sessions
+  - Agent Live tab stays visible for assigned, active, and unreconciled-ended runs
 - `src/components/AgentsSidebar.tsx` - Active sub-agent counter
 - `src/app/page.tsx` - Integrated useSSE hook for real-time updates
 
@@ -83,6 +92,19 @@ A comprehensive real-time integration system for Mission Control that provides f
 - `docs/TESTING_REALTIME.md` - Comprehensive testing guide
 - `CHANGELOG.md` - Updated with all new features
 - `REALTIME_IMPLEMENTATION_SUMMARY.md` - This document
+
+### 6. Runtime Evidence Reconciliation ✅
+
+Mission Control now has a fallback visibility path for runs that ended without explicit API receipts:
+- Recover child sessions from the OpenClaw session tree
+- Recover file deliverables from the isolated workspace diff
+- Add a reconciliation activity to make the recovery visible in the task feed
+- Suppress repeated zombie/stalled noise once a task is already marked as an unreconciled ended run
+- Keep Agent Live inspectable in the task modal so ended runs show `session_ended` instead of hiding the stream surface
+
+Important constraint:
+- Recovered evidence is visibility-only
+- Workflow transitions still require explicit markers such as `TASK_COMPLETE`, `BLOCKED`, `TEST_PASS`, `TEST_FAIL`, `VERIFY_PASS`, or `VERIFY_FAIL`
 
 ## 🏗️ Architecture
 
@@ -185,9 +207,10 @@ POST /api/tasks/[id]/activities
 - Duration tracking (start → end)
 - Agent counter in sidebar shows live active count
 - Session details: ID, channel, timestamps
+- Recover missing task sessions from gateway child-session evidence when explicit registration never happened
 
 ### 5. Enhanced Task Modal
-- Tabbed interface (Overview, Activity, Deliverables, Sessions)
+- Tabbed interface with runtime evidence surfaces (Activity, Deliverables, Sessions, Workspace, Agent Live, and others)
 - Wider layout (max-w-2xl)
 - Scrollable content area
 - Save/Delete only on Overview tab
@@ -199,6 +222,7 @@ POST /api/tasks/[id]/activities
 - Auto-reconnect on disconnect (5-second retry)
 - Connection status indicator
 - Graceful error handling
+- Terminal session-state reporting (`session_ended`) for Agent Live
 
 ## 🔧 Technical Implementation Details
 
@@ -258,6 +282,7 @@ POST /api/tasks/[id]/activities
 ### Integration Tests
 - ✅ Full orchestration workflow (see TESTING_REALTIME.md)
 - ✅ Multi-client SSE synchronization
+- ✅ Runtime evidence reconciliation for Sessions, Deliverables, Agent Live, and health-spam suppression
 - ✅ Database migrations
 - ✅ Real-time UI updates
 
@@ -350,7 +375,7 @@ await fetch(`/api/tasks/${task.id}`, {
 ### On production server (Production)
 
 ```bash
-cd ~/Documents/Shared/mission-control
+cd /path/to/mission-control
 git pull origin main
 npm install
 npm run build
@@ -380,7 +405,7 @@ location /api/events/stream {
 }
 ```
 
-## ✅ Success Criteria Met
+## ✅ Milestone Success Criteria
 
 - [x] All database migrations work without errors
 - [x] SSE connection broadcasts events in real-time
@@ -388,10 +413,9 @@ location /api/events/stream {
 - [x] Activity logs show chronological task history
 - [x] Deliverables display with file paths
 - [x] Agent counter shows active sub-agents
-- [x] Code is production-ready and well-commented
+- [x] Milestone implementation reached its original release target
 - [x] Full TypeScript type safety
 - [x] Comprehensive testing documentation
-- [x] Git commit with clear message
 - [x] CHANGELOG.md updated
 
 ## 🎓 Lessons Learned
@@ -449,14 +473,14 @@ sqlite3 mission-control.db ".schema task_activities"
 
 ## 🎉 Conclusion
 
-The real-time integration is **complete, tested, and production-ready**. All components work together seamlessly to provide full transparency into task orchestration with instant updates across all connected clients.
+At the time of this milestone, the realtime integration reached its target scope and verification goals. For the current repo-wide truth, including later local deviations and still-open gaps, use [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
 
 **Implementation Time:** ~4 hours  
 **Lines of Code:** ~1,700 added, 70 modified  
 **Files Changed:** 21  
 **Test Coverage:** Comprehensive (see TESTING_REALTIME.md)
 
-The system is now ready to deploy and begin using for real task orchestration!
+Treat this file as a milestone summary, not as a standing deployment certification for the current local fork.
 
 ---
 

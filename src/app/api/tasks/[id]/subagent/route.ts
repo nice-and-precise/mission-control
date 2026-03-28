@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { reconcileTaskRuntimeEvidence } from '@/lib/task-evidence';
 
 /**
  * POST /api/tasks/[id]/subagent
@@ -45,14 +46,16 @@ export async function POST(
         // Create temporary sub-agent record
         agentId = crypto.randomUUID();
         db.prepare(`
-          INSERT INTO agents (id, name, role, description, status)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO agents (id, name, role, description, status, workspace_id, source, scope, task_id)
+          VALUES (?, ?, ?, ?, ?, (SELECT workspace_id FROM tasks WHERE id = ?), 'local', 'task', ?)
         `).run(
           agentId,
           agent_name,
           'Sub-Agent',
           'Automatically created sub-agent',
-          'working'
+          'working',
+          taskId,
+          taskId
         );
       }
     }
@@ -107,6 +110,8 @@ export async function GET(
   try {
     const taskId = params.id;
     const db = getDb();
+
+    await reconcileTaskRuntimeEvidence(taskId);
 
     const sessions = db.prepare(`
       SELECT 

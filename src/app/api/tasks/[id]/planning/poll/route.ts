@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryOne, run, getDb, queryAll } from '@/lib/db';
-import { getOpenClawClient } from '@/lib/openclaw/client';
+import { queryOne, run, getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { extractJSON, getMessagesFromOpenClaw } from '@/lib/planning-utils';
+import { createTaskScopedPlanningAgents } from '@/lib/planning-agents';
 import { Task } from '@/lib/types';
 
+export const dynamic = 'force-dynamic';
 // Planning timeout and poll interval configuration with validation
 const PLANNING_TIMEOUT_MS = parseInt(process.env.PLANNING_TIMEOUT_MS || '30000', 10);
 const PLANNING_POLL_INTERVAL_MS = parseInt(process.env.PLANNING_POLL_INTERVAL_MS || '2000', 10);
@@ -17,171 +18,43 @@ if (isNaN(PLANNING_POLL_INTERVAL_MS) || PLANNING_POLL_INTERVAL_MS < 100) {
   throw new Error('PLANNING_POLL_INTERVAL_MS must be a valid number >= 100ms');
 }
 
-// Helper to handle planning completion with proper error handling and rollback
+// Helper to handle planning completion with proper error handling
 async function handlePlanningCompletion(taskId: string, parsed: any, messages: any[]) {
   const db = getDb();
-  let dispatchError: string | null = null;
-  let firstAgentId: string | null = null;
+  const allowDynamicAgents = process.env.ALLOW_DYNAMIC_AGENTS !== 'false';
+  const savedAgents = allowDynamicAgents
+    ? createTaskScopedPlanningAgents(taskId, parsed.agents || [])
+    : (parsed.agents || []).map((agent: any) => ({ ...agent, scope: 'task' }));
 
-  // Wrap all database operations in a transaction for atomicity
-  // Set status to 'pending_dispatch' first - don't mark as complete until dispatch succeeds
-  const transaction = db.transaction(() => {
-    // Update task with completion data but keep planning_complete = 0 until dispatch succeeds
-    db.prepare(`
-      UPDATE tasks
-      SET planning_messages = ?,
-          planning_spec = ?,
-          planning_agents = ?,
-          status = 'pending_dispatch',
-          planning_dispatch_error = NULL
-      WHERE id = ?
-    `).run(
-      JSON.stringify(messages),
-      JSON.stringify(parsed.spec),
-      JSON.stringify(parsed.agents),
-      taskId
-    );
+  db.prepare('DELETE FROM task_roles WHERE task_id = ?').run(taskId);
 
-    // Create the agents in the workspace and track first agent for auto-assign
-    if (parsed.agents && parsed.agents.length > 0) {
-      const insertAgent = db.prepare(`
-        INSERT INTO agents (id, workspace_id, name, role, description, avatar_emoji, status, soul_md, created_at, updated_at)
-        VALUES (?, (SELECT workspace_id FROM tasks WHERE id = ?), ?, ?, ?, ?, 'standby', ?, datetime('now'), datetime('now'))
-      `);
-
-      for (const agent of parsed.agents) {
-        const agentId = crypto.randomUUID();
-        if (!firstAgentId) firstAgentId = agentId;
-
-        insertAgent.run(
-          agentId,
-          taskId,
-          agent.name,
-          agent.role,
-          agent.instructions || '',
-          agent.avatar_emoji || '🤖',
-          agent.soul_md || ''
-        );
-      }
-    }
-
-    return firstAgentId;
-  });
-
-  // Execute the transaction to create agents and set pending_dispatch status
-  firstAgentId = transaction();
-
-  // Re-check for other orchestrators before dispatching (prevents race condition)
-  if (firstAgentId) {
-    const task = queryOne<{ workspace_id: string }>('SELECT workspace_id FROM tasks WHERE id = ?', [taskId]);
-    if (task) {
-      const defaultMaster = queryOne<{ id: string }>(
-        `SELECT id FROM agents WHERE is_master = 1 AND workspace_id = ? ORDER BY created_at ASC LIMIT 1`,
-        [task.workspace_id]
-      );
-      const otherOrchestrators = queryAll<{ id: string; name: string }>(
-        `SELECT id, name
-         FROM agents
-         WHERE is_master = 1
-         AND id != ?
-         AND workspace_id = ?
-         AND status != 'offline'`,
-        [defaultMaster?.id ?? '', task.workspace_id]
-      );
-
-      if (otherOrchestrators.length > 0) {
-        dispatchError = `Cannot auto-dispatch: ${otherOrchestrators.length} other orchestrator(s) available in workspace`;
-        console.warn(`[Planning Poll] ${dispatchError}:`, otherOrchestrators.map(o => o.name).join(', '));
-        firstAgentId = null; // Don't dispatch
-      }
-    }
-  }
-
-  // Check if task is already assigned (idempotency - prevents duplicate dispatches from multiple polls)
-  let skipDispatch = false;
-  if (firstAgentId) {
-    const currentTask = queryOne<{ assigned_agent_id?: string }>(
-      'SELECT assigned_agent_id FROM tasks WHERE id = ?',
-      [taskId]
-    );
-    if (currentTask?.assigned_agent_id) {
-      console.log('[Planning Poll] Task already assigned to', currentTask.assigned_agent_id, ', skipping dispatch');
-      firstAgentId = currentTask.assigned_agent_id;
-      dispatchError = null;
-      skipDispatch = true; // Skip the HTTP dispatch call, but still mark as complete
-    }
-  }
-
-  // Trigger dispatch - use localhost since we're in the same process
-  if (firstAgentId && !skipDispatch) {
-    const dispatchUrl = `http://localhost:${process.env.PORT || 3000}/api/tasks/${taskId}/dispatch`;
-    console.log(`[Planning Poll] Triggering dispatch: ${dispatchUrl}`);
-
-    try {
-      const dispatchRes = await fetch(dispatchUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (dispatchRes.ok) {
-        const dispatchData = await dispatchRes.json();
-        console.log(`[Planning Poll] Dispatch successful:`, dispatchData);
-      } else {
-        const errorText = await dispatchRes.text();
-        dispatchError = `Dispatch failed (${dispatchRes.status}): ${errorText}`;
-        console.error(`[Planning Poll] ${dispatchError}`);
-      }
-    } catch (err) {
-      dispatchError = `Dispatch error: ${(err as Error).message}`;
-      console.error(`[Planning Poll] ${dispatchError}`);
-    }
-  }
-
-  // Final transaction: mark as complete or store error for retry
-  db.transaction(() => {
-    if (dispatchError) {
-      // Store the error but don't mark as complete - user can retry
-      db.prepare(`
-        UPDATE tasks
-        SET planning_dispatch_error = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      `).run(dispatchError, taskId);
-    } else if (firstAgentId) {
-      // Success - mark complete and assign
-      db.prepare(`
-        UPDATE tasks
-        SET planning_complete = 1,
-            assigned_agent_id = ?,
-            status = 'inbox',
-            planning_dispatch_error = NULL,
-            updated_at = datetime('now')
-        WHERE id = ?
-      `).run(firstAgentId, taskId);
-      console.log(`[Planning Poll] Planning complete and dispatched to agent ${firstAgentId}`);
-    } else {
-      // No agent to dispatch to, but planning is complete
-      db.prepare(`
-        UPDATE tasks
-        SET planning_complete = 1,
-            status = 'inbox',
-            planning_dispatch_error = NULL,
-            updated_at = datetime('now')
-        WHERE id = ?
-      `).run(taskId);
-    }
-  })();
+  db.prepare(`
+    UPDATE tasks
+    SET planning_messages = ?,
+        planning_spec = ?,
+        planning_agents = ?,
+        planning_complete = 1,
+        assigned_agent_id = NULL,
+        status = 'planning',
+        planning_dispatch_error = NULL,
+        status_reason = ?,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).run(
+    JSON.stringify(messages),
+    JSON.stringify(parsed.spec),
+    JSON.stringify(savedAgents),
+    'Planning complete — awaiting approval before execution',
+    taskId
+  );
 
   // Broadcast task update
   const updatedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (updatedTask) {
-    broadcast({
-      type: 'task_updated',
-      payload: updatedTask,
-    });
+    broadcast({ type: 'task_updated', payload: updatedTask });
   }
 
-  return { firstAgentId, parsed, dispatchError };
+  return { parsed: { ...parsed, agents: savedAgents } };
 }
 
 // GET /api/tasks/[id]/planning/poll - Check for new messages from OpenClaw
@@ -268,7 +141,7 @@ export async function GET(
           if (parsed && parsed.status === 'complete') {
             // Handle completion
             console.log('[Planning Poll] Planning complete, handling...');
-            const { firstAgentId, parsed: fullParsed, dispatchError } = await handlePlanningCompletion(taskId, parsed, messages);
+            const { parsed: fullParsed } = await handlePlanningCompletion(taskId, parsed, messages);
 
             return NextResponse.json({
               hasUpdates: true,
@@ -277,15 +150,24 @@ export async function GET(
               agents: fullParsed.agents,
               executionPlan: fullParsed.execution_plan,
               messages,
-              autoDispatched: !!firstAgentId,
-              dispatchError,
+              autoDispatched: false,
+              dispatchError: null,
             });
           }
 
-          // Extract current question if present
-          if (parsed && parsed.question && parsed.options) {
-            console.log('[Planning Poll] Found question with', parsed.options.length, 'options');
-            currentQuestion = parsed;
+          // Extract current question if present (be tolerant if options are missing)
+          if (parsed && parsed.question) {
+            const normalizedOptions = Array.isArray(parsed.options) && parsed.options.length > 0
+              ? parsed.options
+              : [
+                  { id: 'continue', label: 'Continue' },
+                  { id: 'other', label: 'Other' },
+                ];
+            console.log('[Planning Poll] Found question with', normalizedOptions.length, 'options');
+            currentQuestion = {
+              question: parsed.question,
+              options: normalizedOptions,
+            };
           }
         }
       }
@@ -303,8 +185,39 @@ export async function GET(
       });
     }
 
-    console.log('[Planning Poll] No new messages found');
-    return NextResponse.json({ hasUpdates: false });
+    // FALLBACK: Check if the last stored message is actually a completion that was
+    // saved but never processed (race condition where message was stored but
+    // extractJSON failed or the completion handler never fired).
+    const lastAssistantMsg = [...messages].reverse().find((m: any) => m.role === 'assistant');
+    if (lastAssistantMsg) {
+      const parsed = extractJSON(lastAssistantMsg.content) as { status?: string; spec?: object; agents?: any[]; execution_plan?: object } | null;
+      if (parsed && parsed.status === 'complete') {
+        console.log('[Planning Poll] FALLBACK: Found unprocessed completion in stored messages — handling now');
+        const { parsed: fullParsed } = await handlePlanningCompletion(taskId, parsed, messages);
+        return NextResponse.json({
+          hasUpdates: true,
+          complete: true,
+          spec: fullParsed.spec,
+          agents: fullParsed.agents,
+          executionPlan: fullParsed.execution_plan,
+          messages,
+          autoDispatched: false,
+          dispatchError: null,
+        });
+      }
+    }
+
+    // Check for stale planning — if no new messages for >10 minutes, flag it
+    const lastMsgTimestamp = messages.length > 0 ? messages[messages.length - 1].timestamp : null;
+    const stalePlanningMs = 10 * 60 * 1000; // 10 minutes
+    const isStalePlanning = lastMsgTimestamp && (Date.now() - lastMsgTimestamp) > stalePlanningMs;
+
+    console.log('[Planning Poll] No new messages found', isStalePlanning ? '(STALE — over 10min since last message)' : '');
+    return NextResponse.json({ 
+      hasUpdates: false,
+      stalePlanning: isStalePlanning || undefined,
+      staleSinceMs: isStalePlanning ? (Date.now() - lastMsgTimestamp) : undefined,
+    });
   } catch (error) {
     console.error('Failed to poll for updates:', error);
     return NextResponse.json({ error: 'Failed to poll for updates' }, { status: 500 });

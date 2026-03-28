@@ -109,7 +109,10 @@ export async function DELETE(
     ).get(id) as { count: number };
     
     const agentCount = db.prepare(
-      'SELECT COUNT(*) as count FROM agents WHERE workspace_id = ?'
+      `SELECT COUNT(*) as count
+       FROM agents
+       WHERE workspace_id = ?
+         AND COALESCE(scope, 'workspace') = 'workspace'`
     ).get(id) as { count: number };
     
     if (taskCount.count > 0 || agentCount.count > 0) {

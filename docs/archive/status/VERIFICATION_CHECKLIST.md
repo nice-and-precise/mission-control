@@ -1,5 +1,8 @@
 # Real-Time Integration - Verification Checklist
 
+> [!NOTE]
+> Historical verification snapshot. This checklist does not represent the current cleanliness or deployment status of the local fork. Use [docs/CURRENT_LOCAL_STATUS.md](../../CURRENT_LOCAL_STATUS.md) for current truth.
+
 ## Pre-Deployment Checks
 
 ### Code Quality
