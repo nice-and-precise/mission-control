@@ -10,7 +10,8 @@
 ```bash
 cd /path/to/mission-control
 git pull origin main
-npm install
+nvm use
+npm ci
 ```
 
 ### 2. Start Development Server
@@ -20,6 +21,8 @@ npm run dev
 ```
 
 Open: http://localhost:4000
+
+If the startup guard reports a `better-sqlite3` or Node runtime mismatch, run `nvm use` and `npm ci` again before retrying.
 
 ### 3. Verify Real-Time is Working
 

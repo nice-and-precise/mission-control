@@ -7,11 +7,14 @@
 
 ```bash
 cd /path/to/mission-control
-npm install
+nvm use
+npm ci
 npm run dev
 ```
 
 Open http://localhost:4000 (production server) or http://localhost:4000 (local)
+
+If `npm run dev` fails with a runtime or `better-sqlite3` mismatch, rerun `nvm use` and `npm ci` before retrying.
 
 If `MC_API_TOKEN` is configured, add `-H "Authorization: Bearer <token>"` to the API requests below.
 
@@ -353,7 +356,7 @@ wait
 - [ ] Task modal tabs work without closing modal
 - [ ] Database migrations work without errors
 - [ ] No memory leaks from SSE connections
-- [ ] Works on production server after git pull and npm install
+- [ ] Works on production server after git pull, `nvm use`, and `npm ci`
 
 ## API Endpoint Reference
 

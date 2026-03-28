@@ -342,7 +342,7 @@ Your task data, research results, ideas, swipe history, and product programs sta
 
 ### Prerequisites
 
-- **Node.js** v18+ ([download](https://nodejs.org/))
+- **Node.js** 20.x ([download](https://nodejs.org/))
 - **OpenClaw Gateway** — `npm install -g openclaw`
 - **AI API Key** — Anthropic (recommended), OpenAI, Google, or others via OpenRouter
 
@@ -353,8 +353,11 @@ Your task data, research results, ideas, swipe history, and product programs sta
 git clone https://github.com/crshdn/mission-control.git
 cd mission-control
 
+# Use the repo-pinned runtime
+nvm use
+
 # Install dependencies
-npm install
+npm ci
 
 # Setup
 cp .env.example .env.local
@@ -367,7 +370,9 @@ OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 OPENCLAW_GATEWAY_TOKEN=your-token-here
 ```
 
-> **Where to find the token:** Check `~/.openclaw/openclaw.json` under `gateway.token`
+> **Where to find the token:** Use the same auth source your OpenClaw gateway is configured to require.
+>
+> Some installs keep the gateway token in plaintext config such as `~/.openclaw/openclaw.json` under `gateway.token`, but SecretRef-backed installs may not expose a plaintext token there.
 
 ### Run
 
@@ -381,11 +386,13 @@ npm run dev
 
 Open **http://localhost:4000** — you're in! 🎉
 
+If `better-sqlite3` fails to load after you switch Node versions, do not keep retrying under mixed runtimes. Run `nvm use`, then reinstall dependencies with `npm ci`. Only use `npm rebuild better-sqlite3` as a fallback if a clean install under Node 20 still leaves a stale native binary.
+
 ### Production
 
 ```bash
 npm run build
-npx next start -p 4000
+npm run start
 ```
 
 ---
@@ -623,8 +630,15 @@ autensa/
 ### Can't connect to OpenClaw Gateway
 
 1. Check OpenClaw is running: `openclaw gateway status`
-2. Verify URL and token in `.env.local`
+2. Verify the URL in `.env.local` and confirm Mission Control is using the same auth source your gateway expects
 3. Check firewall isn't blocking port 18789
+
+### `better-sqlite3` or Node runtime mismatch
+
+1. Switch to the repo-pinned runtime: `nvm use`
+2. Reinstall dependencies under Node 20: `npm ci`
+3. Retry `npm run dev` or `npm run build`
+4. Only use `npm rebuild better-sqlite3` if a clean install under Node 20 still leaves a stale native binary
 
 ### Planning questions not loading
 

@@ -28,7 +28,8 @@ cd mission-control
 ### 2. Install Dependencies
 
 ```bash
-npm install
+nvm use
+npm ci
 ```
 
 ### 3. Configure Environment Variables
@@ -153,9 +154,10 @@ PROJECTS_PATH=/var/lib/mission-control/workspace/projects
 ```bash
 # .env.local
 OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
+OPENCLAW_GATEWAY_TOKEN=your-local-token-if-gateway-auth-is-enabled
 ```
 
-No token required for local connections.
+Local connections may still require a token if your gateway is running with token auth enabled.
 
 ### Remote Connection (Tailscale)
 
@@ -165,14 +167,16 @@ OPENCLAW_GATEWAY_URL=wss://your-machine.tail12345.ts.net
 OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 32)
 ```
 
-**Generate a secure token:**
+**Generate a secure token when you control the gateway config directly:**
 ```bash
 openssl rand -hex 32
 ```
 
-Copy this token to both:
+Use the same token source on both sides:
 1. Mission Control's `.env.local`
-2. OpenClaw's gateway configuration
+2. OpenClaw's gateway auth configuration or secret source
+
+If your OpenClaw install uses SecretRef-backed gateway auth, resolve or rotate that external secret source instead of assuming a plaintext token lives in `~/.openclaw/openclaw.json`.
 
 ## 🚀 Production Deployment
 
@@ -180,7 +184,7 @@ Copy this token to both:
 
 ```bash
 npm run build
-npm start
+npm run start
 ```
 
 ### Environment Variables for Production
