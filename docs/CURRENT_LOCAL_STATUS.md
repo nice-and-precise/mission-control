@@ -4,6 +4,8 @@ This is the canonical current-state document for the local checkout at [the repo
 
 Use this page when you need the truth about this machine and this worktree. Treat the top-level [README.md](../README.md) and [CHANGELOG.md](../CHANGELOG.md) as upstream/public-facing docs first, then use this page for local deviations, verified runtime evidence, and known gaps.
 
+For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md). For the docs map, use [docs/README.md](README.md).
+
 ## Snapshot
 
 - Date verified: `2026-03-28`
@@ -107,6 +109,8 @@ These files are preserved for context, but they are not the current-state source
 
 ## Active Docs To Trust
 
+- [docs/README.md](README.md) for the current docs map and documentation conventions
+- [docs/LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md) for local start/restart, health, backup, and checkpoint commands
 - [README.md](../README.md) for upstream/public product framing
 - [PRODUCTION_SETUP.md](../PRODUCTION_SETUP.md) for generic setup patterns
 - [ORCHESTRATION.md](../ORCHESTRATION.md) for explicit workflow and runtime evidence behavior

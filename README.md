@@ -42,7 +42,7 @@ I highly recommend getting Hetzner VPS to run this. <a href="https://hetzner.clo
 ---
 
 > [!NOTE]
-> Running this checkout as a local fork instead of pristine upstream? See [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md) for the verified local runtime, environment overrides, archived status snapshots, and known gaps. The README below remains primarily the upstream/public product guide.
+> Running this checkout as a local fork instead of pristine upstream? See [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md) for the verified local runtime, environment overrides, archived status snapshots, and known gaps. Use [docs/README.md](docs/README.md) as the local docs index. The README below remains primarily the upstream/public product guide.
 
 ## 🚀 What's New in v2.4.0
 
