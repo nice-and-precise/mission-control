@@ -12,6 +12,7 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 - Upstream base: `v2.4.0`
 - Local checkout state: `v2.4.0-local-baseline`
 - Git ref: `work/from-pre-real-work-baseline-20260327`
+- Baseline commit: `9956877`
 - Local app URL: `http://localhost:4000`
 - Local runtime project root override:
   - `PROJECTS_PATH=/Users/jordan/Projects`
