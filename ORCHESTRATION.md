@@ -39,6 +39,22 @@ INBOX → ASSIGNED → IN_PROGRESS → TESTING → REVIEW → VERIFICATION → D
 - **VERIFICATION**: Reviewer/verifier is actively confirming the work is ready to ship
 - **DONE**: Task completed and approved
 
+## Strict Stage Ownership
+
+For the strict workflow template on this fork:
+
+- `inbox` is unassigned triage
+- `assigned` and `in_progress` are builder-owned
+- `testing` is tester-owned
+- `review` is queue-only
+- `verification` is reviewer-owned
+
+Mission Control now enforces that ownership in both task updates and dispatch:
+
+- illegal manual jumps like `inbox -> in_progress` are rejected with `409`
+- explicit role/status mismatches like `testing + builder` or `verification + tester` are rejected with `409`
+- dispatch fails closed on workflow mismatch instead of sending the wrong prompt to the wrong agent
+
 ## Workflow Authority
 
 Mission Control can recover **visibility evidence** from the OpenClaw session tree and the isolated workspace when an agent run fails to POST the usual artifacts.
@@ -65,6 +81,12 @@ For repo-backed tasks, the primary handoff surface is:
 
 Do not treat an empty root output folder as sufficient reason to fail a repo-backed tester/reviewer handoff when those repo artifacts exist.
 
+For repo-backed testing/review prompts:
+
+- shell commands should use `cd <workspace> && ...`
+- non-shell file tools like `read`, `edit`, `find`, `glob`, and file-path-based `ls` must use absolute paths under the task workspace
+- when inspecting a deliverable, copy the absolute path exactly as listed instead of using a bare repo-relative path
+
 In the strict workflow template:
 - `review` is queue-only
 - `verification` is owned by the `reviewer` role
@@ -79,6 +101,14 @@ When a task is dispatched to you, the message includes:
 - API endpoints to call
 
 For task dispatches, Mission Control now starts a fresh OpenClaw run on the existing routing key by prepending `/new` to the dispatch message. That clears stale task context between reruns without changing the stable session key.
+
+That stable-key behavior is expected. A fresh rerun should normally show:
+
+- the same `sessionKey`
+- a new `sessionId`
+- fresh task instructions at the top of the latest run
+
+Do not treat reused session keys by themselves as evidence of stale dispatch state.
 
 On this machine, use a normal local projects root such as `/Users/jordan/Projects`. Do not run Mission Control builder workspaces from file-provider-managed roots like `~/Documents` if macOS has attached file-provider attributes there.
 

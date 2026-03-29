@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryAll, queryOne, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { getMissionControlUrl } from '@/lib/config';
 import { CreateTaskSchema } from '@/lib/validation';
+import { populateTaskRolesFromAgents } from '@/lib/workflow-engine';
 import type { Task, CreateTaskRequest, Agent } from '@/lib/types';
 
 // GET /api/tasks - List all tasks with optional filters
+
+export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -96,10 +100,17 @@ export async function POST(request: NextRequest) {
 
     const workspaceId = validatedData.workspace_id || 'default';
     const status = validatedData.status || 'inbox';
-    
+
+    // Auto-assign the workspace's default workflow template
+    const defaultTemplate = queryOne<{ id: string }>(
+      'SELECT id FROM workflow_templates WHERE workspace_id = ? AND is_default = 1 LIMIT 1',
+      [workspaceId]
+    );
+    const workflowTemplateId = defaultTemplate?.id || null;
+
     run(
-      `INSERT INTO tasks (id, title, description, status, priority, assigned_agent_id, created_by_agent_id, workspace_id, business_id, due_date, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, title, description, status, priority, assigned_agent_id, created_by_agent_id, workspace_id, business_id, due_date, workflow_template_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         validatedData.title,
@@ -111,6 +122,7 @@ export async function POST(request: NextRequest) {
         workspaceId,
         validatedData.business_id || 'default',
         validatedData.due_date || null,
+        workflowTemplateId,
         now,
         now,
       ]
@@ -145,6 +157,9 @@ export async function POST(request: NextRequest) {
       [id]
     );
     
+    // Auto-populate workflow roles from workspace agents
+    populateTaskRolesFromAgents(id, workspaceId);
+
     // Broadcast task creation via SSE
     if (task) {
       broadcast({
@@ -152,8 +167,50 @@ export async function POST(request: NextRequest) {
         payload: task,
       });
     }
-    
-    return NextResponse.json(task, { status: 201 });
+
+    if (task?.assigned_agent_id && task.status === 'assigned') {
+      const missionControlUrl = getMissionControlUrl();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (process.env.MC_API_TOKEN) {
+        headers['Authorization'] = `Bearer ${process.env.MC_API_TOKEN}`;
+      }
+
+      try {
+        const dispatchRes = await fetch(`${missionControlUrl}/api/tasks/${id}/dispatch`, {
+          method: 'POST',
+          headers,
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        if (!dispatchRes.ok) {
+          const errorText = await dispatchRes.text();
+          run(
+            'UPDATE tasks SET planning_dispatch_error = ?, updated_at = ? WHERE id = ?',
+            [`Auto-dispatch failed (${dispatchRes.status}): ${errorText}`, now, id]
+          );
+        }
+      } catch (err) {
+        run(
+          'UPDATE tasks SET planning_dispatch_error = ?, updated_at = ? WHERE id = ?',
+          [`Auto-dispatch error: ${(err as Error).message}`, now, id]
+        );
+      }
+    }
+
+    const finalTask = queryOne<Task>(
+      `SELECT t.*,
+        aa.name as assigned_agent_name,
+        aa.avatar_emoji as assigned_agent_emoji,
+        ca.name as created_by_agent_name,
+        ca.avatar_emoji as created_by_agent_emoji
+       FROM tasks t
+       LEFT JOIN agents aa ON t.assigned_agent_id = aa.id
+       LEFT JOIN agents ca ON t.created_by_agent_id = ca.id
+       WHERE t.id = ?`,
+      [id]
+    );
+
+    return NextResponse.json(finalTask || task, { status: 201 });
   } catch (error) {
     console.error('Failed to create task:', error);
     return NextResponse.json({ error: 'Failed to create task' }, { status: 500 });

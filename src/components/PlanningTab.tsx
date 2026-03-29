@@ -586,7 +586,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           <div>
             <h3 className="font-medium mb-2">Suggested Task Agents:</h3>
             <p className="text-xs text-mc-text-secondary mb-3">
-              These are planner suggestions for this task. They are not automatically added to the workspace roster or used as the execution team.
+              These are planner suggestions for this task. They stay in the task plan only and are not created as agent records or used as the execution team unless you explicitly create them later.
             </p>
             <div className="space-y-2">
               {state.agents.map((agent, i) => (
@@ -798,7 +798,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
                   <AlertCircle className="w-8 h-8 text-amber-400 mx-auto mb-3" />
                   <p className="text-amber-300 font-medium mb-2">Planning appears stuck</p>
                   <p className="text-mc-text-secondary text-sm mb-4 max-w-sm">
-                    The orchestrator hasn&apos;t responded in a while. This can happen when the completion message was processed but the dispatch didn&apos;t fire.
+                    The orchestrator hasn&apos;t responded in a while. This can happen when the plan finished but Mission Control did not reconcile the completion into the approval state.
                   </p>
                   <div className="flex items-center justify-center gap-3">
                     <button
@@ -814,7 +814,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
                       ) : (
                         <>
                           <CheckCircle className="w-4 h-4" />
-                          Force Complete &amp; Dispatch
+                          Recover Plan for Approval
                         </>
                       )}
                     </button>

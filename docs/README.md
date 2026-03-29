@@ -4,8 +4,10 @@ Start here when you need to know which Mission Control docs to trust.
 
 ## Active Docs
 
+- [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md): shareable verification contract for a fresh clone or handoff
 - [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md): canonical truth for this machine and this local fork
 - [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md): short local ops commands for start, health, backup, and cleanup conventions
+- [USER_GUIDE.md](USER_GUIDE.md): operator entrypoint that separates portable setup from machine-local runbooks
 - [../README.md](../README.md): upstream/public-facing product guide
 - [../ORCHESTRATION.md](../ORCHESTRATION.md): workflow behavior and runtime evidence expectations
 - [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md): agent callback and completion-marker contract
@@ -25,6 +27,7 @@ Start here when you need to know which Mission Control docs to trust.
 ## Documentation Conventions
 
 - Keep machine-specific truth in [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md), not in upstream/public docs.
+- Keep the reproducible verification gate in [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md), not in ad hoc handoff notes.
 - Keep local operator commands in [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md), not scattered across status notes.
 - Use repo-relative links inside docs.
 - Mark docs clearly as `active`, `reference`, or `historical` so readers know what wins in a conflict.

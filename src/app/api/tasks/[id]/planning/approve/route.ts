@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, queryOne, run } from '@/lib/db';
 import { createConvoy } from '@/lib/convoy';
+import { getMissionControlUrl } from '@/lib/config';
 import { handleStageTransition, getTaskRoles, populateTaskRolesFromAgents } from '@/lib/workflow-engine';
 import { buildPlanningSpecMarkdown, parsePlanningSpecValue } from '@/lib/planning-agents';
 
@@ -105,6 +106,28 @@ export async function POST(
     const handoff = await handleStageTransition(taskId, 'assigned', {
       previousStatus: 'planning',
     });
+
+    if (handoff.success && !handoff.handedOff) {
+      const missionControlUrl = getMissionControlUrl();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (process.env.MC_API_TOKEN) {
+        headers['Authorization'] = `Bearer ${process.env.MC_API_TOKEN}`;
+      }
+
+      const dispatchRes = await fetch(`${missionControlUrl}/api/tasks/${taskId}/dispatch`, {
+        method: 'POST',
+        headers,
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!dispatchRes.ok) {
+        const errorText = await dispatchRes.text();
+        return NextResponse.json({
+          error: `Failed to dispatch builder after approval: ${errorText}`,
+          convoyCreated,
+        }, { status: dispatchRes.status >= 400 ? dispatchRes.status : 500 });
+      }
+    }
 
     if (!handoff.success) {
       return NextResponse.json({

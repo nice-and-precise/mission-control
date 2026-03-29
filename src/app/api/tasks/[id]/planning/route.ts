@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb, queryAll, queryOne, run } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
-import { extractJSON } from '@/lib/planning-utils';
+import { finalizePlanningCompletion, reconcilePlanningTranscript } from '@/lib/planning-utils';
 import { cleanupTaskScopedAgents } from '@/lib/planning-agents';
 // File system imports removed - using OpenClaw API instead
 
@@ -36,19 +36,28 @@ export async function GET(
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
 
-    // Parse planning messages from JSON
-    const messages = task.planning_messages ? JSON.parse(task.planning_messages) : [];
+    let statusReason = task.status_reason || null;
+    let spec = task.planning_spec ? JSON.parse(task.planning_spec) : null;
+    let agents = task.planning_agents ? JSON.parse(task.planning_agents) : null;
+    let isComplete = !!task.planning_complete;
 
-    // Find the latest question (last assistant message with question structure)
-    const lastAssistantMessage = [...messages].reverse().find((m: { role: string }) => m.role === 'assistant');
-    let currentQuestion = null;
+    const resolution = isComplete
+      ? {
+          messages: task.planning_messages ? JSON.parse(task.planning_messages) : [],
+          currentQuestion: null,
+          completion: null,
+          changed: false,
+        }
+      : await reconcilePlanningTranscript(task, { refreshFromOpenClaw: true });
 
-    if (lastAssistantMessage) {
-      // Use extractJSON to handle code blocks and surrounding text
-      const parsed = extractJSON(lastAssistantMessage.content);
-      if (parsed && 'question' in parsed) {
-        currentQuestion = parsed;
-      }
+    if (!isComplete && resolution.completion) {
+      const finalized = await finalizePlanningCompletion(taskId, resolution.messages, resolution.completion);
+      spec = finalized.spec || {};
+      agents = finalized.agents;
+      isComplete = true;
+      statusReason = 'Planning complete — awaiting approval before execution';
+    } else if (!isComplete && resolution.changed) {
+      run('UPDATE tasks SET planning_messages = ? WHERE id = ?', [JSON.stringify(resolution.messages), taskId]);
     }
 
     const lockedSpec = getDb().prepare('SELECT id FROM planning_specs WHERE task_id = ?').get(taskId) as { id: string } | undefined;
@@ -56,15 +65,15 @@ export async function GET(
     return NextResponse.json({
       taskId,
       sessionKey: task.planning_session_key,
-      messages,
-      currentQuestion,
-      isComplete: !!task.planning_complete,
-      spec: task.planning_spec ? JSON.parse(task.planning_spec) : null,
-      agents: task.planning_agents ? JSON.parse(task.planning_agents) : null,
-      isStarted: messages.length > 0,
+      messages: resolution.messages,
+      currentQuestion: isComplete ? null : resolution.currentQuestion,
+      isComplete,
+      spec,
+      agents,
+      isStarted: resolution.messages.length > 0,
       isApproved: !!lockedSpec,
       taskStatus: task.status,
-      statusReason: task.status_reason || null,
+      statusReason,
       dispatchError: lockedSpec ? (task.planning_dispatch_error || null) : null,
     });
   } catch (error) {

@@ -1,4 +1,6 @@
 
+import { getMissionControlUrl } from '@/lib/config';
+
 
 interface AutoDispatchOptions {
   taskId: string;
@@ -9,8 +11,11 @@ interface AutoDispatchOptions {
 }
 
 /**
- * Shared utility function to trigger auto-dispatch for a task
- * Used in MissionQueue and TaskModal to eliminate duplication
+ * Narrow dispatch helper kept for server-side retry flows.
+ *
+ * Primary task creation/editing dispatch is now owned by server routes and the
+ * workflow engine. Do not reintroduce this helper into client-side status
+ * change flows; that was the source of earlier double-dispatch races.
  */
 export async function triggerAutoDispatch(options: AutoDispatchOptions): Promise<{ success: boolean; error?: string }> {
   const { taskId, taskTitle, agentId, agentName, workspaceId } = options;
@@ -20,8 +25,16 @@ export async function triggerAutoDispatch(options: AutoDispatchOptions): Promise
   }
 
   try {
-    const dispatchRes = await fetch(`/api/tasks/${taskId}/dispatch`, {
+    const missionControlUrl =
+      typeof window === 'undefined' ? getMissionControlUrl() : '';
+    const headers: Record<string, string> = {};
+    if (typeof window === 'undefined' && process.env.MC_API_TOKEN) {
+      headers.Authorization = `Bearer ${process.env.MC_API_TOKEN}`;
+    }
+
+    const dispatchRes = await fetch(`${missionControlUrl}/api/tasks/${taskId}/dispatch`, {
       method: 'POST',
+      headers,
     });
 
     if (dispatchRes.ok) {
@@ -37,20 +50,4 @@ export async function triggerAutoDispatch(options: AutoDispatchOptions): Promise
     console.error(`[Auto-Dispatch] Error for task "${taskTitle}":`, errorMessage);
     return { success: false, error: errorMessage };
   }
-}
-
-/**
- * Check if a task should trigger auto-dispatch when status changes
- * Returns true if status changed to 'in_progress' and task has assigned agent
- */
-export function shouldTriggerAutoDispatch(
-  previousStatus: string | undefined,
-  newStatus: string,
-  assignedAgentId: string | null
-): boolean {
-  const wasNotInProgress = previousStatus !== 'in_progress';
-  const isNowInProgress = newStatus === 'in_progress';
-  const hasAssignedAgent = !!assignedAgentId;
-
-  return wasNotInProgress && isNowInProgress && hasAssignedAgent;
 }

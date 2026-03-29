@@ -1,4 +1,4 @@
-import { getDb, queryOne } from '@/lib/db';
+import { getDb } from '@/lib/db';
 import type { GeneratedPlanningSpec, SuggestedPlanningAgent } from '@/lib/types';
 
 export function parsePlanningSpecValue(value: string | object | null | undefined): GeneratedPlanningSpec | null {
@@ -47,56 +47,6 @@ export function cleanupTaskScopedAgents(taskId: string): number {
   db.prepare(`DELETE FROM agents WHERE id IN (${placeholders})`).run(...agentIds);
 
   return agentIds.length;
-}
-
-export function createTaskScopedPlanningAgents(
-  taskId: string,
-  agents: SuggestedPlanningAgent[] | null | undefined
-): SuggestedPlanningAgent[] {
-  const db = getDb();
-  const task = queryOne<{ workspace_id: string }>('SELECT workspace_id FROM tasks WHERE id = ?', [taskId]);
-  if (!task || !agents?.length) return [];
-
-  const masterAgent = queryOne<{ session_key_prefix?: string }>(
-    `SELECT session_key_prefix
-     FROM agents
-     WHERE is_master = 1 AND workspace_id = ?
-     ORDER BY created_at ASC
-     LIMIT 1`,
-    [task.workspace_id]
-  );
-  const sessionKeyPrefix = masterAgent?.session_key_prefix || 'agent:main:';
-
-  cleanupTaskScopedAgents(taskId);
-
-  const insertAgent = db.prepare(`
-    INSERT INTO agents (
-      id, workspace_id, name, role, description, avatar_emoji, status,
-      soul_md, source, session_key_prefix, scope, task_id, created_at, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, 'standby', ?, 'local', ?, 'task', ?, datetime('now'), datetime('now'))
-  `);
-
-  return agents.map((agent) => {
-    const agentId = crypto.randomUUID();
-    insertAgent.run(
-      agentId,
-      task.workspace_id,
-      agent.name,
-      agent.role,
-      agent.instructions || '',
-      agent.avatar_emoji || '🤖',
-      agent.soul_md || '',
-      sessionKeyPrefix,
-      taskId
-    );
-
-    return {
-      ...agent,
-      agent_id: agentId,
-      scope: 'task',
-    };
-  });
 }
 
 export function buildPlanningSpecMarkdown(

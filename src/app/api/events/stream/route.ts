@@ -5,8 +5,15 @@
 
 import { NextRequest } from 'next/server';
 import { registerClient, unregisterClient } from '@/lib/events';
+import { attachChatListener } from '@/lib/chat-listener';
+import { isRuntimeBootEnabled } from '@/lib/runtime-boot';
 
 export const dynamic = 'force-dynamic';
+
+// Attach the chat listener on first SSE connection (idempotent)
+if (isRuntimeBootEnabled()) {
+  attachChatListener();
+}
 
 export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();

@@ -14,6 +14,8 @@ nvm use
 npm ci
 ```
 
+`nvm use` defaults this repo to Node 24 for local work. Node 20 is also supported when you need Docker or CI parity, but switching between them requires another `npm ci`.
+
 ### 2. Start Development Server
 
 ```bash
@@ -22,7 +24,7 @@ npm run dev
 
 Open: http://localhost:4000
 
-If the startup guard reports a `better-sqlite3` or Node runtime mismatch, run `nvm use` and `npm ci` again before retrying.
+If the startup guard reports a `better-sqlite3` or Node runtime mismatch, rerun `nvm use` and `npm ci` before retrying.
 
 ### 3. Verify Real-Time is Working
 

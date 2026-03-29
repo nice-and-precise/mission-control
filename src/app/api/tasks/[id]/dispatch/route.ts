@@ -5,7 +5,7 @@ import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
 import { getProjectsPath, getMissionControlUrl } from '@/lib/config';
 import { getRelevantKnowledge, formatKnowledgeForDispatch } from '@/lib/learner';
-import { getTaskWorkflow } from '@/lib/workflow-engine';
+import { getTaskWorkflow, getWorkflowOwnerRoleForStatus } from '@/lib/workflow-engine';
 import { syncGatewayAgentsToCatalog } from '@/lib/agent-catalog-sync';
 import { pickDynamicAgent } from '@/lib/task-governance';
 import { buildCheckpointContext } from '@/lib/checkpoint';
@@ -360,6 +360,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    if (task.status === 'inbox') {
+      const error = 'Cannot dispatch an inbox task. Assign it first so workflow ownership is explicit.';
+      run(
+        `UPDATE tasks
+         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+         WHERE id = ?`,
+        [error, error, now, id]
+      );
+      return NextResponse.json({ error }, { status: 409 });
+    }
+
     // Determine role-specific instructions based on workflow template
     const workflow = getTaskWorkflow(id);
     let currentStage: WorkflowStage | undefined;
@@ -367,13 +378,39 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (workflow) {
       let stageIndex = workflow.stages.findIndex(s => s.status === task.status);
       // 'assigned' isn't a workflow stage — resolve to the 'build' stage (in_progress)
-      if (stageIndex < 0 && (task.status === 'assigned' || task.status === 'inbox')) {
+      if (stageIndex < 0 && task.status === 'assigned') {
         stageIndex = workflow.stages.findIndex(s => s.role === 'builder');
       }
       if (stageIndex >= 0) {
         currentStage = workflow.stages[stageIndex];
         nextStage = workflow.stages[stageIndex + 1];
       }
+    }
+
+    const expectedRole = task.status === 'assigned'
+      ? 'builder'
+      : getWorkflowOwnerRoleForStatus(workflow, task.status);
+
+    if (expectedRole && (agent.role || '').toLowerCase() !== expectedRole.toLowerCase()) {
+      const error = `Workflow mismatch: status ${task.status} is ${expectedRole}-owned but assigned agent ${agent.name} has role ${agent.role || 'unknown'}.`;
+      run(
+        `UPDATE tasks
+         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+         WHERE id = ?`,
+        [error, error, now, id]
+      );
+      return NextResponse.json({ error }, { status: 409 });
+    }
+
+    if (workflow && currentStage && !currentStage.role) {
+      const error = `Cannot dispatch queue stage ${task.status} directly. Advance it through the workflow engine instead.`;
+      run(
+        `UPDATE tasks
+         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+         WHERE id = ?`,
+        [error, error, now, id]
+      );
+      return NextResponse.json({ error }, { status: 409 });
     }
 
     const isBuilder = !currentStage || currentStage.role === 'builder' || task.status === 'assigned';

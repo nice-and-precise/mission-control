@@ -3,7 +3,7 @@
 This guide walks you through setting up Mission Control for production use with proper configuration management.
 
 > [!NOTE]
-> This guide uses generic setup examples. For the verified state of this local fork, including the active machine override to `/Users/jordan/Projects`, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
+> This guide uses generic setup examples. For the verified state of this local fork, including the current machine-specific project-root override, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
 
 ## ⚠️ Security First
 
@@ -31,6 +31,8 @@ cd mission-control
 nvm use
 npm ci
 ```
+
+For local development, `nvm use` defaults this repo to Node 24. Node 20 is also supported, and is the better choice when you want Docker/runtime parity.
 
 ### 3. Configure Environment Variables
 
@@ -187,6 +189,8 @@ npm run build
 npm run start
 ```
 
+For containerized and production-like runtime parity, keep using Node 20 to match the existing Docker image baseline.
+
 ### Environment Variables for Production
 
 Create `.env.production.local`:
@@ -225,7 +229,7 @@ ls -la mission-control.db
 
 ### 2. Test OpenClaw Connection
 
-1. Start OpenClaw Gateway: `openclaw gateway`
+1. Start or restart the OpenClaw Gateway service: `openclaw gateway start`
 2. Open Mission Control: `http://localhost:4000`
 3. Check status indicator (top-right): Should show **ONLINE** (green)
 

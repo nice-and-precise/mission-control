@@ -3,7 +3,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { getMissionControlUrl } from '@/lib/config';
-import { handleStageTransition, handleStageFailure, getTaskWorkflow, drainQueue, populateTaskRolesFromAgents } from '@/lib/workflow-engine';
+import {
+  handleStageTransition,
+  handleStageFailure,
+  getTaskWorkflow,
+  getWorkflowOwnerRoleForStatus,
+  drainQueue,
+  populateTaskRolesFromAgents,
+} from '@/lib/workflow-engine';
 import { hasStageEvidence, canUseBoardOverride, auditBoardOverride, taskCanBeDone, recordLearnerOnTransition } from '@/lib/task-governance';
 import { updateConvoyProgress, checkConvoyCompletion } from '@/lib/convoy';
 import { syncGatewayAgentsToCatalog } from '@/lib/agent-catalog-sync';
@@ -84,6 +91,7 @@ export async function PATCH(
     const updates: string[] = [];
     const values: unknown[] = [];
     const now = new Date().toISOString();
+    const workflow = getTaskWorkflow(id);
 
     // Workflow enforcement for agent-initiated approvals.
     // Legacy review→done remains master-only, while strict verification→done
@@ -188,6 +196,103 @@ export async function PATCH(
       nextStatus = 'assigned';
     }
 
+    const currentWorkflowOwnerRole = getWorkflowOwnerRoleForStatus(workflow, existing.status);
+    const nextWorkflowOwnerRole = getWorkflowOwnerRoleForStatus(workflow, nextStatus);
+    const requestedAssignmentChange =
+      validatedData.assigned_agent_id !== undefined && validatedData.assigned_agent_id !== existing.assigned_agent_id;
+
+    if (existing.status === 'inbox' && nextStatus === 'in_progress') {
+      return NextResponse.json(
+        {
+          error: 'Illegal workflow move: inbox tasks must be assigned before they can enter in_progress.',
+        },
+        { status: 409 }
+      );
+    }
+
+    if (requestedAssignmentChange && validatedData.assigned_agent_id && nextWorkflowOwnerRole) {
+      const requestedAgent = queryOne<Pick<Agent, 'id' | 'role' | 'name'>>(
+        'SELECT id, role, name FROM agents WHERE id = ?',
+        [validatedData.assigned_agent_id]
+      );
+
+      if (!requestedAgent) {
+        return NextResponse.json({ error: 'Assigned agent not found' }, { status: 404 });
+      }
+
+      if ((requestedAgent.role || '').toLowerCase() !== nextWorkflowOwnerRole.toLowerCase()) {
+        return NextResponse.json(
+          {
+            error: `Workflow mismatch: status ${nextStatus} is ${nextWorkflowOwnerRole}-owned and cannot be assigned to ${requestedAgent.role || 'unknown'} agent ${requestedAgent.name}.`,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    if (requestedAssignmentChange && validatedData.assigned_agent_id && !nextStatus && currentWorkflowOwnerRole) {
+      const requestedAgent = queryOne<Pick<Agent, 'id' | 'role' | 'name'>>(
+        'SELECT id, role, name FROM agents WHERE id = ?',
+        [validatedData.assigned_agent_id]
+      );
+
+      if (!requestedAgent) {
+        return NextResponse.json({ error: 'Assigned agent not found' }, { status: 404 });
+      }
+
+      if ((requestedAgent.role || '').toLowerCase() !== currentWorkflowOwnerRole.toLowerCase()) {
+        return NextResponse.json(
+          {
+            error: `Workflow mismatch: status ${existing.status} is ${currentWorkflowOwnerRole}-owned and cannot be assigned to ${requestedAgent.role || 'unknown'} agent ${requestedAgent.name}.`,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    const failingBackwards =
+      nextStatus !== undefined &&
+      ['testing', 'review', 'verification'].includes(existing.status) &&
+      ['in_progress', 'assigned'].includes(nextStatus);
+
+    if (failingBackwards) {
+      if (!validatedData.status_reason) {
+        return NextResponse.json({ error: 'status_reason is required when failing a stage' }, { status: 400 });
+      }
+
+      if (validatedData.assigned_agent_id !== undefined && validatedData.assigned_agent_id !== existing.assigned_agent_id) {
+        return NextResponse.json(
+          {
+            error: 'Stage failures must be routed through workflow ownership. Do not reassign the task in the same request.',
+          },
+          { status: 409 }
+        );
+      }
+
+      const result = await handleStageFailure(id, existing.status, validatedData.status_reason);
+      if (!result.success) {
+        return NextResponse.json(
+          { error: result.error || 'Failed to process stage failure' },
+          { status: 500 }
+        );
+      }
+
+      const failedTask = queryOne<Task>(
+        `SELECT t.*,
+          aa.name as assigned_agent_name,
+          aa.avatar_emoji as assigned_agent_emoji,
+          ca.name as created_by_agent_name,
+          ca.avatar_emoji as created_by_agent_emoji
+         FROM tasks t
+         LEFT JOIN agents aa ON t.assigned_agent_id = aa.id
+         LEFT JOIN agents ca ON t.created_by_agent_id = ca.id
+         WHERE t.id = ?`,
+        [id]
+      );
+
+      return NextResponse.json(failedTask);
+    }
+
     // Handle status change
     if (nextStatus !== undefined && nextStatus !== existing.status) {
       if (existing.status === 'planning' && ['assigned', 'in_progress', 'testing', 'review', 'verification', 'done'].includes(nextStatus) && !planningSpecLocked) {
@@ -207,12 +312,6 @@ export async function PATCH(
           { error: 'Evidence gate failed: stage transition requires at least one deliverable and one activity note' },
           { status: 400 }
         );
-      }
-
-      // Failure transitions must include status_reason
-      const failingBackwards = ['testing', 'review', 'verification'].includes(existing.status) && ['in_progress', 'assigned'].includes(nextStatus);
-      if (failingBackwards && !validatedData.status_reason) {
-        return NextResponse.json({ error: 'status_reason is required when failing a stage' }, { status: 400 });
       }
 
       if (nextStatus === 'done' && !boardOverrideAllowed && !taskCanBeDone(id)) {
@@ -255,7 +354,11 @@ export async function PATCH(
     }
 
     // Handle assignment change
-    if (validatedData.assigned_agent_id !== undefined && validatedData.assigned_agent_id !== existing.assigned_agent_id) {
+    if (
+      nextStatus !== 'inbox' &&
+      validatedData.assigned_agent_id !== undefined &&
+      validatedData.assigned_agent_id !== existing.assigned_agent_id
+    ) {
       updates.push('assigned_agent_id = ?');
       values.push(validatedData.assigned_agent_id);
 
@@ -271,7 +374,7 @@ export async function PATCH(
           // Auto-dispatch if already in assigned status or being assigned now
           if (existing.status === 'assigned' || nextStatus === 'assigned') {
             shouldDispatch = true;
-          } else if (['testing', 'review', 'verification'].includes(nextStatus || existing.status)) {
+          } else if (['in_progress', 'testing', 'review', 'verification'].includes(nextStatus || existing.status)) {
             // Agent manually assigned to a task in a workflow stage — dispatch directly
             shouldDispatchWorkflowStage = true;
           }
@@ -295,11 +398,15 @@ export async function PATCH(
     if (
       nextStatus &&
       nextStatus !== existing.status &&
-      ['in_progress', 'testing', 'review', 'verification', 'done'].includes(nextStatus) &&
+      ['inbox', 'in_progress', 'testing', 'review', 'verification', 'done'].includes(nextStatus) &&
       validatedData.status_reason === undefined
     ) {
       updates.push('planning_dispatch_error = NULL');
       updates.push('status_reason = NULL');
+    }
+
+    if (nextStatus === 'inbox') {
+      updates.push('assigned_agent_id = NULL');
     }
 
     updates.push('updated_at = ?');
@@ -308,7 +415,11 @@ export async function PATCH(
 
     run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
 
-    if (nextStatus && nextStatus !== existing.status && (validatedData.updated_by_agent_id || nextStatus === 'done')) {
+    if (
+      nextStatus &&
+      nextStatus !== existing.status &&
+      (validatedData.updated_by_agent_id || nextStatus === 'done' || nextStatus === 'inbox')
+    ) {
       endActiveTaskSessions(id, now);
     }
 
@@ -376,7 +487,7 @@ export async function PATCH(
 
     // Trigger workflow handoff for forward stage transitions (testing, review, verification)
     // This is separate from the shouldDispatch block above which handles 'assigned' status
-    const workflowStages = ['testing', 'review', 'verification'];
+    const workflowStages = ['in_progress', 'testing', 'review', 'verification'];
     if (
       nextStatus &&
       nextStatus !== existing.status &&

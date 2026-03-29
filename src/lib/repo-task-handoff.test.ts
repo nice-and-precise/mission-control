@@ -6,6 +6,7 @@ import {
   buildRepoArtifactSection,
   buildTesterInstructions,
   buildVerifierInstructions,
+  getTaskDispatchDeliverables,
   getRepoTaskSurfacePath,
   isRepoBackedTask,
   PR_DELIVERABLE_DESCRIPTION,
@@ -81,6 +82,8 @@ test('repo-backed tester/reviewer section includes workspace, PR, and deliverabl
   assert.match(section, /\*\*PR:\*\* https:\/\/github.com\/example\/repo\/pull\/12/);
   assert.match(section, /The shell tool is stateless: a standalone `cd \/tmp\/worktree` does not persist to later commands/);
   assert.match(section, /cd \/tmp\/worktree && <command>/);
+  assert.match(section, /For non-shell file tools such as `read`, `edit`, `ls`, `find`, or `glob`, use absolute paths under `\/tmp\/worktree`/);
+  assert.match(section, /Do not call `read` on `services\/\.\.\.`; call it on `\/tmp\/worktree\/services\/\.\.\.`/);
   assert.match(section, /do not invent alternate top-level paths/i);
   assert.match(section, /\[file\] src\/app\.ts/);
   assert.doesNotMatch(section, /\*\*OUTPUT DIRECTORY:\*\*/);
@@ -135,6 +138,8 @@ test('tester instructions require explicit callback completion and blocked fallb
   assert.match(instructions, /must complete the Mission Control callback API calls below before ending the run/i);
   assert.match(instructions, /POST http:\/\/localhost:4000\/api\/tasks\/task-1\/fail/);
   assert.match(instructions, /"updated_by_agent_id": "agent-1"/);
+  assert.match(instructions, /\*\*FILE ACCESS RULES:\*\*/);
+  assert.match(instructions, /Do not call `read` on `services\/\.\.\.`; call it on `\/abs\/path\/services\/\.\.\.`/);
 });
 
 test('verifier instructions require explicit callback completion and blocked fallback', () => {
@@ -154,6 +159,20 @@ test('verifier instructions require explicit callback completion and blocked fal
   assert.match(instructions, /must complete the Mission Control callback API calls below before ending the run/i);
   assert.match(instructions, /POST http:\/\/localhost:4000\/api\/tasks\/task-1\/fail/);
   assert.match(instructions, /"updated_by_agent_id": "agent-2"/);
+});
+
+test('verifier instructions require absolute-path file access for repo-backed review', () => {
+  const instructions = buildVerifierInstructions({
+    taskId: 'task-1',
+    missionControlUrl: 'http://localhost:4000',
+    nextStatus: 'done',
+    updatedByAgentId: 'agent-2',
+    repoBacked: true,
+  });
+
+  assert.match(instructions, /\*\*FILE ACCESS RULES:\*\*/);
+  assert.match(instructions, /use absolute paths under \*\*REPO WORKSPACE\*\*/i);
+  assert.match(instructions, /Do not call `read` on `services\/\.\.\.`; call it on `\/abs\/path\/services\/\.\.\.`/);
 });
 
 test('supportsPullRequestWorkflow only enables GitHub-backed remotes', () => {
@@ -210,4 +229,74 @@ test('syncTaskPrDeliverable removes the auto-synced PR deliverable when pr_url i
   );
 
   assert.equal(Number(row?.count || 0), 0);
+});
+
+test('dispatch deliverable preview dedupes duplicate PR rows and preserves file coverage', () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+  seedTask({
+    id: taskId,
+    workspaceId,
+    repoUrl: 'https://github.com/example/repo',
+    workspacePath: '/tmp/worktree',
+  });
+
+  const deliverables = [
+    ['url', PR_DELIVERABLE_TITLE, 'https://github.com/example/repo/pull/9', PR_DELIVERABLE_DESCRIPTION],
+    ['url', PR_DELIVERABLE_TITLE, 'https://github.com/example/repo/pull/9', PR_DELIVERABLE_DESCRIPTION],
+    ['file', 'services/obituary-intelligence-engine/src/contracts.py', '/tmp/worktree/services/obituary-intelligence-engine/src/contracts.py', null],
+    ['file', 'services/obituary-intelligence-engine/tests/test_modules.py', '/tmp/worktree/services/obituary-intelligence-engine/tests/test_modules.py', null],
+    ['file', 'services/crm-adapter/src/leadContract.js', '/tmp/worktree/services/crm-adapter/src/leadContract.js', null],
+  ] as const;
+
+  deliverables.forEach(([type, title, path, description]) => {
+    run(
+      `INSERT INTO task_deliverables (id, task_id, deliverable_type, title, path, description, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [crypto.randomUUID(), taskId, type, title, path, description],
+    );
+  });
+
+  const preview = getTaskDispatchDeliverables(taskId);
+  const prDeliverables = preview.filter((deliverable) => deliverable.deliverable_type === 'url');
+
+  assert.equal(prDeliverables.length, 1);
+  assert.ok(preview.some((deliverable) => deliverable.title === 'services/obituary-intelligence-engine/src/contracts.py'));
+  assert.ok(preview.some((deliverable) => deliverable.title === 'services/obituary-intelligence-engine/tests/test_modules.py'));
+});
+
+test('syncTaskPrDeliverable canonicalizes and dedupes manual PR deliverables', () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+  seedTask({
+    id: taskId,
+    workspaceId,
+    repoUrl: 'https://github.com/example/repo',
+    workspacePath: '/tmp/worktree',
+  });
+
+  run(
+    `INSERT INTO task_deliverables (id, task_id, deliverable_type, title, path, description, created_at)
+     VALUES (?, ?, 'url', 'Pull Request', 'https://github.com/example/repo/pull/11', NULL, datetime('now'))`,
+    [crypto.randomUUID(), taskId],
+  );
+  run(
+    `INSERT INTO task_deliverables (id, task_id, deliverable_type, title, path, description, created_at)
+     VALUES (?, ?, 'url', 'Pull Request', 'https://github.com/example/repo/pull/11', ?, datetime('now'))`,
+    [crypto.randomUUID(), taskId, PR_DELIVERABLE_DESCRIPTION],
+  );
+
+  syncTaskPrDeliverable(taskId, 'https://github.com/example/repo/pull/11');
+
+  const rows = queryAll<{ title: string; path: string; description: string | null }>(
+    `SELECT title, path, description
+     FROM task_deliverables
+     WHERE task_id = ? AND deliverable_type = 'url'`,
+    [taskId],
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.title, PR_DELIVERABLE_TITLE);
+  assert.equal(rows[0]?.path, 'https://github.com/example/repo/pull/11');
+  assert.equal(rows[0]?.description, PR_DELIVERABLE_DESCRIPTION);
 });

@@ -1,7 +1,10 @@
 import { runHealthCheckCycle } from '@/lib/agent-health';
+import { acquireRuntimeLease } from '@/lib/runtime-leases';
+import { isRuntimeBootEnabled } from '@/lib/runtime-boot';
 
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 30_000;
 const GLOBAL_HEALTH_TIMER_KEY = '__mcAgentHealthTimer__';
+const HEALTH_SCHEDULER_LEASE = 'agent-health-scheduler';
 
 let healthCheckRunnerForTests: (() => Promise<unknown>) | null = null;
 
@@ -12,8 +15,13 @@ function getHealthCheckIntervalMs(): number {
 
 async function runScheduledHealthCheck(reason: 'startup' | 'scheduled'): Promise<void> {
   const runner = healthCheckRunnerForTests || runHealthCheckCycle;
+  const intervalMs = getHealthCheckIntervalMs();
+  const ttlMs = Math.max(intervalMs * 3, 60_000);
 
   try {
+    if (!acquireRuntimeLease(HEALTH_SCHEDULER_LEASE, { ttlMs })) {
+      return;
+    }
     await runner();
   } catch (error) {
     console.error(`[HealthScheduler] ${reason} health check failed:`, error);
@@ -21,6 +29,10 @@ async function runScheduledHealthCheck(reason: 'startup' | 'scheduled'): Promise
 }
 
 export function ensureHealthCheckScheduled(): void {
+  if (!isRuntimeBootEnabled() && !healthCheckRunnerForTests) {
+    return;
+  }
+
   const globalState = globalThis as typeof globalThis & {
     __mcAgentHealthTimer__?: NodeJS.Timeout;
   };

@@ -12,6 +12,7 @@ import type { Agent, AgentHealth, AgentHealthState, Task } from '@/lib/types';
 const STALL_THRESHOLD_MINUTES = 5;
 const STUCK_THRESHOLD_MINUTES = 15;
 const AUTO_NUDGE_AFTER_STALLS = 3;
+const ASSIGNED_STALE_MINUTES = 2;
 const UNRECONCILED_RUN_ERROR_PREFIX = 'Run ended without completion callback or workflow handoff';
 let healthCheckCycleInFlight: Promise<AgentHealth[]> | null = null;
 let healthCheckImplementationForTests: (() => Promise<AgentHealth[]>) | null = null;
@@ -82,6 +83,10 @@ export function checkAgentHealth(agentId: string): AgentHealthState {
  * Run a full health check cycle across all agents with active tasks.
  */
 async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
+  const now = new Date().toISOString();
+
+  await sweepOrphanedAssignedTasks(now);
+
   const activeAgents = queryAll<{ id: string }>(
     `SELECT DISTINCT assigned_agent_id as id FROM tasks WHERE status IN ('assigned', 'in_progress', 'testing', 'verification') AND assigned_agent_id IS NOT NULL`
   );
@@ -93,7 +98,6 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
 
   const allAgentIds = Array.from(new Set([...activeAgents.map(a => a.id), ...workingAgents.map(a => a.id)]));
   const results: AgentHealth[] = [];
-  const now = new Date().toISOString();
 
   for (const agentId of allAgentIds) {
     const healthState = checkAgentHealth(agentId);
@@ -153,6 +157,8 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
     if (
       activeTask &&
       (healthState === 'stalled' || healthState === 'stuck' || healthState === 'zombie') &&
+      !shouldSuppressPendingDispatchHealthNoise(activeTask, healthState) &&
+      !shouldSuppressTerminalRunHealthNoise(activeTask, healthState) &&
       !shouldSuppressHealthEvidenceActivity(
         queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [activeTask.id]),
         reconciliationState,
@@ -197,6 +203,7 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
   const unreconciledRuns = queryAll<
     Task & {
       latest_session_status?: string;
+      latest_session_created_at?: string;
       latest_session_updated_at?: string;
       latest_openclaw_session_id?: string;
       latest_agent_role?: string | null;
@@ -219,6 +226,7 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
      SELECT
        t.*,
        os.status as latest_session_status,
+       os.created_at as latest_session_created_at,
        os.updated_at as latest_session_updated_at,
        os.openclaw_session_id as latest_openclaw_session_id,
        a.role as latest_agent_role,
@@ -289,6 +297,27 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
     }
 
     const error = `Run ended without completion callback or workflow handoff (${task.latest_session_status || 'ended'} session).`;
+    const existingRunError = queryOne<{ id: string }>(
+      `SELECT id
+       FROM task_activities
+       WHERE task_id = ?
+         AND message = ?
+         AND created_at >= COALESCE(?, ?, created_at)
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [task.id, error, task.latest_session_created_at || null, task.latest_session_updated_at || null]
+    );
+
+    if (existingRunError && task.planning_dispatch_error === error) {
+      if (task.assigned_agent_id) {
+        run(
+          `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
+          [now, task.assigned_agent_id]
+        );
+      }
+      continue;
+    }
+
     run(
       `UPDATE tasks
        SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
@@ -308,8 +337,26 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
     }
   }
 
-  // Sweep for orphaned assigned tasks — planning complete but never dispatched
-  const ASSIGNED_STALE_MINUTES = 2;
+  // Also set idle agents
+  const idleAgents = queryAll<{ id: string }>(
+    `SELECT id FROM agents WHERE status = 'standby' AND id NOT IN (SELECT assigned_agent_id FROM tasks WHERE status IN ('assigned', 'in_progress', 'testing', 'verification') AND assigned_agent_id IS NOT NULL)`
+  );
+  for (const { id: agentId } of idleAgents) {
+    const existing = queryOne<{ id: string }>('SELECT id FROM agent_health WHERE agent_id = ?', [agentId]);
+    if (existing) {
+      run(`UPDATE agent_health SET health_state = 'idle', task_id = NULL, consecutive_stall_checks = 0, updated_at = ? WHERE agent_id = ?`, [now, agentId]);
+    } else {
+      run(
+        `INSERT INTO agent_health (id, agent_id, health_state, updated_at) VALUES (?, ?, 'idle', ?)`,
+        [uuidv4(), agentId, now]
+      );
+    }
+  }
+
+  return results;
+}
+
+async function sweepOrphanedAssignedTasks(now: string): Promise<void> {
   const orphanedTasks = queryAll<Task>(
     `SELECT * FROM tasks 
      WHERE status = 'assigned' 
@@ -357,24 +404,46 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
       console.error(`[Health] Auto-dispatch error for orphaned task "${task.title}":`, (err as Error).message);
     }
   }
+}
 
-  // Also set idle agents
-  const idleAgents = queryAll<{ id: string }>(
-    `SELECT id FROM agents WHERE status = 'standby' AND id NOT IN (SELECT assigned_agent_id FROM tasks WHERE status IN ('assigned', 'in_progress', 'testing', 'verification') AND assigned_agent_id IS NOT NULL)`
+function shouldSuppressPendingDispatchHealthNoise(
+  task: Task,
+  healthState: AgentHealthState,
+): boolean {
+  if (healthState !== 'zombie') return false;
+  if (task.status !== 'assigned') return false;
+
+  const activeRootSessionCount = queryOne<{ count: number }>(
+    `SELECT COUNT(*) AS count
+     FROM openclaw_sessions
+     WHERE task_id = ?
+       AND session_type != 'subagent'
+       AND status = 'active'`,
+    [task.id],
+  )?.count || 0;
+
+  return activeRootSessionCount === 0;
+}
+
+function shouldSuppressTerminalRunHealthNoise(
+  task: Task,
+  healthState: AgentHealthState,
+): boolean {
+  if (healthState !== 'zombie') return false;
+  if (task.planning_dispatch_error?.trim() || task.status_reason?.trim()) return false;
+
+  const latestTerminalTaskSession = queryOne<{ status: string; ended_at: string | null; updated_at: string | null }>(
+    `SELECT status, ended_at, updated_at
+     FROM openclaw_sessions
+     WHERE task_id = ?
+       AND session_type != 'subagent'
+       AND status != 'active'
+     ORDER BY COALESCE(ended_at, updated_at, created_at) DESC
+     LIMIT 1`,
+    [task.id],
   );
-  for (const { id: agentId } of idleAgents) {
-    const existing = queryOne<{ id: string }>('SELECT id FROM agent_health WHERE agent_id = ?', [agentId]);
-    if (existing) {
-      run(`UPDATE agent_health SET health_state = 'idle', task_id = NULL, consecutive_stall_checks = 0, updated_at = ? WHERE agent_id = ?`, [now, agentId]);
-    } else {
-      run(
-        `INSERT INTO agent_health (id, agent_id, health_state, updated_at) VALUES (?, ?, 'idle', ?)`,
-        [uuidv4(), agentId, now]
-      );
-    }
-  }
 
-  return results;
+  return Boolean(latestTerminalTaskSession);
 }
 
 export async function runHealthCheckCycle(): Promise<AgentHealth[]> {

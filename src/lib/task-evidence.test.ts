@@ -19,8 +19,12 @@ import { GET as getSubagentRoute } from '../app/api/tasks/[id]/subagent/route';
 import { GET as getDeliverablesRoute } from '../app/api/tasks/[id]/deliverables/route';
 import { GET as getAgentStreamRoute } from '../app/api/tasks/[id]/agent-stream/route';
 import { DELETE as deleteTaskRoute } from '../app/api/tasks/[id]/route';
+import { POST as dispatchTaskRoute } from '../app/api/tasks/[id]/dispatch/route';
+
+const originalFetch = global.fetch;
 
 afterEach(() => {
+  global.fetch = originalFetch;
   setGatewaySessionsResolverForTests(null);
   setGatewaySessionHistoryResolverForTests(null);
   getOpenClawClient().disconnect();
@@ -804,6 +808,61 @@ test('runHealthCheckCycle suppresses repeated zombie activities once a task is a
   assert.equal(after, before);
 });
 
+test('runHealthCheckCycle suppresses transient zombie noise right after a terminal task run ends', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = buildTaskId('c10se0ut');
+  const reviewerId = crypto.randomUUID();
+  const now = new Date();
+  const endedAt = new Date(now.getTime() - 5_000).toISOString();
+
+  seedAgent({
+    id: reviewerId,
+    workspaceId,
+    name: 'Reviewer Agent',
+    role: 'reviewer',
+    status: 'working',
+    prefix: 'agent:main:',
+  });
+  seedTask({
+    id: taskId,
+    workspaceId,
+    assignedAgentId: reviewerId,
+    status: 'verification',
+  });
+  seedTaskSession({
+    taskId,
+    agentId: reviewerId,
+    openclawSessionId: 'mission-control-reviewer-agent',
+    status: 'completed',
+  });
+  setTaskSessionTimes({
+    taskId,
+    openclawSessionId: 'mission-control-reviewer-agent',
+    createdAt: endedAt,
+    updatedAt: endedAt,
+    endedAt,
+  });
+  setGatewaySessionHistoryResolverForTests(async () => ({ items: [] }));
+
+  const before = queryOne<{ count: number }>(
+    `SELECT COUNT(*) AS count
+     FROM task_activities
+     WHERE task_id = ? AND message LIKE 'Agent health:%'`,
+    [taskId],
+  )?.count || 0;
+
+  await runHealthCheckCycle();
+
+  const after = queryOne<{ count: number }>(
+    `SELECT COUNT(*) AS count
+     FROM task_activities
+     WHERE task_id = ? AND message LIKE 'Agent health:%'`,
+    [taskId],
+  )?.count || 0;
+
+  assert.equal(after, before);
+});
+
 test('task delete clears non-cascading task references before removing the task', async () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;
   const taskId = buildTaskId('d371e777');
@@ -1205,6 +1264,101 @@ test('runHealthCheckCycle turns a terminal runtime error into an explicit blocke
   assert.equal(agent?.status, 'standby');
 });
 
+test('runHealthCheckCycle auto-dispatches stale assigned tasks without logging zombie noise', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = buildTaskId('b0b0b0b0');
+  const builderId = crypto.randomUUID();
+  const staleUpdatedAt = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+
+  seedAgent({
+    id: builderId,
+    workspaceId,
+    name: 'Builder Agent',
+    role: 'builder',
+    status: 'standby',
+    prefix: 'agent:coder:',
+  });
+  seedTask({
+    id: taskId,
+    workspaceId,
+    assignedAgentId: builderId,
+    status: 'assigned',
+  });
+  run(
+    `UPDATE tasks
+     SET planning_complete = 1,
+         updated_at = ?,
+         planning_spec = ?
+     WHERE id = ?`,
+    [
+      staleUpdatedAt,
+      JSON.stringify({
+        title: 'Runtime evidence task',
+        summary: 'Recover orphaned assigned dispatches.',
+        deliverables: ['builder session'],
+        success_criteria: ['task dispatches'],
+        constraints: {},
+      }),
+      taskId,
+    ],
+  );
+  run(
+    `INSERT INTO task_roles (id, task_id, role, agent_id, created_at)
+     VALUES (?, ?, 'builder', ?, datetime('now'))`,
+    [crypto.randomUUID(), taskId, builderId],
+  );
+
+  const client = getOpenClawClient() as unknown as {
+    isConnected: () => boolean;
+    connect: () => Promise<void>;
+    listAgents: () => Promise<unknown[]>;
+    call: (...args: unknown[]) => Promise<unknown>;
+  };
+  client.isConnected = () => true;
+  client.connect = async () => undefined;
+  client.listAgents = async () => [];
+  client.call = async (...args: unknown[]) => {
+    if (args[0] === 'chat.send') return {};
+    throw new Error(`Unexpected gateway call: ${JSON.stringify(args)}`);
+  };
+
+  global.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    assert.match(url, new RegExp(`/api/tasks/${taskId}/dispatch$`));
+    return dispatchTaskRoute(
+      new NextRequest(url, {
+        method: 'POST',
+        headers: init?.headers,
+      }),
+      { params: Promise.resolve({ id: taskId }) },
+    );
+  };
+
+  await runHealthCheckCycle();
+
+  const task = queryOne<{ status: string; planning_dispatch_error: string | null }>(
+    'SELECT status, planning_dispatch_error FROM tasks WHERE id = ?',
+    [taskId],
+  );
+  assert.equal(task?.status, 'in_progress');
+  assert.equal(task?.planning_dispatch_error, null);
+
+  const autoDispatchActivities = queryAll<{ message: string }>(
+    `SELECT message
+     FROM task_activities
+     WHERE task_id = ? AND message = 'Auto-dispatched by health sweeper (was stuck in assigned)'`,
+    [taskId],
+  );
+  const zombieActivities = queryAll<{ message: string }>(
+    `SELECT message
+     FROM task_activities
+     WHERE task_id = ? AND message LIKE 'Agent health:%'`,
+    [taskId],
+  );
+  assert.equal(autoDispatchActivities.length, 1);
+  assert.equal(zombieActivities.length, 0);
+});
+
 test('runHealthCheckCycle keeps the generic unreconciled error when history has no marker or terminal error', async () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;
   const taskId = buildTaskId('c001fade');
@@ -1258,6 +1412,12 @@ test('runHealthCheckCycle keeps the generic unreconciled error when history has 
     'SELECT planning_dispatch_error, status_reason FROM tasks WHERE id = ?',
     [taskId],
   );
+  const zombieActivities = queryAll<{ message: string }>(
+    `SELECT message
+     FROM task_activities
+     WHERE task_id = ? AND message LIKE 'Agent health:%'`,
+    [taskId],
+  );
 
   assert.equal(
     task?.planning_dispatch_error,
@@ -1267,6 +1427,7 @@ test('runHealthCheckCycle keeps the generic unreconciled error when history has 
     task?.status_reason,
     'Run ended without completion callback or workflow handoff (failed session).',
   );
+  assert.equal(zombieActivities.length, 0);
 });
 
 test('runHealthCheckCycle retries generic unreconciled errors when gateway history now contains a verifier signal', async () => {
@@ -1402,6 +1563,82 @@ test('runHealthCheckCycle recovers a first-pass verifier success from gateway hi
   assert.equal(task?.planning_dispatch_error, null);
   assert.equal(task?.status_reason, null);
   assert.equal(completionActivity?.message, 'The repo-backed verification passed cleanly.');
+});
+
+test('runHealthCheckCycle records at most one generic unreconciled-run activity per ended session', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = buildTaskId('dedupe123');
+  const testerId = crypto.randomUUID();
+
+  seedAgent({
+    id: testerId,
+    workspaceId,
+    name: 'Tester Agent',
+    role: 'tester',
+    status: 'working',
+  });
+  seedTask({
+    id: taskId,
+    workspaceId,
+    assignedAgentId: testerId,
+    status: 'testing',
+    planningDispatchError: 'Run ended without completion callback or workflow handoff (completed session).',
+  });
+  seedTaskSession({
+    taskId,
+    agentId: testerId,
+    openclawSessionId: 'mission-control-tester-agent-dedupe',
+    status: 'completed',
+  });
+  setTaskSessionTimes({
+    taskId,
+    openclawSessionId: 'mission-control-tester-agent-dedupe',
+    createdAt: '2026-03-27T16:07:00.000Z',
+    updatedAt: '2026-03-27T16:07:30.000Z',
+    endedAt: '2026-03-27T16:07:30.000Z',
+  });
+
+  setGatewaySessionsResolverForTests(async () => ({
+    sessions: [
+      {
+        key: 'agent:main:mission-control-tester-agent-dedupe',
+        sessionId: 'ephemeral-dedupe-session',
+        status: 'done',
+        channel: 'mission-control',
+        createdAt: '2026-03-27T16:07:00.000Z',
+        updatedAt: '2026-03-27T16:07:30.000Z',
+        endedAt: '2026-03-27T16:07:30.000Z',
+      },
+    ],
+  }));
+  setGatewaySessionHistoryResolverForTests(async (sessionRef) => {
+    if (sessionRef === 'agent:main:mission-control-tester-agent-dedupe') {
+      return {
+        items: [
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'I asked a question and ended without a workflow marker.' }],
+          },
+        ],
+      };
+    }
+
+    throw new Error(`unexpected session history lookup for ${sessionRef}`);
+  });
+
+  await runHealthCheckCycle();
+  await runHealthCheckCycle();
+
+  const activities = queryAll<{ message: string }>(
+    `SELECT message
+     FROM task_activities
+     WHERE task_id = ?
+       AND message = 'Run ended without completion callback or workflow handoff (completed session).'
+     ORDER BY created_at ASC`,
+    [taskId],
+  );
+
+  assert.equal(activities.length, 1);
 });
 
 test('runHealthCheckCycle prefers the currently assigned reviewer session over older persistent tester sessions', async () => {

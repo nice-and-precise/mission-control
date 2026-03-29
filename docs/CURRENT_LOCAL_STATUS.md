@@ -8,10 +8,10 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Snapshot
 
-- Date verified: `2026-03-28`
+- Date verified: `2026-03-29`
 - Upstream base: `v2.4.0`
-- Local checkout state: `v2.4.0-dirty`
-- Git ref: `chore/pre-real-work-baseline-20260327`
+- Local checkout state: `v2.4.0-local-baseline`
+- Git ref: `work/from-pre-real-work-baseline-20260327`
 - Local app URL: `http://localhost:4000`
 - Local runtime project root override:
   - `PROJECTS_PATH=/Users/jordan/Projects`
@@ -40,12 +40,24 @@ The following facts were re-verified against the live local runtime on `2026-03-
   - Sessions, Deliverables, and Agent Live can recover visibility after a broken run
   - workflow advancement still depends on explicit markers such as `TASK_COMPLETE`, `BLOCKED`, `TEST_PASS`, `TEST_FAIL`, `VERIFY_PASS`, or `VERIFY_FAIL`
   - when a run ends before the live listener sees a marker, Mission Control uses official gateway history internally to recover a missed marker or synthesize an explicit runtime/provider blocker
+- Strict workflow ownership is enforced at both PATCH and dispatch time
+  - `inbox` is unassigned, `assigned` / `in_progress` are builder-owned, `testing` is tester-owned, `review` is queue-only, and `verification` is reviewer-owned
+  - invalid manual workflow moves now fail closed with `409` instead of dispatching the wrong prompt to the wrong persistent agent session
 - Protected callback instructions are aligned with runtime auth
   - when `MC_API_TOKEN` is configured, builder/tester/verifier dispatch prompts include the required `Authorization: Bearer <token>` header for localhost callback requests
+- Fresh reruns intentionally reuse the stable OpenClaw routing key
+  - Mission Control prepends `/new` to dispatches on the existing session key
+  - seeing the same `sessionKey` with a new `sessionId` is expected OpenClaw behavior, not evidence of stale task context by itself
+- Repo-backed tester/reviewer prompts now separate shell access from file-tool access
+  - shell commands use `cd <workspace> && ...`
+  - non-shell file tools such as `read`, `edit`, `find`, and `glob` must use absolute paths under the task workspace
+- Planning completion now reconciles from transcript truth instead of relying only on live poll timing
+  - if a planner run already finished, Mission Control can recover the completed spec from stored/OpenClaw transcript history on a later read
+  - this local fork also tolerates the malformed planner `constraints` JSON shape observed on `2026-03-28`, so an almost-valid completion payload does not leave the task stuck in `Waiting for response...`
 - The session detail route no longer crashes on `sessions.list` payload shape differences
   - authenticated `GET /api/openclaw/sessions/{id}` now returns a normal `404` for a missing session instead of a `500`
 - Static error-page build regression is not reproducible on the current checkout
-  - `npm run build` completed successfully on this `v2.4.0-dirty` worktree after compile, typecheck, static generation, and route optimization
+  - `npm run build` completed successfully on this `v2.4.0-local-baseline` worktree after compile, typecheck, static generation, and route optimization
 
 ## Known Gaps
 
@@ -54,8 +66,11 @@ These are still real local limitations as of this verification pass:
 1. Historical transcript replay is still intentionally unavailable through Mission Control's public route.
    `GET /api/openclaw/sessions/{id}/history` remains `501` even though Mission Control now uses the official gateway history endpoint internally for transcript-based closeout reconciliation.
 
-2. The local checkout is still intentionally dirty relative to upstream.
-   This branch is a local stabilization baseline, not a pristine mirror of upstream `v2.4.0`.
+2. The local checkout is intentionally a local baseline relative to upstream.
+   This branch preserves the verified local OpenClaw compatibility and workflow patches; it is not intended to be a pristine mirror of upstream `v2.4.0`.
+
+3. A local browser-extension conflict can still crash `next dev` in a normal Chrome profile even when Mission Control itself is healthy.
+   Current evidence points to Next App Router's internal `use-reducer-with-devtools` path being activated by Redux DevTools-style extensions. A clean browser session loads Mission Control normally, so this should be triaged as a local dev-environment conflict unless it also reproduces in a clean browser.
 
 ## Verification Commands
 
@@ -98,6 +113,7 @@ ls -ld .next .next-dev
 | Workflow advancement still depends on explicit completion markers, with gateway-history fallback for missed callbacks | [ORCHESTRATION.md](../ORCHESTRATION.md), [docs/AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) | `verified with local deviation` | clean-room smoke completed end-to-end, and earlier missed callbacks were recoverable from gateway history | Keep active docs precise about evidence visibility versus transcript-based closeout recovery |
 | Session-history replay is available through Mission Control's public route | stale internal assumption | `known gap` | `GET /api/openclaw/sessions/{id}/history` returns `501` | Keep limitation explicit in active docs |
 | Static error-page build regression is currently reproducible from source | local status note from earlier session | `not reproducible` | current `npm run build` exits `0` on this worktree | Only reopen if a fresh failing revision or exact repro is captured |
+| Current test and build gate succeeds on the pinned Node runtime | [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md), [../README.md](../README.md) | `verified` | `nvm use 24.13.0`, `npm test`, and `npm run build` all exited `0` on `2026-03-29` | Keep `.nvmrc`, runtime preflight, and verification checklist aligned |
 
 ## Historical Snapshots
 
@@ -109,8 +125,10 @@ These files are preserved for context, but they are not the current-state source
 
 ## Active Docs To Trust
 
+- [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md) for the current shareable verification contract
 - [docs/README.md](README.md) for the current docs map and documentation conventions
 - [docs/LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md) for local start/restart, health, backup, and checkpoint commands
+- [USER_GUIDE.md](USER_GUIDE.md) for the shareable doc entrypoint
 - [README.md](../README.md) for upstream/public product framing
 - [PRODUCTION_SETUP.md](../PRODUCTION_SETUP.md) for generic setup patterns
 - [ORCHESTRATION.md](../ORCHESTRATION.md) for explicit workflow and runtime evidence behavior

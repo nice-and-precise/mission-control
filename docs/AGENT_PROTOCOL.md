@@ -28,7 +28,7 @@ This document describes how OpenClaw agents interact with Mission Control.
    ```
 
 3. **Agent works on task**
-   - Task automatically moves to "IN PROGRESS"
+   - Builder-owned work automatically moves through `ASSIGNED -> IN PROGRESS`
    - Agent status updates to "working"
    - Agent can ask the orchestrator for help via normal conversation
 
@@ -42,7 +42,7 @@ This document describes how OpenClaw agents interact with Mission Control.
    - Agent status returns to "standby"
 
 5. **Verification / approval happens**
-   - In the strict workflow, `review` is a queue stage and `verification` is owned by the `reviewer` role
+   - In the strict workflow, `assigned` and `in_progress` are builder-owned, `testing` is tester-owned, `review` is a queue stage, and `verification` is owned by the `reviewer` role
    - The verifier checks task evidence in Mission Control (Activities, Deliverables, Sessions, Agent Live) plus the actual workspace/code
    - If approved in `verification`: the assigned reviewer emits `VERIFY_PASS` and may PATCH the task to `done`
    - If the work needs changes: the verifier emits `VERIFY_FAIL` and routes it back through the workflow fail target
@@ -145,6 +145,8 @@ If you're stuck or need clarification:
 - Session ID format: `mission-control-{agent-name}`
   - Example: `mission-control-engineering`
   - Example: `mission-control-writing`
+- Mission Control starts fresh reruns by prepending `/new` on the same stable routing key
+- A healthy rerun normally keeps the same `sessionKey` and creates a new `sessionId`
 
 ### Session Linking
 - Agents are automatically linked to OpenClaw when first task is assigned
@@ -155,11 +157,19 @@ If you're stuck or need clarification:
 
 ### Task Statuses
 - **INBOX**: Unassigned, awaiting triage
-- **ASSIGNED**: Assigned to agent, auto-dispatched
-- **IN PROGRESS**: Agent actively working
+- **ASSIGNED**: Builder-owned staging state before active work begins
+- **IN PROGRESS**: Builder actively working
+- **TESTING**: Tester-owned quality gate
 - **REVIEW**: Queue stage between testing and verification in the strict workflow
 - **VERIFICATION**: Reviewer/verifier is actively evaluating whether the task is ready to ship
 - **DONE**: Approved and closed
+
+Mission Control rejects invalid manual workflow combinations with `409` instead of silently dispatching them:
+
+- `inbox -> in_progress`
+- `in_progress` explicitly assigned to a tester/reviewer
+- `testing` explicitly assigned to a builder/reviewer
+- `verification` explicitly assigned to a builder/tester
 
 ### Agent Statuses
 - **standby**: Available for work
@@ -194,6 +204,12 @@ Explicit or transcript-recovered `TASK_COMPLETE`, `BLOCKED`, `TEST_PASS`, `TEST_
 
 For repo-backed tasks, treat the task workspace, registered file deliverables, and the PR URL as the testing/review contract.
 Do not fail a repo-backed handoff solely because the root output directory is empty when those repo artifacts exist.
+
+For repo-backed file inspection:
+
+- shell commands should use `cd <workspace> && ...`
+- non-shell file tools such as `read`, `edit`, `find`, `glob`, and file-path `ls` should use absolute paths under the task workspace
+- if a deliverable is listed with an absolute path, copy that exact path instead of switching to a bare repo-relative path
 
 Current limitation:
 - `GET /api/openclaw/sessions/{id}/history` currently returns `501`, so do not treat gateway session history as a required review surface

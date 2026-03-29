@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { queryAll, queryOne, run } from './db';
-import { buildPlanningSpecMarkdown, cleanupTaskScopedAgents, createTaskScopedPlanningAgents } from './planning-agents';
+import { buildPlanningSpecMarkdown, cleanupTaskScopedAgents } from './planning-agents';
 
 function ensureWorkspace(id: string) {
   run(
@@ -10,41 +10,6 @@ function ensureWorkspace(id: string) {
     [id, `Workspace ${id}`, id]
   );
 }
-
-test('createTaskScopedPlanningAgents stores planner suggestions as task-scoped agents', () => {
-  const workspaceId = `ws-${crypto.randomUUID()}`;
-  const taskId = crypto.randomUUID();
-  ensureWorkspace(workspaceId);
-
-  run(
-    `INSERT INTO tasks (id, title, status, priority, workspace_id, business_id, created_at, updated_at)
-     VALUES (?, 'Planner Task', 'planning', 'normal', ?, 'default', datetime('now'), datetime('now'))`,
-    [taskId, workspaceId]
-  );
-
-  const created = createTaskScopedPlanningAgents(taskId, [
-    {
-      name: 'Portal Agent',
-      role: 'builder',
-      avatar_emoji: '🖥️',
-      instructions: 'Focus on portal changes',
-    },
-  ]);
-
-  assert.equal(created.length, 1);
-  assert.equal(created[0].scope, 'task');
-  assert.ok(created[0].agent_id);
-
-  const stored = queryOne<{ scope: string; task_id: string | null; name: string }>(
-    'SELECT scope, task_id, name FROM agents WHERE id = ?',
-    [created[0].agent_id!]
-  );
-  assert.deepEqual(stored, {
-    scope: 'task',
-    task_id: taskId,
-    name: 'Portal Agent',
-  });
-});
 
 test('cleanupTaskScopedAgents removes task-scoped planner agents and related rows', () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;

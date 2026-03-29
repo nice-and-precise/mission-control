@@ -3,7 +3,6 @@
 import { useState, useCallback } from 'react';
 import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, Plus, Users, ImageIcon, Truck, Radio, MessageSquare, ExternalLink, HardDrive } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
-import { triggerAutoDispatch, shouldTriggerAutoDispatch } from '@/lib/auto-dispatch';
 import { ActivityLog } from './ActivityLog';
 import { DeliverablesList } from './DeliverablesList';
 import { SessionsList } from './SessionsList';
@@ -102,18 +101,6 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
         // Editing existing task
         updateTask(savedTask);
 
-        // Note: dispatch for existing tasks is handled server-side by the PATCH route.
-        // Only trigger client-side dispatch for drag-to-in_progress (legacy flow).
-        if (shouldTriggerAutoDispatch(task.status, savedTask.status, savedTask.assigned_agent_id)) {
-          triggerAutoDispatch({
-            taskId: savedTask.id,
-            taskTitle: savedTask.title,
-            agentId: savedTask.assigned_agent_id,
-            agentName: savedTask.assigned_agent?.name || 'Unknown Agent',
-            workspaceId: savedTask.workspace_id
-          }).catch((err) => console.error('Auto-dispatch failed:', err));
-        }
-
         onClose();
         return;
       }
@@ -135,17 +122,6 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           .catch((error) => console.error('Failed to start planning:', error));
         onClose();
         return;
-      }
-
-      // Auto-dispatch if agent assigned (fire-and-forget)
-      if (savedTask.assigned_agent_id && savedTask.status === 'assigned') {
-        triggerAutoDispatch({
-          taskId: savedTask.id,
-          taskTitle: savedTask.title,
-          agentId: savedTask.assigned_agent_id,
-          agentName: savedTask.assigned_agent?.name || 'Unknown Agent',
-          workspaceId: savedTask.workspace_id
-        }).catch((err) => console.error('Auto-dispatch failed:', err));
       }
 
       if (keepOpen) {

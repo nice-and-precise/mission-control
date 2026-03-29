@@ -1683,6 +1683,23 @@ const migrations: Migration[] = [
         WHERE status = 'active'
       `);
     }
+  },
+  {
+    id: '032',
+    name: 'add_runtime_leases',
+    up: (db) => {
+      console.log('[Migration 032] Adding runtime leases table...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS runtime_leases (
+          name TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_runtime_leases_expires ON runtime_leases(expires_at)`);
+    }
   }
 ];
 

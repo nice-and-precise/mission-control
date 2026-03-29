@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-const EXPECTED_NODE_MAJOR = 20;
-const EXPECTED_NODE_RANGE = '20.x';
+const LOCAL_DEFAULT_NODE_MAJOR = 24;
+const DOCKER_PARITY_NODE_MAJOR = 20;
+const SUPPORTED_NODE_MAJORS = [20, 24];
+const SUPPORTED_NODE_RANGE = '20.x or 24.x';
 const SQLITE_PACKAGE_NAME = 'better-sqlite3';
 
 function getNodeMajor(version) {
@@ -13,11 +15,11 @@ function getNodeMajor(version) {
 
 function checkNodeVersion(version = process.versions.node) {
   const major = getNodeMajor(version);
-  if (major === EXPECTED_NODE_MAJOR) {
-    return { ok: true, actual: version };
+  if (SUPPORTED_NODE_MAJORS.includes(major)) {
+    return { ok: true, actual: version, major };
   }
 
-  return { ok: false, actual: version };
+  return { ok: false, actual: version, major };
 }
 
 function getErrorText(error) {
@@ -32,12 +34,13 @@ function isNativeAddonMismatchError(error) {
 
 function formatNodeVersionError(actualVersion) {
   return [
-    `Mission Control requires Node ${EXPECTED_NODE_RANGE} for local development.`,
+    `Mission Control supports Node ${SUPPORTED_NODE_RANGE}.`,
     `Current runtime: Node ${actualVersion}`,
     '',
     'Fix:',
-    '  1. nvm use',
-    '  2. npm ci',
+    `  1. Use Node ${LOCAL_DEFAULT_NODE_MAJOR} for local quick start: nvm use`,
+    `  2. Or use Node ${DOCKER_PARITY_NODE_MAJOR} for Docker/CI parity`,
+    '  3. Reinstall dependencies after switching runtimes: npm ci',
     '',
     'This repo uses a native SQLite addon, so switching Node majors without reinstalling dependencies can leave stale binaries behind.',
   ].join('\n');
@@ -48,7 +51,7 @@ function formatMissingDependencyError(packageName) {
     `Mission Control could not load ${packageName}.`,
     '',
     'Fix:',
-    '  1. nvm use',
+    `  1. Use a supported runtime (Node ${LOCAL_DEFAULT_NODE_MAJOR} by default, or Node ${DOCKER_PARITY_NODE_MAJOR} for Docker parity)`,
     '  2. npm ci',
   ].join('\n');
 }
@@ -61,9 +64,9 @@ function formatNativeAddonError(error) {
     detail,
     '',
     'Fix:',
-    '  1. nvm use',
-    '  2. npm ci',
-    '  3. If the addon is still stale, run npm rebuild better-sqlite3',
+    `  1. Stay on one supported runtime at a time (Node ${LOCAL_DEFAULT_NODE_MAJOR} for local quick start or Node ${DOCKER_PARITY_NODE_MAJOR} for Docker parity)`,
+    '  2. Reinstall dependencies for that runtime: npm ci',
+    `  3. If the addon is still stale after a clean install, run npm rebuild ${SQLITE_PACKAGE_NAME}`,
   ].join('\n');
 }
 
@@ -130,8 +133,10 @@ if (require.main === module) {
 }
 
 module.exports = {
-  EXPECTED_NODE_MAJOR,
-  EXPECTED_NODE_RANGE,
+  DOCKER_PARITY_NODE_MAJOR,
+  LOCAL_DEFAULT_NODE_MAJOR,
+  SUPPORTED_NODE_MAJORS,
+  SUPPORTED_NODE_RANGE,
   checkNodeVersion,
   formatMissingDependencyError,
   formatNativeAddonError,

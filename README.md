@@ -41,9 +41,6 @@ I highly recommend getting Hetzner VPS to run this. <a href="https://hetzner.clo
 
 ---
 
-> [!NOTE]
-> Running this checkout as a local fork instead of pristine upstream? See [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md) for the verified local runtime, environment overrides, archived status snapshots, and known gaps. Use [docs/README.md](docs/README.md) as the local docs index. The README below remains primarily the upstream/public product guide.
-
 ## 🚀 What's New in v2.4.0
 
 ### Agent Skill Creation Loop
@@ -342,8 +339,8 @@ Your task data, research results, ideas, swipe history, and product programs sta
 
 ### Prerequisites
 
-- **Node.js** 20.x ([download](https://nodejs.org/))
-- **OpenClaw Gateway** — `npm install -g openclaw`
+- **Node.js** `20.x` or `24.x` ([download](https://nodejs.org/))
+- **OpenClaw** `2026.3.28` on the `stable` channel
 - **AI API Key** — Anthropic (recommended), OpenAI, Google, or others via OpenRouter
 
 ### Install
@@ -353,10 +350,8 @@ Your task data, research results, ideas, swipe history, and product programs sta
 git clone https://github.com/crshdn/mission-control.git
 cd mission-control
 
-# Use the repo-pinned runtime
-nvm use
-
 # Install dependencies
+nvm use
 npm ci
 
 # Setup
@@ -370,15 +365,16 @@ OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 OPENCLAW_GATEWAY_TOKEN=your-token-here
 ```
 
-> **Where to find the token:** Use the same auth source your OpenClaw gateway is configured to require.
->
-> Some installs keep the gateway token in plaintext config such as `~/.openclaw/openclaw.json` under `gateway.token`, but SecretRef-backed installs may not expose a plaintext token there.
+> **Token source:** use the same token or SecretRef-backed value that your OpenClaw gateway actually uses. If your gateway auth is managed via SecretRef, resolve that source directly instead of assuming a plaintext `gateway.token` lives in config.
 
 ### Run
 
 ```bash
-# Start OpenClaw (separate terminal)
-openclaw gateway start
+# Prepare OpenClaw
+openclaw update
+openclaw doctor
+openclaw gateway restart
+openclaw gateway status
 
 # Start Autensa
 npm run dev
@@ -386,13 +382,11 @@ npm run dev
 
 Open **http://localhost:4000** — you're in! 🎉
 
-If `better-sqlite3` fails to load after you switch Node versions, do not keep retrying under mixed runtimes. Run `nvm use`, then reinstall dependencies with `npm ci`. Only use `npm rebuild better-sqlite3` as a fallback if a clean install under Node 20 still leaves a stale native binary.
-
 ### Production
 
 ```bash
 npm run build
-npm run start
+npx next start -p 4000
 ```
 
 ---
@@ -496,9 +490,6 @@ Subtasks run in parallel with dependency-aware scheduling. Health monitoring det
 
 ## ⚙️ Configuration
 
-> [!NOTE]
-> The defaults in this section are the upstream defaults. This local checkout currently overrides them; see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md) for the active machine-specific values and live verification evidence.
-
 ### Environment Variables
 
 | Variable | Required | Default | Description |
@@ -510,7 +501,6 @@ Subtasks run in parallel with dependency-aware scheduling. Health monitoring det
 | `DATABASE_PATH` | — | `./mission-control.db` | SQLite database location |
 | `WORKSPACE_BASE_PATH` | — | `~/Documents/Shared` | Base directory for workspace files |
 | `PROJECTS_PATH` | — | `~/Documents/Shared/projects` | Directory for project folders |
-| `AGENT_HEALTH_CHECK_INTERVAL_MS` | — | `30000` | Background ended-run reconciliation interval |
 
 ### Security (Production)
 
@@ -630,19 +620,12 @@ autensa/
 ### Can't connect to OpenClaw Gateway
 
 1. Check OpenClaw is running: `openclaw gateway status`
-2. Verify the URL in `.env.local` and confirm Mission Control is using the same auth source your gateway expects
+2. Verify URL and token in `.env.local`
 3. Check firewall isn't blocking port 18789
-
-### `better-sqlite3` or Node runtime mismatch
-
-1. Switch to the repo-pinned runtime: `nvm use`
-2. Reinstall dependencies under Node 20: `npm ci`
-3. Retry `npm run dev` or `npm run build`
-4. Only use `npm rebuild better-sqlite3` if a clean install under Node 20 still leaves a stale native binary
 
 ### Planning questions not loading
 
-1. Check OpenClaw logs: `openclaw gateway logs`
+1. Check OpenClaw logs: `openclaw logs --follow`
 2. Verify your AI API key is valid
 3. Refresh and click the task again
 

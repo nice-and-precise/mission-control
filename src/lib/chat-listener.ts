@@ -9,6 +9,7 @@ import { getOpenClawClient } from '@/lib/openclaw/client';
 import { createNote } from '@/lib/task-notes';
 import { broadcast } from '@/lib/events';
 import { parseAgentSignal, processAgentSignal } from '@/lib/agent-signals';
+import { isRuntimeBootEnabled } from '@/lib/runtime-boot';
 
 const GLOBAL_LISTENER_KEY = '__chat_listener_attached__';
 
@@ -57,6 +58,7 @@ export function extractContent(message: ChatEventPayload['message']): string {
 }
 
 export function attachChatListener(): void {
+  if (!isRuntimeBootEnabled()) return;
   if ((globalThis as Record<string, unknown>)[GLOBAL_LISTENER_KEY]) return;
   (globalThis as Record<string, unknown>)[GLOBAL_LISTENER_KEY] = true;
 

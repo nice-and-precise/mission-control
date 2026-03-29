@@ -298,6 +298,13 @@ CREATE TABLE IF NOT EXISTS agent_health (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS runtime_leases (
+  name TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- Work checkpoints: periodic snapshots of agent work state
 CREATE TABLE IF NOT EXISTS work_checkpoints (
   id TEXT PRIMARY KEY,
@@ -759,6 +766,7 @@ CREATE INDEX IF NOT EXISTS idx_convoy_subtasks_convoy ON convoy_subtasks(convoy_
 CREATE INDEX IF NOT EXISTS idx_convoy_subtasks_task ON convoy_subtasks(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_health_agent ON agent_health(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_health_state ON agent_health(health_state);
+CREATE INDEX IF NOT EXISTS idx_runtime_leases_expires ON runtime_leases(expires_at);
 CREATE INDEX IF NOT EXISTS idx_work_checkpoints_task ON work_checkpoints(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_mailbox_to ON agent_mailbox(to_agent_id, read_at);
 CREATE INDEX IF NOT EXISTS idx_agent_mailbox_convoy ON agent_mailbox(convoy_id);

@@ -20,6 +20,11 @@ For repo-backed tasks, the normal orchestration contract is workspace-first:
 - use registered file deliverables as the primary artifact list
 - include the PR URL as supporting context and as a `url` deliverable when available
 
+For repo-backed testing and review work:
+- shell commands should use `cd <workspace> && ...`
+- non-shell file tools such as `read`, `edit`, `find`, `glob`, and file-path-based `ls` must use absolute paths under the task workspace
+- when a deliverable is listed with an absolute path, copy that exact path instead of switching to a bare repo-relative path
+
 ## Import the Helper
 
 ```typescript
@@ -30,6 +35,19 @@ import * as orchestrator from '@/lib/orchestration';
 ```
 
 ## Workflow Steps
+
+## Strict Stage Ownership
+
+On this local fork's strict workflow:
+
+- `inbox` is unassigned triage
+- `assigned` and `in_progress` are builder-owned
+- `testing` is tester-owned
+- `review` is queue-only
+- `verification` is reviewer-owned
+
+Mission Control enforces that ownership in both `PATCH /api/tasks/:id` and `POST /api/tasks/:id/dispatch`.
+Illegal manual moves or role/status mismatches now fail closed with `409` instead of dispatching the wrong prompt to the wrong agent.
 
 ### 1. When Spawning a Sub-Agent
 
@@ -162,6 +180,18 @@ TEST_FAIL: <failure summary>
 VERIFY_PASS: <verification summary>
 VERIFY_FAIL: <verification failure summary>
 ```
+
+## Fresh Reruns
+
+Mission Control starts fresh reruns by prepending `/new` on the existing OpenClaw routing key.
+
+Expected behavior for a healthy rerun:
+
+- the `sessionKey` stays stable
+- the `sessionId` changes for the new run
+- the latest run receives fresh task instructions
+
+Do not treat a reused `sessionKey` by itself as evidence of stale task context.
 
 ## Direct API Usage (Without Helper)
 

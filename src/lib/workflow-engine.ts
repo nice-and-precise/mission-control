@@ -57,6 +57,28 @@ export function getTaskWorkflow(taskId: string): WorkflowTemplate | null {
   return globalTpl ? parseTemplate(globalTpl) : null;
 }
 
+export function getWorkflowStageForStatus(
+  workflow: WorkflowTemplate | null | undefined,
+  status: string | null | undefined,
+): WorkflowStage | null {
+  if (!workflow || !status) return null;
+  const directMatch = workflow.stages.find((stage) => stage.status === status);
+  if (directMatch) return directMatch;
+
+  if (status === 'assigned') {
+    return workflow.stages.find((stage) => stage.role?.toLowerCase() === 'builder') || null;
+  }
+
+  return null;
+}
+
+export function getWorkflowOwnerRoleForStatus(
+  workflow: WorkflowTemplate | null | undefined,
+  status: string | null | undefined,
+): string | null {
+  return getWorkflowStageForStatus(workflow, status)?.role || null;
+}
+
 function parseTemplate(row: { id: string; workspace_id: string; name: string; description: string; stages: string; fail_targets: string; is_default: number; created_at: string; updated_at: string }): WorkflowTemplate {
   return {
     ...row,
@@ -118,7 +140,7 @@ export async function handleStageTransition(
   }
 
   // Find the stage that maps to this status
-  const targetStage = workflow.stages.find(s => s.status === newStatus);
+  const targetStage = getWorkflowStageForStatus(workflow, newStatus);
   if (!targetStage) {
     // Status not in workflow
     return { success: true, handedOff: false };
@@ -205,11 +227,18 @@ export async function handleStageTransition(
     }
   }
 
-  // Assign agent to task
+  // Assign agent to task. Preserve the explicit failure reason when a stage is
+  // being routed back through the workflow fail target so the UI still shows
+  // why the task re-entered the builder stage.
   const now = new Date().toISOString();
+  const shouldPreserveStatusReason = Boolean(options?.failReason);
   run(
-    'UPDATE tasks SET assigned_agent_id = ?, planning_dispatch_error = NULL, status_reason = NULL, updated_at = ? WHERE id = ?',
-    [roleAgent.id, now, taskId]
+    shouldPreserveStatusReason
+      ? 'UPDATE tasks SET assigned_agent_id = ?, planning_dispatch_error = NULL, updated_at = ? WHERE id = ?'
+      : 'UPDATE tasks SET assigned_agent_id = ?, planning_dispatch_error = NULL, status_reason = NULL, updated_at = ? WHERE id = ?',
+    shouldPreserveStatusReason
+      ? [roleAgent.id, now, taskId]
+      : [roleAgent.id, now, taskId]
   );
 
   // Log the handoff

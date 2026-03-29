@@ -350,7 +350,7 @@ export function TeamTab({ taskId, workspaceId }: TeamTabProps) {
         <div>
           <label className="block text-sm font-medium mb-2">Planner-Suggested Task Agents</label>
           <p className="mb-3 text-xs text-mc-text-secondary">
-            These agent ideas were generated during planning for context and future decomposition. They are task-scoped suggestions, not part of the persistent workspace roster.
+            These agent ideas were generated during planning for context and future decomposition. They stay attached to this task plan only and are not added to the workspace roster unless you explicitly create them later.
           </p>
           <div className="space-y-2">
             {suggestedAgents.map((agent, index) => (

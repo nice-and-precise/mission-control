@@ -41,14 +41,37 @@ export function getRepoTaskSurfacePath(task: Pick<Task, 'workspace_path'>, fallb
 }
 
 export function getTaskDispatchDeliverables(taskId: string): DispatchDeliverablePreview[] {
-  return queryAll<DispatchDeliverablePreview>(
+  const rawDeliverables = queryAll<DispatchDeliverablePreview>(
     `SELECT deliverable_type, title, path
      FROM task_deliverables
      WHERE task_id = ?
      ORDER BY created_at DESC
-     LIMIT 8`,
+     LIMIT 24`,
     [taskId],
   );
+
+  const seen = new Set<string>();
+  const uniqueFiles: DispatchDeliverablePreview[] = [];
+  const uniqueOtherDeliverables: DispatchDeliverablePreview[] = [];
+
+  for (const deliverable of rawDeliverables) {
+    const key = [
+      deliverable.deliverable_type,
+      deliverable.title.trim(),
+      deliverable.path?.trim() || '',
+    ].join('::');
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    if (deliverable.deliverable_type === 'file') {
+      uniqueFiles.push(deliverable);
+    } else {
+      uniqueOtherDeliverables.push(deliverable);
+    }
+  }
+
+  return [...uniqueFiles, ...uniqueOtherDeliverables].slice(0, 8);
 }
 
 export function supportsPullRequestWorkflow(repoUrl: string | null | undefined): boolean {
@@ -79,7 +102,7 @@ export function buildRepoArtifactSection({
   const branchLine = task.repo_branch?.trim() ? `- **Base branch:** ${task.repo_branch}\n` : '';
   const prLine = task.pr_url?.trim() ? `- **PR:** ${task.pr_url}\n` : '';
 
-  return `**REPO CONTEXT:**\n${repoLine}${branchLine}${prLine}**REPO WORKSPACE:** ${workspacePath}\n- The shell tool is stateless: a standalone \`cd ${workspacePath}\` does not persist to later commands.\n- For shell commands, use \`cd ${workspacePath} && <command>\` in the same command, or use absolute paths under \`${workspacePath}\`.\n- Treat all relative paths in this task, the PR, and the deliverables list as relative to \`${workspacePath}\`.\n- Use this workspace and the registered deliverables as the primary testing/review surface.\n- Registered deliverables are authoritative; do not invent alternate top-level paths if the listed files already exist under this workspace.\n- If a path lookup fails from another working directory, retry with \`cd ${workspacePath} && <command>\` or an absolute path before concluding the file or directory is missing.\n- Do not fail solely because the root output directory is empty if repo deliverables or workspace evidence exist.\n**REGISTERED DELIVERABLES:**\n${formatDispatchDeliverables(deliverables)}\n`;
+  return `**REPO CONTEXT:**\n${repoLine}${branchLine}${prLine}**REPO WORKSPACE:** ${workspacePath}\n- The shell tool is stateless: a standalone \`cd ${workspacePath}\` does not persist to later commands.\n- For shell commands, use \`cd ${workspacePath} && <command>\` in the same command.\n- For non-shell file tools such as \`read\`, \`edit\`, \`ls\`, \`find\`, or \`glob\`, use absolute paths under \`${workspacePath}\`, not bare relative paths.\n- Treat all relative paths in this task, the PR, and the deliverables list as relative to \`${workspacePath}\`.\n- Use this workspace and the registered deliverables as the primary testing/review surface.\n- Registered deliverables are authoritative; do not invent alternate top-level paths if the listed files already exist under this workspace.\n- If you inspect a deliverable, copy the absolute path exactly as listed below. Do not call \`read\` on \`services/...\`; call it on \`${workspacePath}/services/...\`.\n- If a path lookup fails from another working directory, retry with \`cd ${workspacePath} && <command>\` or the absolute path before concluding the file or directory is missing.\n- Do not fail solely because the root output directory is empty if repo deliverables or workspace evidence exist.\n**REGISTERED DELIVERABLES:**\n${formatDispatchDeliverables(deliverables)}\n`;
 }
 
 export function buildBuilderRepoInstructions({
@@ -147,7 +170,8 @@ export function buildTesterInstructions({
     ? `**YOUR ROLE: TESTER** — Test the repo-backed deliverables for this task.
 
 Review the registered deliverables, inspect the repo workspace, and run any applicable tests from that workspace.
-The shell tool is stateless, so do not rely on a standalone \`cd\`. Use \`cd REPO_WORKSPACE && <command>\` in the same command or use absolute paths under **REPO WORKSPACE**.
+The shell tool is stateless, so do not rely on a standalone \`cd\`. Use \`cd REPO_WORKSPACE && <command>\` in the same command.
+**FILE ACCESS RULES:** For non-shell file tools such as \`read\`, \`edit\`, \`ls\`, \`find\`, or \`glob\`, use absolute paths under **REPO WORKSPACE**. If you inspect a deliverable, copy the absolute path exactly as listed. Do not call \`read\` on \`services/...\`; call it on \`/abs/path/services/...\`.
 Use the PR as supporting context when available. Do not fail solely because the root output directory is empty if repo deliverables or workspace evidence exist.`
     : `**YOUR ROLE: TESTER** — Test the deliverables for this task.
 
@@ -184,7 +208,8 @@ export function buildVerifierInstructions({
     ? `**YOUR ROLE: VERIFIER** — Verify that the repo-backed work meets quality standards.
 
 Review the registered deliverables, inspect the repo workspace, and use the PR as supporting context when available.
-The shell tool is stateless, so do not rely on a standalone \`cd\`. Use \`cd REPO_WORKSPACE && <command>\` in the same command or use absolute paths under **REPO WORKSPACE**.
+The shell tool is stateless, so do not rely on a standalone \`cd\`. Use \`cd REPO_WORKSPACE && <command>\` in the same command.
+**FILE ACCESS RULES:** For non-shell file tools such as \`read\`, \`edit\`, \`ls\`, \`find\`, or \`glob\`, use absolute paths under **REPO WORKSPACE**. If you inspect a deliverable, copy the absolute path exactly as listed. Do not call \`read\` on \`services/...\`; call it on \`/abs/path/services/...\`.
 Do not fail solely because the root output directory is empty if repo deliverables or workspace evidence exist.`
     : `**YOUR ROLE: VERIFIER** — Verify that all work meets quality standards.
 
@@ -211,51 +236,81 @@ ${authInstruction}
 
 export function syncTaskPrDeliverable(taskId: string, prUrl: string | null | undefined): void {
   const normalizedPrUrl = prUrl?.trim() || null;
-  const existingAuto = queryOne<{ id: string }>(
+  const matchingRows = queryAll<{ id: string }>(
     `SELECT id
      FROM task_deliverables
      WHERE task_id = ?
        AND deliverable_type = 'url'
-       AND title = ?
-       AND description = ?
-     LIMIT 1`,
-    [taskId, PR_DELIVERABLE_TITLE, PR_DELIVERABLE_DESCRIPTION],
+       AND (
+         path = ?
+         OR (title = ? AND description = ?)
+       )
+     ORDER BY created_at ASC, id ASC`,
+    [taskId, normalizedPrUrl, PR_DELIVERABLE_TITLE, PR_DELIVERABLE_DESCRIPTION],
   );
 
   if (!normalizedPrUrl) {
-    if (existingAuto) {
-      run('DELETE FROM task_deliverables WHERE id = ?', [existingAuto.id]);
-    }
-    return;
-  }
-
-  const existingByPath = queryOne<{ id: string }>(
-    `SELECT id
-     FROM task_deliverables
-     WHERE task_id = ?
-       AND deliverable_type = 'url'
-       AND path = ?
-     LIMIT 1`,
-    [taskId, normalizedPrUrl],
-  );
-
-  if (existingAuto) {
     run(
-      `UPDATE task_deliverables
-       SET path = ?, title = ?, description = ?
-       WHERE id = ?`,
-      [normalizedPrUrl, PR_DELIVERABLE_TITLE, PR_DELIVERABLE_DESCRIPTION, existingAuto.id],
+      `DELETE FROM task_deliverables
+       WHERE task_id = ?
+         AND deliverable_type = 'url'
+         AND title = ?
+         AND description = ?`,
+      [taskId, PR_DELIVERABLE_TITLE, PR_DELIVERABLE_DESCRIPTION],
     );
     return;
   }
 
-  if (existingByPath) {
-    return;
+  const primary = matchingRows[0];
+  if (primary) {
+    run(
+      `UPDATE task_deliverables
+       SET path = ?, title = ?, description = ?
+       WHERE id = ?`,
+      [normalizedPrUrl, PR_DELIVERABLE_TITLE, PR_DELIVERABLE_DESCRIPTION, primary.id],
+    );
+    if (matchingRows.length > 1) {
+      run(
+        `DELETE FROM task_deliverables
+         WHERE id IN (${matchingRows.slice(1).map(() => '?').join(', ')})`,
+        matchingRows.slice(1).map((row) => row.id),
+      );
+    }
+  } else {
+    run(
+      `INSERT INTO task_deliverables (id, task_id, deliverable_type, title, path, description, created_at)
+       VALUES (?, ?, 'url', ?, ?, ?, datetime('now'))`,
+      [crypto.randomUUID(), taskId, PR_DELIVERABLE_TITLE, normalizedPrUrl, PR_DELIVERABLE_DESCRIPTION],
+    );
   }
 
   run(
-    `INSERT INTO task_deliverables (id, task_id, deliverable_type, title, path, description, created_at)
-     VALUES (?, ?, 'url', ?, ?, ?, datetime('now'))`,
-    [crypto.randomUUID(), taskId, PR_DELIVERABLE_TITLE, normalizedPrUrl, PR_DELIVERABLE_DESCRIPTION],
+    `DELETE FROM task_deliverables
+     WHERE task_id = ?
+       AND deliverable_type = 'url'
+       AND title = ?
+       AND description = ?
+       AND path = ?
+       AND id NOT IN (
+         SELECT id
+         FROM task_deliverables
+         WHERE task_id = ?
+           AND deliverable_type = 'url'
+           AND title = ?
+           AND description = ?
+           AND path = ?
+         ORDER BY created_at ASC, id ASC
+         LIMIT 1
+       )`,
+    [
+      taskId,
+      PR_DELIVERABLE_TITLE,
+      PR_DELIVERABLE_DESCRIPTION,
+      normalizedPrUrl,
+      taskId,
+      PR_DELIVERABLE_TITLE,
+      PR_DELIVERABLE_DESCRIPTION,
+      normalizedPrUrl,
+    ],
   );
 }
