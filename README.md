@@ -356,6 +356,7 @@ npm ci
 
 # Setup
 cp .env.example .env.local
+python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local
 ```
 
 Edit `.env.local`:
@@ -365,7 +366,7 @@ OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 OPENCLAW_GATEWAY_TOKEN=your-token-here
 ```
 
-> **Token source:** use the same token or SecretRef-backed value that your OpenClaw gateway actually uses. If your gateway auth is managed via SecretRef, resolve that source directly instead of assuming a plaintext `gateway.token` lives in config.
+> **Token source:** use the same token or SecretRef-backed value that your OpenClaw gateway actually uses. On this local baseline, the supported path is `python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local`, which derives `OPENCLAW_GATEWAY_TOKEN` from the configured OpenClaw SecretRef target instead of scraping config or LaunchAgent metadata.
 
 ### Run
 
@@ -418,6 +419,7 @@ OPENCLAW_GATEWAY_TOKEN=your-token-here
 Notes:
 - Use `host.docker.internal` when OpenClaw runs on your host machine.
 - If OpenClaw is on another machine, set its reachable `ws://` or `wss://` URL instead.
+- If the host gateway is SecretRef-backed, sync the Compose token from the same canonical source before `docker compose up`.
 
 ### 2. Build and start
 

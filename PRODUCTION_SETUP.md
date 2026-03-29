@@ -38,6 +38,7 @@ For local development, `nvm use` defaults this repo to Node 24. Node 20 is also 
 
 ```bash
 cp .env.example .env.local
+python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local
 ```
 
 Edit `.env.local` with your configuration:
@@ -57,6 +58,8 @@ PROJECTS_PATH=/var/lib/mission-control/workspace/projects
 # API URL (auto-detected if not set)
 MISSION_CONTROL_URL=http://localhost:4000
 ```
+
+On the local workspace baseline, treat `python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local` as the supported way to source `OPENCLAW_GATEWAY_TOKEN` from OpenClaw's canonical SecretRef target.
 
 ### 4. Initialize Database
 

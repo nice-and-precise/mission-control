@@ -9,14 +9,16 @@ For Jordan's current machine-specific deviations, use [docs/CURRENT_LOCAL_STATUS
 Run from the workspace root unless noted otherwise.
 
 ```bash
-openclaw --version
-openclaw update status
+./scripts/update_openclaw_local_runtime.sh
 python3 scripts/cleanup_openclaw_2026_3_28.py
 python3 scripts/sync_openclaw_model_lanes.py
 openclaw config validate --json
 openclaw doctor
 openclaw gateway restart
-openclaw gateway status --deep
+openclaw gateway status --require-rpc --deep
+openclaw status --json
+openclaw secrets audit --json
+openclaw logs --plain --limit 200
 openclaw health
 ```
 
@@ -25,7 +27,10 @@ Pass criteria:
 - OpenClaw reports `2026.3.28`
 - config validation returns `valid: true`
 - `doctor` does not report stale `qwen-portal-auth` plugin warnings
-- gateway status and health both succeed
+- `gateway status --require-rpc` and `openclaw health` both succeed
+- `openclaw status --json` reports a healthy gateway with `authWarning = null`
+- `openclaw secrets audit --json` keeps `unresolvedRefCount = 0`
+- if `doctor` only shows a SecretRef read-only warning while the deeper checks above stay green, treat that as a command-path diagnostic instead of rewriting auth to plaintext
 
 ## Mission Control Gate
 

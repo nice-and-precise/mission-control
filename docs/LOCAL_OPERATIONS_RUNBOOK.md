@@ -2,6 +2,10 @@
 
 Short local commands for this checkout.
 
+For the machine-local OpenClaw runtime owner contract, use [../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md](../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md).
+
+For updates on this Mac's local-prefix install, use `../scripts/update_openclaw_local_runtime.sh` from the workspace root instead of `openclaw update`.
+
 ## Start / Restart
 
 ```bash
@@ -78,6 +82,17 @@ Important:
 - `AUTH_TOKEN_MISSING` here usually means the Control UI connected without the bootstrap token.
 - It does not automatically mean the gateway token drifted or the SecretRef is broken.
 - Use `python3 /Users/jordan/.openclaw/workspace/scripts/openclaw-gateway-health.py` if you need to distinguish real gateway drift from UI bootstrap noise.
+
+## Mission Control Gateway Token Sync
+
+Refresh `mission-control/.env.local` from the canonical OpenClaw SecretRef target:
+
+```bash
+cd /Users/jordan/.openclaw/workspace
+python3 scripts/sync_mission_control_gateway_token.py
+```
+
+Use this after rotating the gateway token or after repairing the local OpenClaw runtime. Do not scrape the token from `~/.openclaw/openclaw.json` or the LaunchAgent plist.
 
 ## Browser Crash Triage
 
