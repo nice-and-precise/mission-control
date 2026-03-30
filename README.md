@@ -372,14 +372,19 @@ OPENCLAW_GATEWAY_TOKEN=your-token-here
 
 ```bash
 # Prepare OpenClaw
-openclaw update
+cd ..
+./scripts/update_openclaw_local_runtime.sh
+cd mission-control
 openclaw doctor
 openclaw gateway restart
-openclaw gateway status
+sleep 8
+openclaw gateway status --require-rpc --deep
 
 # Start Autensa
 npm run dev
 ```
+
+On Jordan's Mac, the supported OpenClaw operator path is `../scripts/update_openclaw_local_runtime.sh`, not `openclaw update`. Machine-local runtime details live in [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md).
 
 Open **http://localhost:4000** — you're in! 🎉
 
@@ -627,7 +632,7 @@ autensa/
 
 ### Planning questions not loading
 
-1. Check OpenClaw logs: `openclaw logs --follow`
+1. Check OpenClaw logs: `openclaw logs --plain --limit 200`
 2. Verify your AI API key is valid
 3. Refresh and click the task again
 

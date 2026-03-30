@@ -6,6 +6,19 @@ For the machine-local OpenClaw runtime owner contract, use [../../docs/ops/OPENC
 
 For updates on this Mac's local-prefix install, use `../scripts/update_openclaw_local_runtime.sh` from the workspace root instead of `openclaw update`.
 
+After `openclaw gateway restart`, allow a short warm-up window before treating a failed RPC probe as a real outage. The LaunchAgent can report running a few seconds before the gateway has rebound `127.0.0.1:18789`.
+
+Recommended local check:
+
+```bash
+cd /Users/jordan/.openclaw/workspace
+./scripts/update_openclaw_local_runtime.sh
+~/.openclaw/bin/openclaw doctor
+~/.openclaw/bin/openclaw gateway restart
+sleep 8
+~/.openclaw/bin/openclaw gateway status --require-rpc --deep
+```
+
 ## Start / Restart
 
 ```bash

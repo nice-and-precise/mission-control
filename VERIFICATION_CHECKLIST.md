@@ -15,6 +15,7 @@ python3 scripts/sync_openclaw_model_lanes.py
 openclaw config validate --json
 openclaw doctor
 openclaw gateway restart
+sleep 8
 openclaw gateway status --require-rpc --deep
 openclaw status --json
 openclaw secrets audit --json
@@ -30,6 +31,7 @@ Pass criteria:
 - `gateway status --require-rpc` and `openclaw health` both succeed
 - `openclaw status --json` reports a healthy gateway with `authWarning = null`
 - `openclaw secrets audit --json` keeps `unresolvedRefCount = 0`
+- a short post-restart warm-up gap is acceptable if a retry after a brief wait succeeds and the auth-surface log marker stays present
 - if `doctor` only shows a SecretRef read-only warning while the deeper checks above stay green, treat that as a command-path diagnostic instead of rewriting auth to plaintext
 
 ## Mission Control Gate
