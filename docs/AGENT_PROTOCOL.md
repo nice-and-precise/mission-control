@@ -43,6 +43,7 @@ This document describes how OpenClaw agents interact with Mission Control.
 
 5. **Verification / approval happens**
    - In the strict workflow, `assigned` and `in_progress` are builder-owned, `testing` is tester-owned, `review` is a queue stage, and `verification` is owned by the `reviewer` role
+   - Builder work is sequential per agent: `assigned` means the builder owns the next task in queue, while `in_progress` means that builder is the one actively running right now
    - The verifier checks task evidence in Mission Control (Activities, Deliverables, Sessions, Agent Live) plus the actual workspace/code
    - If approved in `verification`: the assigned reviewer emits `VERIFY_PASS` and may PATCH the task to `done`
    - If the work needs changes: the verifier emits `VERIFY_FAIL` and routes it back through the workflow fail target
@@ -157,8 +158,8 @@ If you're stuck or need clarification:
 
 ### Task Statuses
 - **INBOX**: Unassigned, awaiting triage
-- **ASSIGNED**: Builder-owned staging state before active work begins
-- **IN PROGRESS**: Builder actively working
+- **ASSIGNED**: Builder-owned staging state before active work begins; queued work waits here until that builder is free
+- **IN PROGRESS**: Builder actively working; one builder should only have one active `in_progress` task at a time
 - **TESTING**: Tester-owned quality gate
 - **REVIEW**: Queue stage between testing and verification in the strict workflow
 - **VERIFICATION**: Reviewer/verifier is actively evaluating whether the task is ready to ship
@@ -173,7 +174,7 @@ Mission Control rejects invalid manual workflow combinations with `409` instead 
 
 ### Agent Statuses
 - **standby**: Available for work
-- **working**: Currently assigned to task(s)
+- **working**: Currently running a task
 - **offline**: Not connected to OpenClaw
 
 ## API Integration
@@ -285,6 +286,7 @@ For the strict workflow, the assigned `reviewer` role may complete `verification
 2. **Ask for help early** - don't spin wheels, ping the orchestrator
 3. **Document your work** - leave breadcrumbs for review
 4. **One task at a time** - focus before moving to next
+   Builder agents are serialized. If a second builder card is approved while the builder is already executing, it stays `assigned` and automatically starts only after the current build leaves the builder stage.
 5. **Update progress** - if task will take a while, check in with the orchestrator
 
 ## Future Enhancements

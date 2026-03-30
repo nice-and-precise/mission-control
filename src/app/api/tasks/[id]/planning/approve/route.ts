@@ -107,7 +107,7 @@ export async function POST(
       previousStatus: 'planning',
     });
 
-    if (handoff.success && !handoff.handedOff) {
+    if (handoff.success && !handoff.handedOff && !handoff.queued) {
       const missionControlUrl = getMissionControlUrl();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (process.env.MC_API_TOKEN) {
@@ -142,7 +142,8 @@ export async function POST(
       spec,
       specMarkdown,
       convoyCreated,
-      dispatched: true,
+      dispatched: !handoff.queued,
+      queued: Boolean(handoff.queued),
       builderAgentId: handoff.newAgentId,
       builderAgentName: handoff.newAgentName,
     });

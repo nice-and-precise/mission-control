@@ -28,7 +28,20 @@ export function checkAgentHealth(agentId: string): AgentHealthState {
 
   // Find active task
   const activeTask = queryOne<Task>(
-    `SELECT * FROM tasks WHERE assigned_agent_id = ? AND status IN ('assigned', 'in_progress', 'testing', 'verification') LIMIT 1`,
+    `SELECT *
+     FROM tasks
+     WHERE assigned_agent_id = ?
+       AND status IN ('assigned', 'in_progress', 'testing', 'verification')
+     ORDER BY
+       CASE status
+         WHEN 'in_progress' THEN 0
+         WHEN 'testing' THEN 1
+         WHEN 'verification' THEN 2
+         WHEN 'assigned' THEN 3
+         ELSE 4
+       END,
+       updated_at DESC
+     LIMIT 1`,
     [agentId]
   );
 
@@ -108,7 +121,20 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
 
     // Find current task for this agent
     const activeTask = queryOne<Task>(
-      `SELECT * FROM tasks WHERE assigned_agent_id = ? AND status IN ('assigned', 'in_progress', 'testing', 'verification') LIMIT 1`,
+      `SELECT *
+       FROM tasks
+       WHERE assigned_agent_id = ?
+         AND status IN ('assigned', 'in_progress', 'testing', 'verification')
+       ORDER BY
+         CASE status
+           WHEN 'in_progress' THEN 0
+           WHEN 'testing' THEN 1
+           WHEN 'verification' THEN 2
+           WHEN 'assigned' THEN 3
+           ELSE 4
+         END,
+         updated_at DESC
+       LIMIT 1`,
       [agentId]
     );
 
@@ -249,6 +275,11 @@ async function sweepOrphanedAssignedTasks(now: string): Promise<void> {
       });
 
       if (res.ok) {
+        const payload = await res.json().catch(() => null) as { queued?: boolean } | null;
+        if (payload?.queued) {
+          console.log(`[Health] Assigned task "${task.title}" is queued until its agent is free`);
+          continue;
+        }
         console.log(`[Health] Auto-dispatched orphaned task "${task.title}"`);
         run(
           `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
@@ -509,7 +540,20 @@ function buildTaskSessionKey(task: {
  */
 export async function nudgeAgent(agentId: string): Promise<{ success: boolean; error?: string }> {
   const activeTask = queryOne<Task>(
-    `SELECT * FROM tasks WHERE assigned_agent_id = ? AND status IN ('assigned', 'in_progress', 'testing', 'verification') LIMIT 1`,
+    `SELECT *
+     FROM tasks
+     WHERE assigned_agent_id = ?
+       AND status IN ('assigned', 'in_progress', 'testing', 'verification')
+     ORDER BY
+       CASE status
+         WHEN 'in_progress' THEN 0
+         WHEN 'testing' THEN 1
+         WHEN 'verification' THEN 2
+         WHEN 'assigned' THEN 3
+         ELSE 4
+       END,
+       updated_at DESC
+     LIMIT 1`,
     [agentId]
   );
 
@@ -559,6 +603,11 @@ export async function nudgeAgent(agentId: string): Promise<{ success: boolean; e
     if (!res.ok) {
       const errorText = await res.text();
       return { success: false, error: `Dispatch failed: ${errorText}` };
+    }
+
+    const payload = await res.json().catch(() => null) as { queued?: boolean; message?: string } | null;
+    if (payload?.queued) {
+      return { success: false, error: payload.message || 'Task is queued until the assigned agent is free' };
     }
 
     // Log nudge

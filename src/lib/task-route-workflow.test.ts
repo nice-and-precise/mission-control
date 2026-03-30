@@ -7,6 +7,7 @@ import { POST as createTaskRoute } from '../app/api/tasks/route';
 import { PATCH as patchTaskRoute } from '../app/api/tasks/[id]/route';
 import { POST as dispatchTaskRoute } from '../app/api/tasks/[id]/dispatch/route';
 import { POST as approvePlanningRoute } from '../app/api/tasks/[id]/planning/approve/route';
+import { buildPersistentAgentSessionId } from './openclaw/routing';
 
 const originalFetch = global.fetch;
 
@@ -94,6 +95,25 @@ function seedTaskRole(taskId: string, role: string, agentId: string) {
     `INSERT INTO task_roles (id, task_id, role, agent_id, created_at)
      VALUES (?, ?, ?, ?, datetime('now'))`,
     [crypto.randomUUID(), taskId, role, agentId],
+  );
+}
+
+function seedSession(args: {
+  agentId: string;
+  taskId: string;
+  openclawSessionId?: string;
+  status?: string;
+}) {
+  run(
+    `INSERT INTO openclaw_sessions (id, agent_id, task_id, openclaw_session_id, channel, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'mission-control', ?, datetime('now'), datetime('now'))`,
+    [
+      crypto.randomUUID(),
+      args.agentId,
+      args.taskId,
+      args.openclawSessionId || `mission-control-builder-agent-${args.agentId.slice(0, 8)}`,
+      args.status || 'active',
+    ],
   );
 }
 
@@ -322,4 +342,116 @@ test('planning approval immediately dispatches strict-workflow tasks to the buil
   );
   assert.equal(session?.status, 'active');
   assert.equal(session?.task_id, taskId);
+});
+
+test('dispatch keeps a second builder task queued instead of stealing the active builder session', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const builderId = crypto.randomUUID();
+  const activeTaskId = crypto.randomUUID();
+  const queuedTaskId = crypto.randomUUID();
+  const builderSessionId = buildPersistentAgentSessionId({ id: builderId, name: 'Builder Agent' });
+
+  ensureWorkspace(workspaceId);
+  const templateId = seedStrictWorkflowTemplate(workspaceId);
+  seedAgent({ id: builderId, workspaceId, name: 'Builder Agent', role: 'builder', status: 'working' });
+  seedTask({ id: activeTaskId, workspaceId, templateId, status: 'in_progress', assignedAgentId: builderId, title: 'Current builder task' });
+  seedTask({ id: queuedTaskId, workspaceId, templateId, status: 'assigned', assignedAgentId: builderId, title: 'Queued builder task' });
+  seedTaskRole(activeTaskId, 'builder', builderId);
+  seedTaskRole(queuedTaskId, 'builder', builderId);
+  seedSession({
+    agentId: builderId,
+    taskId: activeTaskId,
+    openclawSessionId: builderSessionId,
+    status: 'active',
+  });
+  stubGatewayClient({ allowDispatch: true });
+
+  const response = await dispatchTaskRoute(
+    new NextRequest(`http://localhost/api/tasks/${queuedTaskId}/dispatch`, { method: 'POST' }),
+    { params: Promise.resolve({ id: queuedTaskId }) },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.queued, true);
+  assert.equal(body.waiting_for_task_id, activeTaskId);
+
+  const queuedTask = queryOne<{ status: string; status_reason: string | null }>(
+    'SELECT status, status_reason FROM tasks WHERE id = ?',
+    [queuedTaskId],
+  );
+  assert.equal(queuedTask?.status, 'assigned');
+  assert.match(queuedTask?.status_reason || '', /Waiting for Builder Agent to finish "Current builder task"/);
+
+});
+
+test('planning approval queues a busy builder task instead of starting a second in-progress build', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const builderId = crypto.randomUUID();
+  const activeTaskId = crypto.randomUUID();
+  const queuedTaskId = crypto.randomUUID();
+  const builderSessionId = buildPersistentAgentSessionId({ id: builderId, name: 'Builder Agent' });
+
+  ensureWorkspace(workspaceId);
+  const templateId = seedStrictWorkflowTemplate(workspaceId);
+  seedAgent({ id: builderId, workspaceId, name: 'Builder Agent', role: 'builder', status: 'working' });
+  seedTask({ id: activeTaskId, workspaceId, templateId, status: 'in_progress', assignedAgentId: builderId, title: 'Current builder task' });
+  seedTask({ id: queuedTaskId, workspaceId, templateId, status: 'planning', title: 'Planning approval dispatch' });
+  run(
+    `UPDATE tasks
+     SET planning_complete = 1,
+         planning_spec = ?,
+         planning_agents = '[]'
+     WHERE id = ?`,
+    [
+      JSON.stringify({
+        title: 'Planning approval dispatch',
+        summary: 'Queue behind a busy builder.',
+        deliverables: ['queued builder task'],
+        success_criteria: ['task remains assigned until builder is free'],
+        constraints: {},
+      }),
+      queuedTaskId,
+    ],
+  );
+  seedTaskRole(activeTaskId, 'builder', builderId);
+  seedTaskRole(queuedTaskId, 'builder', builderId);
+  seedSession({
+    agentId: builderId,
+    taskId: activeTaskId,
+    openclawSessionId: builderSessionId,
+    status: 'active',
+  });
+  stubGatewayClient({ allowDispatch: true });
+
+  global.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    assert.match(url, new RegExp(`/api/tasks/${queuedTaskId}/dispatch$`));
+    return dispatchTaskRoute(
+      new NextRequest(url, {
+        method: 'POST',
+        headers: init?.headers,
+      }),
+      { params: Promise.resolve({ id: queuedTaskId }) },
+    );
+  };
+
+  const response = await approvePlanningRoute(
+    new NextRequest(`http://localhost/api/tasks/${queuedTaskId}/planning/approve`, { method: 'POST' }),
+    { params: Promise.resolve({ id: queuedTaskId }) },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.dispatched, false);
+  assert.equal(body.queued, true);
+  assert.equal(body.builderAgentId, builderId);
+
+  const queuedTask = queryOne<{ status: string; assigned_agent_id: string | null; status_reason: string | null }>(
+    'SELECT status, assigned_agent_id, status_reason FROM tasks WHERE id = ?',
+    [queuedTaskId],
+  );
+  assert.equal(queuedTask?.status, 'assigned');
+  assert.equal(queuedTask?.assigned_agent_id, builderId);
+  assert.match(queuedTask?.status_reason || '', /Waiting for Builder Agent to finish "Current builder task"/);
 });

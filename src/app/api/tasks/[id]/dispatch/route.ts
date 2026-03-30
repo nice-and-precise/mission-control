@@ -32,6 +32,60 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
+const AGENT_EXECUTING_STATUSES = ['in_progress', 'testing', 'review', 'verification', 'convoy_active'];
+
+function findBlockingActiveTask(agentId: string, taskId: string): { id: string; title: string; status: string } | null {
+  const placeholders = AGENT_EXECUTING_STATUSES.map(() => '?').join(', ');
+  return queryOne<{ id: string; title: string; status: string }>(
+    `SELECT id, title, status
+     FROM tasks
+     WHERE assigned_agent_id = ?
+       AND id != ?
+       AND status IN (${placeholders})
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [agentId, taskId, ...AGENT_EXECUTING_STATUSES]
+  ) || null;
+}
+
+function queueTaskUntilAgentIsFree(args: {
+  taskId: string;
+  agentId: string;
+  agentName: string;
+  blockingTask: { id: string; title: string; status: string };
+  now: string;
+}): void {
+  const message = `Waiting for ${args.agentName} to finish "${args.blockingTask.title}" before starting this task.`;
+  run(
+    `UPDATE tasks
+     SET status = 'assigned',
+         assigned_agent_id = ?,
+         planning_dispatch_error = NULL,
+         status_reason = ?,
+         updated_at = ?
+     WHERE id = ? AND status != 'done'`,
+    [args.agentId, message, args.now, args.taskId]
+  );
+
+  const latestActivity = queryOne<{ message: string | null }>(
+    `SELECT message
+     FROM task_activities
+     WHERE task_id = ?
+       AND activity_type = 'status_changed'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [args.taskId]
+  );
+
+  if (latestActivity?.message !== message) {
+    run(
+      `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+       VALUES (?, ?, ?, 'status_changed', ?, ?)`,
+      [uuidv4(), args.taskId, args.agentId, message, args.now]
+    );
+  }
+}
+
 /**
  * POST /api/tasks/[id]/dispatch
  * 
@@ -93,6 +147,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: 'Assigned agent not found' }, { status: 404 });
     }
 
+    const now = new Date().toISOString();
+
     // Check if dispatching to the master agent while there are other orchestrators available
     if (agent.is_master) {
       // Check for other master agents in the same workspace (excluding this one)
@@ -142,8 +198,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       'SELECT * FROM openclaw_sessions WHERE agent_id = ? AND status = ? AND openclaw_session_id = ?',
       [agent.id, 'active', desiredOpenclawSessionId]
     );
-
-    const now = new Date().toISOString();
 
     if (!session) {
       run(
@@ -411,6 +465,34 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         [error, error, now, id]
       );
       return NextResponse.json({ error }, { status: 409 });
+    }
+
+    const builderOwnedDispatch = expectedRole?.toLowerCase() === 'builder';
+    const blockingTask = builderOwnedDispatch ? findBlockingActiveTask(agent.id, task.id) : null;
+
+    if (builderOwnedDispatch && blockingTask) {
+      queueTaskUntilAgentIsFree({
+        taskId: task.id,
+        agentId: agent.id,
+        agentName: agent.name,
+        blockingTask,
+        now,
+      });
+
+      const queuedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+      if (queuedTask) {
+        broadcast({ type: 'task_updated', payload: queuedTask });
+      }
+
+      return NextResponse.json({
+        success: true,
+        queued: true,
+        task_id: task.id,
+        agent_id: agent.id,
+        message: `Task queued for ${agent.name}; agent is still busy with another active task.`,
+        waiting_for_task_id: blockingTask.id,
+        waiting_for_task_title: blockingTask.title,
+      });
     }
 
     const isBuilder = !currentStage || currentStage.role === 'builder' || task.status === 'assigned';

@@ -11,9 +11,13 @@ import { getMissionControlUrl } from '@/lib/config';
 import { broadcast } from '@/lib/events';
 import type { Task, WorkflowTemplate, WorkflowStage, TaskRole } from '@/lib/types';
 
+const EXECUTING_STATUSES = ['in_progress', 'testing', 'review', 'verification', 'convoy_active'] as const;
+const WAITING_FOR_AGENT_PREFIX = 'Waiting for ';
+
 interface StageTransitionResult {
   success: boolean;
   handedOff: boolean;
+  queued?: boolean;
   newAgentId?: string;
   newAgentName?: string;
   error?: string;
@@ -115,6 +119,87 @@ function getAgentForRole(taskId: string, role: string): { id: string; name: stri
   return result ? { id: result.agent_id, name: result.agent_name } : null;
 }
 
+async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: string): Promise<boolean> {
+  const executingPlaceholders = EXECUTING_STATUSES.map(() => '?').join(', ');
+  const otherExecutingTasks = queryOne<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt
+     FROM tasks
+     WHERE assigned_agent_id = ?
+       AND id != ?
+       AND status IN (${executingPlaceholders})`,
+    [agentId, previousTaskId, ...EXECUTING_STATUSES]
+  );
+
+  if (Number(otherExecutingTasks?.cnt || 0) > 0) {
+    return false;
+  }
+
+  const queuedTask = queryOne<{ id: string; title: string }>(
+    `SELECT t.id, t.title
+     FROM tasks t
+     WHERE t.assigned_agent_id = ?
+       AND t.id != ?
+       AND t.status = 'assigned'
+       AND t.status_reason LIKE ?
+       AND NOT EXISTS (
+         SELECT 1
+         FROM openclaw_sessions os
+         WHERE os.task_id = t.id
+           AND os.status = 'active'
+           AND os.session_type != 'subagent'
+       )
+     ORDER BY t.updated_at ASC
+     LIMIT 1`,
+    [agentId, previousTaskId, `${WAITING_FOR_AGENT_PREFIX}%before starting this task.`]
+  );
+
+  if (!queuedTask) {
+    return false;
+  }
+
+  const missionControlUrl = getMissionControlUrl();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (process.env.MC_API_TOKEN) {
+    headers['Authorization'] = `Bearer ${process.env.MC_API_TOKEN}`;
+  }
+
+  try {
+    const dispatchRes = await fetch(`${missionControlUrl}/api/tasks/${queuedTask.id}/dispatch`, {
+      method: 'POST',
+      headers,
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!dispatchRes.ok) {
+      const errorText = await dispatchRes.text();
+      const dispatchError = `Queued builder dispatch failed (${dispatchRes.status}): ${errorText}`;
+      run(
+        'UPDATE tasks SET planning_dispatch_error = ?, updated_at = datetime(\'now\') WHERE id = ?',
+        [dispatchError, queuedTask.id]
+      );
+      console.error(`[Workflow] ${dispatchError}`);
+      return false;
+    }
+
+    const payload = await dispatchRes.json().catch(() => null) as { queued?: boolean } | null;
+    if (payload?.queued) {
+      console.log(`[Workflow] Builder queue still blocked for task ${queuedTask.id}`);
+      return false;
+    }
+
+    console.log(`[Workflow] Auto-started queued builder task ${queuedTask.id} after releasing agent ${agentId}`);
+    return true;
+  } catch (err) {
+    const dispatchError = `Queued builder dispatch error: ${(err as Error).message}`;
+    run(
+      'UPDATE tasks SET planning_dispatch_error = ?, updated_at = datetime(\'now\') WHERE id = ?',
+      [dispatchError, queuedTask.id]
+    );
+    console.error(`[Workflow] ${dispatchError}`);
+    return false;
+  }
+}
+
 /**
  * Handle a task stage transition. Called when status changes.
  *
@@ -209,23 +294,16 @@ export async function handleStageTransition(
     return { success: false, handedOff: false, error: errorMsg };
   }
 
-  // Reset previous agent to standby (if different from new agent and not working on other tasks)
+  // Preserve previous agent before updating the task. If the workflow moves the
+  // task off the builder, we may immediately start the next queued builder task.
   const previousTask = queryOne<{ assigned_agent_id: string | null }>(
     'SELECT assigned_agent_id FROM tasks WHERE id = ?',
     [taskId]
   );
-  if (previousTask?.assigned_agent_id && previousTask.assigned_agent_id !== roleAgent.id) {
-    const otherActiveTasks = queryOne<{ cnt: number }>(
-      `SELECT COUNT(*) as cnt FROM tasks WHERE assigned_agent_id = ? AND id != ? AND status IN ('assigned', 'in_progress', 'testing', 'verification')`,
-      [previousTask.assigned_agent_id, taskId]
-    );
-    if (!otherActiveTasks || otherActiveTasks.cnt === 0) {
-      run(
-        `UPDATE agents SET status = 'standby', updated_at = datetime('now') WHERE id = ? AND status = 'working'`,
-        [previousTask.assigned_agent_id]
-      );
-    }
-  }
+  const releasedAgentId =
+    previousTask?.assigned_agent_id && previousTask.assigned_agent_id !== roleAgent.id
+      ? previousTask.assigned_agent_id
+      : null;
 
   // Assign agent to task. Preserve the explicit failure reason when a stage is
   // being routed back through the workflow fail target so the UI still shows
@@ -240,6 +318,31 @@ export async function handleStageTransition(
       ? [roleAgent.id, now, taskId]
       : [roleAgent.id, now, taskId]
   );
+
+  if (releasedAgentId) {
+    const startedQueuedTask = await dispatchNextQueuedBuilderTask(releasedAgentId, taskId).catch(err => {
+      console.error(`[Workflow] Failed to advance queued builder task for agent ${releasedAgentId}:`, err);
+      return false;
+    });
+
+    if (!startedQueuedTask) {
+      const executingPlaceholders = EXECUTING_STATUSES.map(() => '?').join(', ');
+      const otherExecutingTasks = queryOne<{ cnt: number }>(
+        `SELECT COUNT(*) as cnt
+         FROM tasks
+         WHERE assigned_agent_id = ?
+           AND id != ?
+           AND status IN (${executingPlaceholders})`,
+        [releasedAgentId, taskId, ...EXECUTING_STATUSES]
+      );
+      if (!otherExecutingTasks || otherExecutingTasks.cnt === 0) {
+        run(
+          `UPDATE agents SET status = 'standby', updated_at = datetime('now') WHERE id = ? AND status = 'working'`,
+          [releasedAgentId]
+        );
+      }
+    }
+  }
 
   // Log the handoff
   run(
@@ -280,6 +383,15 @@ export async function handleStageTransition(
       console.error(`[Workflow] ${error}`);
       run('UPDATE tasks SET planning_dispatch_error = ?, updated_at = ? WHERE id = ?', [error, now, taskId]);
       return { success: false, handedOff: true, newAgentId: roleAgent.id, newAgentName: roleAgent.name, error };
+    }
+
+    const dispatchPayload = await dispatchRes.clone().json().catch(() => null) as
+      | { queued?: boolean }
+      | null;
+
+    if (dispatchPayload?.queued) {
+      console.log(`[Workflow] Queued task ${taskId} for ${roleAgent.name} until the agent is free`);
+      return { success: true, handedOff: false, queued: true, newAgentId: roleAgent.id, newAgentName: roleAgent.name };
     }
 
     console.log(`[Workflow] Dispatched task ${taskId} to ${roleAgent.name} (role: ${targetStage.role})`);

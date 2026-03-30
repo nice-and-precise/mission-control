@@ -456,7 +456,7 @@ export async function PATCH(
         previousStatus: existing.status,
       });
 
-      if (!workflowResult.handedOff) {
+      if (!workflowResult.handedOff && !workflowResult.queued) {
         // No workflow template or no role for this stage — fall back to legacy dispatch
         const missionControlUrl = getMissionControlUrl();
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -506,6 +506,9 @@ export async function PATCH(
            FROM tasks t LEFT JOIN agents aa ON t.assigned_agent_id = aa.id WHERE t.id = ?`,
           [id]
         );
+        if (refreshed) broadcast({ type: 'task_updated', payload: refreshed });
+      } else if (stageResult.queued) {
+        const refreshed = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
         if (refreshed) broadcast({ type: 'task_updated', payload: refreshed });
       } else if (!stageResult.success && stageResult.error) {
         console.warn(`[PATCH] Workflow handoff blocked: ${stageResult.error}`);
