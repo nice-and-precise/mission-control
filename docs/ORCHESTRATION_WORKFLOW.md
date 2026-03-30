@@ -3,7 +3,7 @@
 This guide explains how the master agent should orchestrate sub-agents to properly integrate with Mission Control.
 
 > [!NOTE]
-> Use [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md) for the live verified state of this local fork. This guide describes the intended orchestration contract.
+> Use [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md) for the live verified state of this local checkout. This guide describes the intended orchestration contract.
 
 ## Overview
 
@@ -38,7 +38,7 @@ import * as orchestrator from '@/lib/orchestration';
 
 ## Strict Stage Ownership
 
-On this local fork's strict workflow:
+On this local checkout's strict workflow:
 
 - `inbox` is unassigned triage
 - `assigned` and `in_progress` are builder-owned

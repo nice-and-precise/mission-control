@@ -8,7 +8,7 @@ This document explains how to orchestrate tasks in Mission Control, including ho
 - Understand the runtime evidence fallback path
 
 > [!NOTE]
-> For the verified behavior of this detached local fork, including machine-specific runtime overrides and known gaps, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
+> For the verified behavior of this local checkout, including machine-specific runtime overrides and known gaps, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
 
 ## API Base URL
 

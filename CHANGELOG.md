@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased (local)] - 2026-03-27
 
-This section tracks verified local-fork behavior in the detached `v2.4.0-dirty` checkout used on this machine. It is not an upstream release entry.
+This section tracks verified local-checkout behavior for the `v2.4.0`-based baseline used on this machine. It is not an upstream release entry.
 
 ### Added
 - **Canonical local status page** — Added [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md) as the source of truth for local runtime behavior, machine-specific environment overrides, archived snapshots, and known gaps.

@@ -13,6 +13,9 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 - Local checkout state: `v2.4.0-local-baseline`
 - Git ref: `work/from-pre-real-work-baseline-20260327`
 - Baseline commit: `9956877`
+- Git remote model on this machine:
+  - `origin` -> `nice-and-precise/mission-control`
+  - `upstream` -> `crshdn/mission-control`
 - Local app URL: `http://localhost:4000`
 - Local runtime project root override:
   - `PROJECTS_PATH=/Users/jordan/Projects`
@@ -28,7 +31,7 @@ The following facts were re-verified against the live local runtime on `2026-03-
 - `npm run dev` is the default local operating mode on `localhost:4000`
   - `GET /api/health` returned HTTP `200` with `{"status":"ok","uptime_seconds":433,"version":"2.4.0"}` during this cleanup pass
   - `next dev` uses `.next-dev` while `next build` and `next start` keep using `.next`, which prevents a build from clobbering the active dev runtime
-- The repo-backed strict workflow is behaving truthfully on this fork
+- The repo-backed strict workflow is behaving truthfully on this checkout
   - the clean-room smoke task completed end-to-end through build -> test -> verification without manual task-state repair
   - both disposable smoke tasks were deleted successfully afterward, and their isolated workspaces were removed from the active projects tree
 - The local control-plane database was returned to a pre-real-work baseline
@@ -54,7 +57,7 @@ The following facts were re-verified against the live local runtime on `2026-03-
   - non-shell file tools such as `read`, `edit`, `find`, and `glob` must use absolute paths under the task workspace
 - Planning completion now reconciles from transcript truth instead of relying only on live poll timing
   - if a planner run already finished, Mission Control can recover the completed spec from stored/OpenClaw transcript history on a later read
-  - this local fork also tolerates the malformed planner `constraints` JSON shape observed on `2026-03-28`, so an almost-valid completion payload does not leave the task stuck in `Waiting for response...`
+  - this local checkout also tolerates the malformed planner `constraints` JSON shape observed on `2026-03-28`, so an almost-valid completion payload does not leave the task stuck in `Waiting for response...`
 - The session detail route no longer crashes on `sessions.list` payload shape differences
   - authenticated `GET /api/openclaw/sessions/{id}` now returns a normal `404` for a missing session instead of a `500`
 - Static error-page build regression is not reproducible on the current checkout

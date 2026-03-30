@@ -1,7 +1,7 @@
 # Real-Time Integration Testing Guide
 
 > [!NOTE]
-> This guide covers the realtime feature surface. For the verified state of this local fork, including current known gaps and machine-specific overrides, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
+> This guide covers the realtime feature surface. For the verified state of this local checkout, including current known gaps and machine-specific overrides, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
 
 ## Quick Start
 

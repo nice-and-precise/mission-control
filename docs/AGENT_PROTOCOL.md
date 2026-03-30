@@ -3,7 +3,7 @@
 This document describes how OpenClaw agents interact with Mission Control.
 
 > [!NOTE]
-> This is an active protocol guide, not the canonical local-status page. For the verified behavior of this detached local fork, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
+> This is an active protocol guide, not the canonical local-status page. For the verified behavior of this local checkout, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
 
 ## Task Assignment Flow
 

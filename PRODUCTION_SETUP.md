@@ -3,7 +3,7 @@
 This guide walks you through setting up Mission Control for production use with proper configuration management.
 
 > [!NOTE]
-> This guide uses generic setup examples. For the verified state of this local fork, including the current machine-specific project-root override, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
+> This guide uses generic setup examples. For the verified state of this local checkout, including the current machine-specific project-root override, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
 
 ## ⚠️ Security First
 
@@ -324,7 +324,7 @@ ls -la mission-control.db
 ## 📖 Further Reading
 
 - [Agent Protocol Documentation](docs/AGENT_PROTOCOL.md)
-- [Local Fork Status](docs/CURRENT_LOCAL_STATUS.md)
+- [Local Checkout Status](docs/CURRENT_LOCAL_STATUS.md)
 - [Real-Time Implementation](REALTIME_IMPLEMENTATION_SUMMARY.md)
 - [the orchestrator Orchestration Guide](src/lib/orchestration.ts)
 

@@ -32,6 +32,15 @@ If `localhost:4000` is already occupied, identify the listener first:
 lsof -nP -iTCP:4000 -sTCP:LISTEN
 ```
 
+## Git Remote Model
+
+For this checkout on Jordan's machine:
+
+- `origin` = `nice-and-precise/mission-control`
+- `upstream` = `crshdn/mission-control`
+
+Use `git fetch upstream` when you need to compare against source Mission Control. Use `git push origin <branch>` only for branches you intend to publish from this checkout.
+
 ## Health Check
 
 ```bash
@@ -169,7 +178,7 @@ Recovery steps:
 
 1. Read the error text first. It now tells you which stage ownership rule was violated.
 2. Move the task to a legal stage instead of forcing dispatch.
-3. Use these ownership rules on this fork:
+3. Use these ownership rules in this checkout:
    - `inbox` is unassigned
    - `assigned` and `in_progress` are builder-owned
    - `testing` is tester-owned
