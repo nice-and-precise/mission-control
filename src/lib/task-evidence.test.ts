@@ -18,6 +18,7 @@ import { setGatewaySessionHistoryResolverForTests } from './openclaw/session-his
 import { GET as getSubagentRoute } from '../app/api/tasks/[id]/subagent/route';
 import { GET as getDeliverablesRoute } from '../app/api/tasks/[id]/deliverables/route';
 import { GET as getAgentStreamRoute } from '../app/api/tasks/[id]/agent-stream/route';
+import { GET as getOpenClawStatusRoute } from '../app/api/openclaw/status/route';
 import { DELETE as deleteTaskRoute } from '../app/api/tasks/[id]/route';
 import { POST as dispatchTaskRoute } from '../app/api/tasks/[id]/dispatch/route';
 
@@ -1563,6 +1564,90 @@ test('runHealthCheckCycle recovers a first-pass verifier success from gateway hi
   assert.equal(task?.planning_dispatch_error, null);
   assert.equal(task?.status_reason, null);
   assert.equal(completionActivity?.message, 'The repo-backed verification passed cleanly.');
+});
+
+test('openclaw status route triggers immediate unreconciled run recovery for ended verifier sessions', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = buildTaskId('statusrecover');
+  const reviewerId = crypto.randomUUID();
+
+  seedAgent({
+    id: reviewerId,
+    workspaceId,
+    name: 'Reviewer Agent',
+    role: 'reviewer',
+    status: 'working',
+  });
+  seedTask({
+    id: taskId,
+    workspaceId,
+    assignedAgentId: reviewerId,
+    status: 'verification',
+    planningDispatchError: 'Run ended without completion callback or workflow handoff (completed session).',
+  });
+  seedTaskSession({
+    taskId,
+    agentId: reviewerId,
+    openclawSessionId: 'mission-control-reviewer-agent-statusrecover',
+    status: 'completed',
+  });
+
+  setGatewaySessionsResolverForTests(async () => ({
+    sessions: [
+      {
+        key: 'agent:main:mission-control-reviewer-agent-statusrecover',
+        sessionId: 'ephemeral-review-session',
+        status: 'done',
+        channel: 'mission-control',
+        updatedAt: 1774541400000,
+        endedAt: '2026-03-27T16:07:32.000Z',
+      },
+    ],
+  }));
+  setGatewaySessionHistoryResolverForTests(async (sessionRef) => {
+    if (sessionRef === 'agent:main:mission-control-reviewer-agent-statusrecover') {
+      return {
+        items: [
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'VERIFY_PASS: Status route closed the loop.' }],
+          },
+        ],
+      };
+    }
+
+    throw new Error(`unexpected session history lookup for ${sessionRef}`);
+  });
+
+  const client = getOpenClawClient() as unknown as {
+    isConnected: () => boolean;
+    connect: () => Promise<void>;
+    listSessions: () => Promise<unknown[]>;
+  };
+  client.isConnected = () => true;
+  client.connect = async () => undefined;
+  client.listSessions = async () => [
+    {
+      key: 'agent:main:mission-control-reviewer-agent-statusrecover',
+      sessionId: 'ephemeral-review-session',
+      status: 'done',
+      channel: 'mission-control',
+      endedAt: '2026-03-27T16:07:32.000Z',
+    },
+  ];
+
+  const response = await getOpenClawStatusRoute();
+  const payload = await response.json();
+  const task = queryOne<{ status: string; planning_dispatch_error: string | null; status_reason: string | null }>(
+    'SELECT status, planning_dispatch_error, status_reason FROM tasks WHERE id = ?',
+    [taskId],
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.recovered_runs, 1);
+  assert.equal(task?.status, 'done');
+  assert.equal(task?.planning_dispatch_error, null);
+  assert.equal(task?.status_reason, null);
 });
 
 test('runHealthCheckCycle records at most one generic unreconciled-run activity per ended session', async () => {

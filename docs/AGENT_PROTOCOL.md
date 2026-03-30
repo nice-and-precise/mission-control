@@ -252,7 +252,8 @@ For the strict workflow, the assigned `reviewer` role may complete `verification
 ### If stuck in verification:
 - verify the reviewer task actually launched and linked to the task
 - confirm the verifier dispatch includes `updated_by_agent_id` in the PATCH example
-- if the reviewer emitted `VERIFY_PASS` but the task still shows the generic unreconciled error, run the health sweep so transcript-based closeout can retry the ended session
+- if the reviewer emitted `VERIFY_PASS` but the task still shows the generic unreconciled error, refresh the workspace or hit `GET /api/openclaw/status` first; that route now retries transcript-based closeout immediately
+- if the status poll does not recover it, then run the health sweep as the fallback retry path
 - only fall back to manual approval for legacy direct `review -> done` flows
 
 ## Example Workflow

@@ -16,6 +16,7 @@ const ASSIGNED_STALE_MINUTES = 2;
 const UNRECONCILED_RUN_ERROR_PREFIX = 'Run ended without completion callback or workflow handoff';
 let healthCheckCycleInFlight: Promise<AgentHealth[]> | null = null;
 let healthCheckImplementationForTests: (() => Promise<AgentHealth[]>) | null = null;
+let unreconciledTaskRunRecoveryInFlight: Promise<number> | null = null;
 
 /**
  * Check health state for a single agent.
@@ -198,144 +199,7 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
     await reconcileTaskRuntimeEvidence(id);
   }
 
-  // If a task already had an OpenClaw run that ended without advancing the
-  // workflow, surface that explicitly instead of letting the sweeper loop.
-  const unreconciledRuns = queryAll<
-    Task & {
-      latest_session_status?: string;
-      latest_session_created_at?: string;
-      latest_session_updated_at?: string;
-      latest_openclaw_session_id?: string;
-      latest_agent_role?: string | null;
-      latest_agent_session_key_prefix?: string | null;
-    }
-  >(
-    `WITH ranked_task_sessions AS (
-       SELECT
-         os.*,
-         ROW_NUMBER() OVER (
-           PARTITION BY os.task_id
-           ORDER BY
-             CASE WHEN os.session_type = 'subagent' THEN 1 ELSE 0 END,
-             CASE WHEN os.agent_id = t.assigned_agent_id THEN 0 ELSE 1 END,
-             os.updated_at DESC
-         ) as session_rank
-       FROM openclaw_sessions os
-       JOIN tasks t ON t.id = os.task_id
-     )
-     SELECT
-       t.*,
-       os.status as latest_session_status,
-       os.created_at as latest_session_created_at,
-       os.updated_at as latest_session_updated_at,
-       os.openclaw_session_id as latest_openclaw_session_id,
-       a.role as latest_agent_role,
-       a.session_key_prefix as latest_agent_session_key_prefix
-     FROM tasks t
-     JOIN ranked_task_sessions os
-       ON os.task_id = t.id
-      AND os.session_rank = 1
-     LEFT JOIN agents a ON a.id = os.agent_id
-     WHERE t.status IN ('assigned', 'in_progress', 'testing', 'review', 'verification')
-       AND os.status != 'active'
-       AND (
-         t.planning_dispatch_error IS NULL
-         OR trim(t.planning_dispatch_error) = ''
-         OR t.planning_dispatch_error LIKE ?
-       )`,
-    [`${UNRECONCILED_RUN_ERROR_PREFIX}%`]
-  );
-
-  for (const task of unreconciledRuns) {
-    const reconciliationState = await reconcileTaskRuntimeEvidence(task.id);
-    const sessionKey = buildTaskSessionKey(task);
-
-    if (sessionKey) {
-      const matchingGatewaySession = reconciliationState.relevantSessions.find(
-        (session) => session.key === sessionKey,
-      );
-
-      try {
-        console.info(
-          `[Health] Reconciling ended task run ${task.id}: session=${sessionKey} status=${task.latest_session_status || 'unknown'} history=lookup`,
-        );
-        const resolvedOutcome = await resolveTaskRunOutcomeFromGatewayHistory({
-          sessionKey,
-          sessionId: matchingGatewaySession?.sessionId || null,
-          startedAt: matchingGatewaySession?.createdAt || null,
-          endedAt: matchingGatewaySession?.endedAt || null,
-        });
-
-        console.info(
-          `[Health] Reconciliation outcome for task ${task.id}: ${
-            resolvedOutcome.kind === 'signal'
-              ? 'signal'
-              : resolvedOutcome.kind === 'runtime_blocked'
-                ? 'runtime_blocked'
-                : 'none'
-          }`,
-        );
-
-        if (resolvedOutcome.kind === 'signal' || resolvedOutcome.kind === 'runtime_blocked') {
-          const result = await processAgentSignal({
-            taskId: task.id,
-            sessionKey,
-            message: resolvedOutcome.message,
-          });
-
-          if (result.handled) {
-            continue;
-          }
-        }
-      } catch (error) {
-        console.warn(`[Health] Failed to resolve transcript outcome for task ${task.id}:`, error);
-      }
-    } else {
-      console.info(
-        `[Health] Reconciling ended task run ${task.id}: no stable session key available for history lookup`,
-      );
-    }
-
-    const error = `Run ended without completion callback or workflow handoff (${task.latest_session_status || 'ended'} session).`;
-    const existingRunError = queryOne<{ id: string }>(
-      `SELECT id
-       FROM task_activities
-       WHERE task_id = ?
-         AND message = ?
-         AND created_at >= COALESCE(?, ?, created_at)
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [task.id, error, task.latest_session_created_at || null, task.latest_session_updated_at || null]
-    );
-
-    if (existingRunError && task.planning_dispatch_error === error) {
-      if (task.assigned_agent_id) {
-        run(
-          `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
-          [now, task.assigned_agent_id]
-        );
-      }
-      continue;
-    }
-
-    run(
-      `UPDATE tasks
-       SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
-       WHERE id = ?`,
-      [error, error, now, task.id]
-    );
-    run(
-      `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
-       VALUES (?, ?, ?, 'status_changed', ?, ?)`,
-      [uuidv4(), task.id, task.assigned_agent_id, error, now]
-    );
-    if (task.assigned_agent_id) {
-      run(
-        `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
-        [now, task.assigned_agent_id]
-      );
-    }
-  }
+  await recoverUnreconciledTaskRuns(now);
 
   // Also set idle agents
   const idleAgents = queryAll<{ id: string }>(
@@ -457,6 +321,164 @@ export async function runHealthCheckCycle(): Promise<AgentHealth[]> {
     return await healthCheckCycleInFlight;
   } finally {
     healthCheckCycleInFlight = null;
+  }
+}
+
+type UnreconciledRunTask = Task & {
+  latest_session_status?: string;
+  latest_session_created_at?: string;
+  latest_session_updated_at?: string;
+  latest_openclaw_session_id?: string;
+  latest_agent_role?: string | null;
+  latest_agent_session_key_prefix?: string | null;
+};
+
+async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number> {
+  const unreconciledRuns = queryAll<UnreconciledRunTask>(
+    `WITH ranked_task_sessions AS (
+       SELECT
+         os.*,
+         ROW_NUMBER() OVER (
+           PARTITION BY os.task_id
+           ORDER BY
+             CASE WHEN os.session_type = 'subagent' THEN 1 ELSE 0 END,
+             CASE WHEN os.agent_id = t.assigned_agent_id THEN 0 ELSE 1 END,
+             os.updated_at DESC
+         ) as session_rank
+       FROM openclaw_sessions os
+       JOIN tasks t ON t.id = os.task_id
+     )
+     SELECT
+       t.*,
+       os.status as latest_session_status,
+       os.created_at as latest_session_created_at,
+       os.updated_at as latest_session_updated_at,
+       os.openclaw_session_id as latest_openclaw_session_id,
+       a.role as latest_agent_role,
+       a.session_key_prefix as latest_agent_session_key_prefix
+     FROM tasks t
+     JOIN ranked_task_sessions os
+       ON os.task_id = t.id
+      AND os.session_rank = 1
+     LEFT JOIN agents a ON a.id = os.agent_id
+     WHERE t.status IN ('assigned', 'in_progress', 'testing', 'review', 'verification')
+       AND os.status != 'active'
+       AND (
+         t.planning_dispatch_error IS NULL
+         OR trim(t.planning_dispatch_error) = ''
+         OR t.planning_dispatch_error LIKE ?
+       )`,
+    [`${UNRECONCILED_RUN_ERROR_PREFIX}%`]
+  );
+
+  let recoveredCount = 0;
+
+  for (const task of unreconciledRuns) {
+    const reconciliationState = await reconcileTaskRuntimeEvidence(task.id);
+    const sessionKey = buildTaskSessionKey(task);
+
+    if (sessionKey) {
+      const matchingGatewaySession = reconciliationState.relevantSessions.find(
+        (session) => session.key === sessionKey,
+      );
+
+      try {
+        console.info(
+          `[Health] Reconciling ended task run ${task.id}: session=${sessionKey} status=${task.latest_session_status || 'unknown'} history=lookup`,
+        );
+        const resolvedOutcome = await resolveTaskRunOutcomeFromGatewayHistory({
+          sessionKey,
+          sessionId: matchingGatewaySession?.sessionId || null,
+          startedAt: matchingGatewaySession?.createdAt || null,
+          endedAt: matchingGatewaySession?.endedAt || null,
+        });
+
+        console.info(
+          `[Health] Reconciliation outcome for task ${task.id}: ${
+            resolvedOutcome.kind === 'signal'
+              ? 'signal'
+              : resolvedOutcome.kind === 'runtime_blocked'
+                ? 'runtime_blocked'
+                : 'none'
+          }`,
+        );
+
+        if (resolvedOutcome.kind === 'signal' || resolvedOutcome.kind === 'runtime_blocked') {
+          const result = await processAgentSignal({
+            taskId: task.id,
+            sessionKey,
+            message: resolvedOutcome.message,
+          });
+
+          if (result.handled) {
+            recoveredCount += 1;
+            continue;
+          }
+        }
+      } catch (error) {
+        console.warn(`[Health] Failed to resolve transcript outcome for task ${task.id}:`, error);
+      }
+    } else {
+      console.info(
+        `[Health] Reconciling ended task run ${task.id}: no stable session key available for history lookup`,
+      );
+    }
+
+    const error = `Run ended without completion callback or workflow handoff (${task.latest_session_status || 'ended'} session).`;
+    const existingRunError = queryOne<{ id: string }>(
+      `SELECT id
+       FROM task_activities
+       WHERE task_id = ?
+         AND message = ?
+         AND created_at >= COALESCE(?, ?, created_at)
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [task.id, error, task.latest_session_created_at || null, task.latest_session_updated_at || null]
+    );
+
+    if (existingRunError && task.planning_dispatch_error === error) {
+      if (task.assigned_agent_id) {
+        run(
+          `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
+          [now, task.assigned_agent_id]
+        );
+      }
+      continue;
+    }
+
+    run(
+      `UPDATE tasks
+       SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+       WHERE id = ?`,
+      [error, error, now, task.id]
+    );
+    run(
+      `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+       VALUES (?, ?, ?, 'status_changed', ?, ?)`,
+      [uuidv4(), task.id, task.assigned_agent_id, error, now]
+    );
+    if (task.assigned_agent_id) {
+      run(
+        `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
+        [now, task.assigned_agent_id]
+      );
+    }
+  }
+
+  return recoveredCount;
+}
+
+export async function recoverUnreconciledTaskRuns(now = new Date().toISOString()): Promise<number> {
+  if (unreconciledTaskRunRecoveryInFlight) {
+    return unreconciledTaskRunRecoveryInFlight;
+  }
+
+  unreconciledTaskRunRecoveryInFlight = recoverUnreconciledTaskRunsInternal(now);
+
+  try {
+    return await unreconciledTaskRunRecoveryInFlight;
+  } finally {
+    unreconciledTaskRunRecoveryInFlight = null;
   }
 }
 

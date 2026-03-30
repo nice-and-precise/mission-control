@@ -165,6 +165,40 @@ If that direct call succeeds but Mission Control still fails, restart `npm run d
 
 Keep `AUTOPILOT_MODEL=openclaw` in `mission-control/.env.local` on this machine. Do not hardcode provider model IDs like `anthropic/claude-sonnet-4-6` in local Autopilot routes unless the current OpenClaw agent policy explicitly allows that override.
 
+## Immediate Ended-Run Recovery
+
+Mission Control now retries transcript-based closeout during the normal workspace status poll, not only during the background health sweep.
+
+What changed:
+
+- `GET /api/openclaw/status` now runs the same ended-session recovery pass the scheduler uses.
+- If a reviewer or tester run already ended and the transcript contains `TEST_PASS`, `REVIEW_PASS`, `VERIFY_PASS`, or a runtime blocker marker, the next workspace refresh should reconcile the task immediately.
+- The periodic health sweep remains the fallback path if the status route is not being hit.
+
+Use this when a task briefly shows:
+
+- `Agent health: stalled`
+- `Run ended without completion callback or workflow handoff (...)`
+- a task stuck in `testing` or `verification` even though the OpenClaw session is already `done`
+
+Verification:
+
+```bash
+curl -s http://localhost:4000/api/openclaw/status | jq
+```
+
+Expected result:
+
+- `connected: true`
+- `recovered_runs` is present
+- if a transcript-backed closeout was pending, the task should move forward on that poll instead of waiting for the next scheduled sweep
+
+If the task still does not recover:
+
+1. Inspect the OpenClaw session transcript and verify it contains a recognized workflow marker.
+2. Confirm the task/session link uses the expected stable session key.
+3. Then run the health sweep manually as a fallback diagnostic path, not as the first-line operator step.
+
 ## Browser Crash Triage
 
 Use this ladder when `next dev` is running but the browser shows:
