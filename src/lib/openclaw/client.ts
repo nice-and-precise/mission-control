@@ -7,6 +7,7 @@ import { createHash } from 'crypto';
 
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'ws://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+export const OPENCLAW_OPERATOR_SCOPES = ['operator.read', 'operator.write', 'operator.admin'];
 
 // Global deduplication cache that persists across module reloads in Next.js dev
 // Use globalThis to ensure it's shared across all instances
@@ -265,7 +266,7 @@ export class OpenClawClient extends EventEmitter {
               const requestId = crypto.randomUUID();
               const signedAtMs = Date.now();
               const role = 'operator';
-              const scopes = ['operator.admin'];
+              const scopes = OPENCLAW_OPERATOR_SCOPES;
 
               // Build device identity for the connect params
               const clientId = 'cli';

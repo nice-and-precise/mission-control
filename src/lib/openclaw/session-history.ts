@@ -4,6 +4,7 @@ const GATEWAY_HTTP_URL =
   process.env.OPENCLAW_GATEWAY_URL?.replace('ws://', 'http://').replace('wss://', 'https://') ||
   'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+const GATEWAY_READ_SCOPE = 'operator.read';
 const DEFAULT_HISTORY_LIMIT = 100;
 
 export interface GatewayTranscriptItem {
@@ -83,6 +84,7 @@ export async function loadGatewaySessionHistory(
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${GATEWAY_TOKEN}`,
+      'x-openclaw-scopes': GATEWAY_READ_SCOPE,
     },
     cache: 'no-store',
   });

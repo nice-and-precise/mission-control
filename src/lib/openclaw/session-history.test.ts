@@ -1,6 +1,7 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  loadGatewaySessionHistory,
   resolveTaskRunOutcomeFromGatewayHistory,
   setGatewaySessionHistoryResolverForTests,
 } from './session-history';
@@ -176,4 +177,32 @@ test('resolveTaskRunOutcomeFromGatewayHistory filters stable-key history to the 
     kind: 'signal',
     message: 'VERIFY_PASS: Current run succeeded',
   });
+});
+
+test('loadGatewaySessionHistory sends the required read scope header', async () => {
+  process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
+
+  const originalFetch = globalThis.fetch;
+  let capturedInit: RequestInit | undefined;
+
+  globalThis.fetch = async (_input, init) => {
+    capturedInit = init;
+    return new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const mod = await import(`./session-history?test=${Date.now()}`);
+    await mod.loadGatewaySessionHistory('session-123', 25);
+
+    assert.deepEqual(capturedInit?.headers, {
+      Authorization: 'Bearer test-token',
+      'x-openclaw-scopes': 'operator.read',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  }
 });

@@ -116,6 +116,55 @@ python3 scripts/sync_mission_control_gateway_token.py
 
 Use this after rotating the gateway token or after repairing the local OpenClaw runtime. Do not scrape the token from `~/.openclaw/openclaw.json` or the LaunchAgent plist.
 
+## Autopilot HTTP Scope Check
+
+Use this when research, ideation, or description generation fails with:
+
+- `LLM completion failed (403)`
+- `missing scope: operator.read`
+- `missing scope: operator.write`
+
+On this machine's current OpenClaw runtime, the OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes require the request header:
+
+```bash
+x-openclaw-scopes: operator.read,operator.write
+```
+
+Mission Control now sends that header from its shared autopilot LLM helper. If the 403 returns again, verify the route directly before touching the gateway token:
+
+```bash
+python3 - <<'PY'
+from dotenv import dotenv_values
+import urllib.request, json
+
+vals = dotenv_values('/Users/jordan/.openclaw/workspace/mission-control/.env.local')
+base = vals['OPENCLAW_GATEWAY_URL'].replace('ws://', 'http://').replace('wss://', 'https://')
+token = vals['OPENCLAW_GATEWAY_TOKEN']
+
+req = urllib.request.Request(
+    base + '/v1/chat/completions',
+    headers={
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json',
+        'x-openclaw-scopes': 'operator.read,operator.write',
+    },
+    method='POST',
+    data=json.dumps({
+        'model': 'openclaw',
+        'messages': [{'role': 'user', 'content': 'hi'}],
+    }).encode(),
+)
+
+with urllib.request.urlopen(req, timeout=30) as resp:
+    print(resp.status)
+    print(resp.read().decode())
+PY
+```
+
+If that direct call succeeds but Mission Control still fails, restart `npm run dev` so the updated server code is loaded.
+
+Keep `AUTOPILOT_MODEL=openclaw` in `mission-control/.env.local` on this machine. Do not hardcode provider model IDs like `anthropic/claude-sonnet-4-6` in local Autopilot routes unless the current OpenClaw agent policy explicitly allows that override.
+
 ## Browser Crash Triage
 
 Use this ladder when `next dev` is running but the browser shows:
