@@ -213,7 +213,8 @@ For repo-backed file inspection:
 - if a deliverable is listed with an absolute path, copy that exact path instead of switching to a bare repo-relative path
 
 Current limitation:
-- `GET /api/openclaw/sessions/{id}/history` currently returns `501`, so do not treat gateway session history as a required review surface
+- `GET /api/openclaw/sessions/{id}/history` is now available as a read-only transcript surface, but bounded OpenClaw history can omit oversized entries
+- Treat Activities, Deliverables, Sessions, Agent Live, and explicit workflow markers as the primary operational truth; use transcript history as supporting evidence
 
 ## The orchestrator's Responsibilities
 

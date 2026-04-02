@@ -1,7 +1,10 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  getOversizedHistoryOmissionMessage,
+  hasOversizedHistoryOmission,
   loadGatewaySessionHistory,
+  normalizeGatewaySessionHistoryPayload,
   resolveTaskRunOutcomeFromGatewayHistory,
   setGatewaySessionHistoryResolverForTests,
 } from './session-history';
@@ -179,30 +182,79 @@ test('resolveTaskRunOutcomeFromGatewayHistory filters stable-key history to the 
   });
 });
 
-test('loadGatewaySessionHistory sends the required read scope header', async () => {
-  process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
+test('normalizeGatewaySessionHistoryPayload resolves key and id fields into Mission Control contract', () => {
+  const payload = normalizeGatewaySessionHistoryPayload('agent:main:session-123', {
+    sessionId: 'runtime-session-id',
+    sessionKey: 'agent:main:session-123',
+    messages: [
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hello' }],
+      },
+    ],
+    hasMore: true,
+    nextCursor: 'cursor-2',
+  });
 
-  const originalFetch = globalThis.fetch;
-  let capturedInit: RequestInit | undefined;
+  assert.deepEqual(payload, {
+    sessionRef: 'agent:main:session-123',
+    resolvedSessionKey: 'agent:main:session-123',
+    resolvedSessionId: 'runtime-session-id',
+    items: [
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hello' }],
+      },
+    ],
+    hasMore: true,
+    nextCursor: 'cursor-2',
+    source: 'chat.history',
+  });
+});
 
-  globalThis.fetch = async (_input, init) => {
-    capturedInit = init;
-    return new Response(JSON.stringify({ items: [] }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
+test('loadGatewaySessionHistory strips tool events unless includeTools is explicitly enabled', async () => {
+  setGatewaySessionHistoryResolverForTests(async () => ({
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'working' },
+          { type: 'toolCall', id: 'read:1', name: 'read', arguments: { path: '/tmp/example' } },
+          { type: 'text', text: 'done' },
+        ],
+      },
+      {
+        role: 'toolResult',
+        content: [{ type: 'text', text: 'tool output' }],
+      },
+    ],
+  }));
 
-  try {
-    const mod = await import(`./session-history?test=${Date.now()}`);
-    await mod.loadGatewaySessionHistory('session-123', 25);
+  const withoutTools = await loadGatewaySessionHistory('agent:main:session-123');
+  assert.deepEqual(withoutTools.items, [
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'working' },
+        { type: 'text', text: 'done' },
+      ],
+    },
+  ]);
 
-    assert.deepEqual(capturedInit?.headers, {
-      Authorization: 'Bearer test-token',
-      'x-openclaw-scopes': 'operator.read',
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
-  }
+  const withTools = await loadGatewaySessionHistory('agent:main:session-123', 100, {
+    includeTools: true,
+  });
+  assert.equal(withTools.items.length, 2);
+});
+
+test('oversized history omission helpers detect the documented placeholder', () => {
+  const items = [
+    {
+      role: 'assistant',
+      content: [{ type: 'text', text: '[chat.history omitted: message too large]' }],
+    },
+  ];
+
+  assert.equal(hasOversizedHistoryOmission(items), true);
+  assert.match(getOversizedHistoryOmissionMessage(), /oversized/i);
 });

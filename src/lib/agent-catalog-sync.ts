@@ -1,14 +1,8 @@
 import { queryAll, queryOne, run, transaction } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
+import { normalizeGatewayAgent } from '@/lib/openclaw/gateway-agents';
 import { acquireRuntimeLease } from '@/lib/runtime-leases';
 import { isRuntimeBootEnabled } from '@/lib/runtime-boot';
-
-interface GatewayAgent {
-  id?: string;
-  name?: string;
-  label?: string;
-  model?: string;
-}
 
 const SYNC_INTERVAL_MS = Number(process.env.AGENT_CATALOG_SYNC_INTERVAL_MS || 60_000);
 const AGENT_CATALOG_SCHEDULER_LEASE = 'agent-catalog-sync-scheduler';
@@ -41,7 +35,7 @@ export async function syncGatewayAgentsToCatalog(options?: { force?: boolean; re
       await client.connect();
     }
 
-    const gatewayAgents = (await client.listAgents()) as GatewayAgent[];
+    const gatewayAgents = await client.listAgents();
     const existing = queryAll<{ id: string; gateway_agent_id: string | null }>(
       `SELECT id, gateway_agent_id FROM agents WHERE gateway_agent_id IS NOT NULL`
     );
@@ -52,23 +46,33 @@ export async function syncGatewayAgentsToCatalog(options?: { force?: boolean; re
 
     transaction(() => {
       for (const ga of gatewayAgents) {
-        const gatewayId = ga.id || ga.name;
+        const normalized = normalizeGatewayAgent(ga);
+        const gatewayId = normalized?.gatewayId || null;
         if (!gatewayId) continue;
 
-        const name = ga.name || ga.label || gatewayId;
+        if (normalized?.warning) {
+          console.warn('[AgentCatalog] Unsupported gateway agent model shape:', {
+            gatewayId,
+            warning: normalized.warning,
+            model: normalized.rawModelConfig ?? (normalized.model ?? null),
+          });
+        }
+
+        const name = normalized?.displayName || gatewayId;
         const role = normalizeRole(name);
         const existingId = existingByGatewayId.get(gatewayId) || null;
+        const primaryModel = normalized?.primaryModel || null;
 
         if (existingId) {
           run(
             `UPDATE agents SET name = ?, role = ?, model = COALESCE(?, model), source = 'gateway', updated_at = ? WHERE id = ?`,
-            [name, role, ga.model || null, ts, existingId]
+            [name, role, primaryModel, ts, existingId]
           );
         } else {
           run(
             `INSERT INTO agents (id, name, role, description, avatar_emoji, is_master, workspace_id, model, source, gateway_agent_id, created_at, updated_at)
              VALUES (lower(hex(randomblob(16))), ?, ?, ?, '🔗', 0, 'default', ?, 'gateway', ?, ?, ?)`,
-            [name, role, `Auto-synced from OpenClaw (${gatewayId})`, ga.model || null, gatewayId, ts, ts]
+            [name, role, `Auto-synced from OpenClaw (${gatewayId})`, primaryModel, gatewayId, ts, ts]
           );
         }
         changed += 1;

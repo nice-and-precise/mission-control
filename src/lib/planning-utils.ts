@@ -2,7 +2,12 @@ import { getDb, queryOne, run } from './db';
 import { broadcast } from './events';
 import { cleanupTaskScopedAgents } from './planning-agents';
 import type { GeneratedPlanningSpec, SuggestedPlanningAgent, Task } from './types';
-import { getOpenClawClient } from './openclaw/client';
+import {
+  extractTextContent,
+  getOversizedHistoryOmissionMessage,
+  hasOversizedHistoryOmission,
+  loadGatewaySessionHistory,
+} from './openclaw/session-history';
 
 // Maximum input length for extractJSON to prevent ReDoS attacks
 const MAX_EXTRACT_JSON_LENGTH = 1_000_000; // 1MB
@@ -34,6 +39,10 @@ export interface PlanningTranscriptResolution {
   messages: PlanningMessage[];
   completion: PlanningCompletionPayload | null;
   currentQuestion: PlanningQuestion | null;
+  transcriptIssue?: {
+    code: 'history_omitted';
+    message: string;
+  } | null;
 }
 
 export interface PlanningTaskRow {
@@ -43,7 +52,15 @@ export interface PlanningTaskRow {
   planning_complete?: number;
 }
 
-type OpenClawMessagesResolver = (sessionKey: string) => Promise<Array<{ role: string; content: string }>>;
+type OpenClawMessagesResolver = (
+  sessionKey: string,
+) => Promise<{
+  messages: Array<{ role: string; content: string }>;
+  transcriptIssue?: {
+    code: 'history_omitted';
+    message: string;
+  } | null;
+}>;
 
 let openClawMessagesResolverForTests: OpenClawMessagesResolver | null = null;
 
@@ -289,6 +306,7 @@ export function resolvePlanningTranscript(messages: PlanningMessage[]): Planning
             : undefined,
         },
         currentQuestion: null,
+        transcriptIssue: null,
       };
     }
 
@@ -300,6 +318,7 @@ export function resolvePlanningTranscript(messages: PlanningMessage[]): Planning
           question: parsed.question.trim(),
           options: normalizePlanningOptions(parsed.options),
         },
+        transcriptIssue: null,
       };
     }
   }
@@ -308,6 +327,7 @@ export function resolvePlanningTranscript(messages: PlanningMessage[]): Planning
     messages: normalizedMessages,
     completion: null,
     currentQuestion: null,
+    transcriptIssue: null,
   };
 }
 
@@ -345,25 +365,28 @@ export async function reconcilePlanningTranscript(
   let messages = normalizePlanningMessages(task.planning_messages ? JSON.parse(task.planning_messages) : []);
   let resolution = resolvePlanningTranscript(messages);
   let changed = false;
+  let transcriptIssue = resolution.transcriptIssue || null;
 
   if (
     task.planning_session_key &&
     options?.refreshFromOpenClaw &&
     !resolution.completion
   ) {
-    const openclawMessages = await getMessagesFromOpenClaw(task.planning_session_key);
+    const { messages: openclawMessages, transcriptIssue: fetchedTranscriptIssue } = await getMessagesFromOpenClaw(task.planning_session_key);
     const merged = mergeStoredMessagesWithOpenClaw(messages, openclawMessages);
     if (merged.changed) {
       messages = merged.messages;
       changed = true;
       resolution = resolvePlanningTranscript(messages);
     }
+    transcriptIssue = fetchedTranscriptIssue || transcriptIssue;
   }
 
   return {
     ...resolution,
     messages,
     changed,
+    transcriptIssue,
   };
 }
 
@@ -434,45 +457,46 @@ export function setOpenClawMessagesResolverForTests(resolver: OpenClawMessagesRe
  */
 export async function getMessagesFromOpenClaw(
   sessionKey: string
-): Promise<Array<{ role: string; content: string }>> {
+): Promise<{
+  messages: Array<{ role: string; content: string }>;
+  transcriptIssue?: {
+    code: 'history_omitted';
+    message: string;
+  } | null;
+}> {
   if (openClawMessagesResolverForTests) {
     return openClawMessagesResolverForTests(sessionKey);
   }
 
   try {
-    const client = getOpenClawClient();
-    if (!client.isConnected()) {
-      await client.connect();
-    }
-
-    // Use chat.history API to get session messages
-    const result = await client.call<{
-      messages: Array<{
-        role: string;
-        content: Array<{ type: string; text?: string }>;
-      }>;
-    }>('chat.history', {
-      sessionKey,
-      limit: 50,
-    });
-
+    const history = await loadGatewaySessionHistory(sessionKey, 50, { includeTools: true });
     const messages: Array<{ role: string; content: string }> = [];
 
-    for (const msg of result.messages || []) {
-      if (msg.role === 'assistant') {
-        const textContent = msg.content?.find((c) => c.type === 'text');
-        if (textContent?.text && textContent.text.trim().length > 0) {
-          messages.push({
-            role: 'assistant',
-            content: textContent.text,
-          });
-        }
+    for (const item of history.items) {
+      if ((item.role || item.message?.role) !== 'assistant') continue;
+      const content = extractTextContent(item);
+      if (content) {
+        messages.push({
+          role: 'assistant',
+          content,
+        });
       }
     }
 
-    return messages;
+    return {
+      messages,
+      transcriptIssue: hasOversizedHistoryOmission(history.items)
+        ? {
+            code: 'history_omitted',
+            message: getOversizedHistoryOmissionMessage(),
+          }
+        : null,
+    };
   } catch (err) {
     console.error('[Planning Utils] Failed to get messages from OpenClaw:', err);
-    return [];
+    return {
+      messages: [],
+      transcriptIssue: null,
+    };
   }
 }

@@ -340,7 +340,7 @@ Your task data, research results, ideas, swipe history, and product programs sta
 ### Prerequisites
 
 - **Node.js** `20.x` or `24.x` ([download](https://nodejs.org/))
-- **OpenClaw** `2026.3.28` on the `stable` channel
+- **OpenClaw** `2026.4.1` or newer on the `stable` channel
 - **AI API Key** — Anthropic (recommended), OpenAI, Google, or others via OpenRouter
 
 ### Install
@@ -384,7 +384,13 @@ openclaw gateway status --require-rpc --deep
 npm run dev
 ```
 
-On Jordan's Mac, the supported OpenClaw operator path is `../scripts/update_openclaw_local_runtime.sh`, not `openclaw update`. Machine-local runtime details live in [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md).
+On Jordan's Mac, the supported OpenClaw operator path is `../scripts/update_openclaw_local_runtime.sh`, not `openclaw update`, so the runtime stays owned by the local prefix under `~/.openclaw`. Machine-local runtime details live in [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md).
+
+OpenClaw compatibility notes on this baseline:
+- Mission Control treats `openclaw` as the default agent target for Autopilot HTTP completions.
+- `/api/openclaw/models` separates agent targets from provider overrides so operators do not confuse the two contracts.
+- `/api/openclaw/sessions/{id}/history` is available as a read-only transcript surface, but oversized entries may still be omitted by OpenClaw's bounded history contract.
+- Detached OpenClaw work is visible through Mission Control's read-only background-task surface and the task modal's `Detached Work` tab, including degraded-ledger metadata when the CLI only returns JSON on `stderr` or times out.
 
 Open **http://localhost:4000** — you're in! 🎉
 

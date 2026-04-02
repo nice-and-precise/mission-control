@@ -60,6 +60,7 @@ export async function GET(
         agents: finalized.agents,
         executionPlan: finalized.execution_plan,
         messages: resolution.messages,
+        transcriptIssue: resolution.transcriptIssue || null,
         autoDispatched: false,
         dispatchError: null,
       });
@@ -73,6 +74,17 @@ export async function GET(
         complete: false,
         messages: resolution.messages,
         currentQuestion: resolution.currentQuestion,
+        transcriptIssue: resolution.transcriptIssue || null,
+      });
+    }
+
+    if (resolution.transcriptIssue) {
+      return NextResponse.json({
+        hasUpdates: true,
+        complete: false,
+        messages: resolution.messages,
+        currentQuestion: resolution.currentQuestion,
+        transcriptIssue: resolution.transcriptIssue,
       });
     }
 
@@ -88,6 +100,7 @@ export async function GET(
       hasUpdates: false,
       stalePlanning: isStalePlanning || undefined,
       staleSinceMs: isStalePlanning ? (Date.now() - lastMsgTimestamp) : undefined,
+      transcriptIssue: null,
     });
   } catch (error) {
     console.error('Failed to poll for updates:', error);

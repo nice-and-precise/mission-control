@@ -25,6 +25,10 @@ interface PlanningState {
   sessionKey?: string;
   messages: PlanningMessage[];
   currentQuestion?: PlanningQuestion;
+  transcriptIssue?: {
+    code: string;
+    message: string;
+  } | null;
   isComplete: boolean;
   dispatchError?: string;
   spec?: {
@@ -70,6 +74,8 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
   const isPollingRef = useRef(false);
   const lastSubmissionRef = useRef<{ answer: string; otherText?: string } | null>(null);
   const currentQuestionRef = useRef<string | undefined>(undefined);
+
+  const transcriptIssue = state?.transcriptIssue || null;
   
 
 
@@ -154,6 +160,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
               spec: data.spec,
               agents: data.agents,
               currentQuestion: data.currentQuestion,
+              transcriptIssue: data.transcriptIssue || null,
               dispatchError: data.dispatchError,
             }));
           }
@@ -176,7 +183,11 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           }
 
           // Only stop polling when we actually have a question or completion
-          if (data.currentQuestion || data.complete || data.dispatchError) {
+          if (data.transcriptIssue) {
+            setStalePlanning(true);
+          }
+
+          if (data.currentQuestion || data.complete || data.dispatchError || data.transcriptIssue) {
             setIsWaitingForResponse(false);
             stopPolling();
           }
@@ -229,7 +240,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
 
   // Auto-start polling if planning is in progress but no question loaded yet
   useEffect(() => {
-    if (state && state.isStarted && !state.isComplete && !state.currentQuestion && !isWaitingForResponse) {
+    if (state && state.isStarted && !state.isComplete && !state.currentQuestion && !state.transcriptIssue && !isWaitingForResponse) {
       startPolling();
     }
   }, [state, isWaitingForResponse, startPolling]);
@@ -248,6 +259,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           ...prev!,
           sessionKey: data.sessionKey,
           messages: data.messages || [],
+          transcriptIssue: null,
           isStarted: true,
         }));
 
@@ -492,6 +504,18 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
             {state.statusReason}
           </div>
         )}
+
+        {transcriptIssue && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+              <div>
+                <p className="font-medium text-amber-300">OpenClaw transcript was truncated</p>
+                <p>{transcriptIssue.message}</p>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Dispatch Error with Retry */}
         {state.isApproved && state.dispatchError && (
@@ -672,6 +696,18 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
 
       {/* Question area */}
       <div className="flex-1 overflow-y-auto p-6">
+        {transcriptIssue && (
+          <div className="mx-auto mb-6 max-w-xl rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+              <div>
+                <p className="font-medium text-amber-300">Transcript recovery needs attention</p>
+                <p>{transcriptIssue.message}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {state?.currentQuestion ? (
           <div className="max-w-xl mx-auto">
             <h3 className="text-lg font-medium mb-6">
@@ -796,9 +832,13 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
               {stalePlanning ? (
                 <>
                   <AlertCircle className="w-8 h-8 text-amber-400 mx-auto mb-3" />
-                  <p className="text-amber-300 font-medium mb-2">Planning appears stuck</p>
+                  <p className="text-amber-300 font-medium mb-2">
+                    {transcriptIssue ? 'Planning transcript needs recovery' : 'Planning appears stuck'}
+                  </p>
                   <p className="text-mc-text-secondary text-sm mb-4 max-w-sm">
-                    The orchestrator hasn&apos;t responded in a while. This can happen when the plan finished but Mission Control did not reconcile the completion into the approval state.
+                    {transcriptIssue
+                      ? transcriptIssue.message
+                      : 'The orchestrator hasn&apos;t responded in a while. This can happen when the plan finished but Mission Control did not reconcile the completion into the approval state.'}
                   </p>
                   <div className="flex items-center justify-center gap-3">
                     <button

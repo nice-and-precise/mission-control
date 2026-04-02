@@ -31,12 +31,15 @@ export async function GET(request: NextRequest) {
         `).all(workspace.id) as { status: TaskStatus; count: number }[];
         
         const counts: WorkspaceStats['taskCounts'] = {
+          pending_dispatch: 0,
           planning: 0,
           inbox: 0,
           assigned: 0,
           in_progress: 0,
+          convoy_active: 0,
           testing: 0,
           review: 0,
+          verification: 0,
           done: 0,
           total: 0
         };

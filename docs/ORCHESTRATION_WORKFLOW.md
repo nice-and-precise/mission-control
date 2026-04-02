@@ -276,7 +276,7 @@ After implementing this workflow, verify:
 5. **Ending the run without a workflow marker** → Mission Control may recover a missed explicit marker or synthesize an explicit blocker from gateway history, but successful runs should still emit the required marker directly
 6. **Builder hits a blocker but only writes free-form prose** → Mission Control cannot distinguish an intentional blocker from a missing callback; use `BLOCKED: ...`
 7. **Approving without verification** → Backend rejects with 400 error
-8. **Relying on session-history replay during review** → `GET /api/openclaw/sessions/{id}/history` is currently `501`; use Activities / Deliverables / Sessions / Agent Live instead
+8. **Treating session-history replay as the only review surface** → `GET /api/openclaw/sessions/{id}/history` is read-only and bounded; use Activities / Deliverables / Sessions / Agent Live first, then use transcript history or Detached Work as supporting evidence
 
 ## Example: Complete Workflow
 

@@ -25,12 +25,13 @@ openclaw health
 
 Pass criteria:
 
-- OpenClaw reports `2026.3.28`
+- OpenClaw reports `2026.4.1` or newer
 - config validation returns `valid: true`
 - `doctor` does not report stale `qwen-portal-auth` plugin warnings
 - `gateway status --require-rpc` and `openclaw health` both succeed
 - `openclaw status --json` reports a healthy gateway with `authWarning = null`
 - `openclaw secrets audit --json` keeps `unresolvedRefCount = 0`
+- `openclaw update status --json` keeps `root` under `~/.openclaw/lib/node_modules/openclaw`
 - a short post-restart warm-up gap is acceptable if a retry after a brief wait succeeds and the auth-surface log marker stays present
 - if `doctor` only shows a SecretRef read-only warning while the deeper checks above stay green, treat that as a command-path diagnostic instead of rewriting auth to plaintext
 
@@ -63,6 +64,15 @@ In a second terminal:
 
 ```bash
 curl -i http://localhost:4000/api/health
+TOKEN="$(python3 - <<'PY'
+from dotenv import dotenv_values
+vals = dotenv_values('.env.local')
+print(vals.get('MC_API_TOKEN', ''))
+PY
+)"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/status | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/models | jq
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:4000/api/openclaw/background-tasks" | jq
 ```
 
 Pass criteria:
@@ -70,6 +80,10 @@ Pass criteria:
 - `GET /api/health` returns HTTP `200`
 - the UI loads on `http://localhost:4000`
 - Mission Control can reach the configured OpenClaw gateway
+- `/api/openclaw/models` returns separate `agentTargets` and `providerModels`
+- `/api/openclaw/background-tasks` returns `tasks`, `status`, `sourceChannel`, and `warning`
+- `/api/openclaw/background-tasks` uses `status: "ok"` for true empty-success responses and `status: "degraded"` when the CLI timed out or only returned JSON on `stderr`
+- if you have a known session key or session ID, `/api/openclaw/sessions/{id}/history` returns a normalized transcript payload instead of `501`
 
 ## Documentation Gate
 

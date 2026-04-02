@@ -56,6 +56,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ 
         success: true, 
         message: 'Planning force-completed. No spec was found — task remains in planning for manual review.',
+        transcriptIssue: resolution.transcriptIssue || null,
       });
     }
 
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       dispatchError: null,
       spec: finalized.spec,
       agents: finalized.agents,
+      transcriptIssue: resolution.transcriptIssue || null,
     });
   } catch (error) {
     console.error('[Force Complete] Error:', error);

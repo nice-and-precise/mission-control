@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, Plus, Users, ImageIcon, Truck, Radio, MessageSquare, ExternalLink, HardDrive } from 'lucide-react';
+import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, Plus, Users, Radio, ExternalLink, Boxes } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import { ActivityLog } from './ActivityLog';
 import { DeliverablesList } from './DeliverablesList';
@@ -9,15 +9,12 @@ import { SessionsList } from './SessionsList';
 import { PlanningTab } from './PlanningTab';
 import { TeamTab } from './TeamTab';
 import { AgentModal } from './AgentModal';
-import { TaskImages } from './TaskImages';
-import { ConvoyTab } from './ConvoyTab';
 import { AgentLiveTab } from './AgentLiveTab';
-import { TaskChatTab } from './TaskChatTab';
-import { WorkspaceTab } from './WorkspaceTab';
+import { BackgroundTasksList } from './BackgroundTasksList';
 import { shouldShowAgentLiveTab } from '@/lib/agent-live';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 
-type TabType = 'overview' | 'planning' | 'convoy' | 'team' | 'activity' | 'deliverables' | 'images' | 'sessions' | 'workspace' | 'agent-live' | 'chat';
+type TabType = 'overview' | 'planning' | 'team' | 'activity' | 'deliverables' | 'sessions' | 'background-tasks' | 'agent-live';
 
 interface TaskModalProps {
   task?: Task;
@@ -32,7 +29,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const [usePlanningMode, setUsePlanningMode] = useState(false);
   // Auto-switch to relevant tab based on task status
   const [activeTab, setActiveTab] = useState<TabType>(
-    task?.status === 'planning' ? 'planning' : task?.status === 'convoy_active' ? 'convoy' : 'overview'
+    task?.status === 'planning' ? 'planning' : 'overview'
   );
 
   // Stable callback for when spec is locked - use window.location.reload() to refresh data
@@ -167,16 +164,11 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const tabs = [
     { id: 'overview' as TabType, label: 'Overview', icon: null },
     { id: 'planning' as TabType, label: 'Planning', icon: <ClipboardList className="w-4 h-4" /> },
-    { id: 'convoy' as TabType, label: 'Convoy', icon: <Truck className="w-4 h-4" /> },
     { id: 'team' as TabType, label: 'Team', icon: <Users className="w-4 h-4" /> },
     { id: 'activity' as TabType, label: 'Activity', icon: <Activity className="w-4 h-4" /> },
     { id: 'deliverables' as TabType, label: 'Deliverables', icon: <Package className="w-4 h-4" /> },
-    { id: 'images' as TabType, label: 'Images', icon: <ImageIcon className="w-4 h-4" /> },
     { id: 'sessions' as TabType, label: 'Sessions', icon: <Bot className="w-4 h-4" /> },
-    // Workspace tab — shown when task has workspace isolation
-    ...(task?.workspace_path ? [{ id: 'workspace' as TabType, label: 'Workspace', icon: <HardDrive className="w-4 h-4" /> }] : []),
-    // Chat is always available — messages dispatch the agent if needed
-    { id: 'chat' as TabType, label: 'Chat', icon: <MessageSquare className="w-4 h-4" /> },
+    { id: 'background-tasks' as TabType, label: 'Detached Work', icon: <Boxes className="w-4 h-4" /> },
     // Agent Live stays available for assigned, active, or unreconciled-ended runs.
     ...(shouldShowAgentLiveTab(task)
       ? [
@@ -377,11 +369,6 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
             />
           )}
 
-          {/* Convoy Tab */}
-          {activeTab === 'convoy' && task && (
-            <ConvoyTab taskId={task.id} taskTitle={task.title} taskStatus={task.status} />
-          )}
-
           {/* Team Tab */}
           {activeTab === 'team' && task && (
             <TeamTab taskId={task.id} workspaceId={workspaceId || task.workspace_id || 'default'} />
@@ -397,14 +384,14 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
             <DeliverablesList taskId={task.id} />
           )}
 
-          {/* Images Tab */}
-          {activeTab === 'images' && task && (
-            <TaskImages taskId={task.id} />
-          )}
-
           {/* Sessions Tab */}
           {activeTab === 'sessions' && task && (
             <SessionsList taskId={task.id} />
+          )}
+
+          {/* Detached Work Tab */}
+          {activeTab === 'background-tasks' && task && (
+            <BackgroundTasksList taskId={task.id} />
           )}
 
           {/* Agent Live Tab */}
@@ -412,15 +399,6 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
             <AgentLiveTab taskId={task.id} />
           )}
 
-          {/* Chat Tab */}
-          {/* Workspace Tab */}
-          {activeTab === 'workspace' && task && (
-            <WorkspaceTab taskId={task.id} taskStatus={task.status} />
-          )}
-
-          {activeTab === 'chat' && task && (
-            <TaskChatTab taskId={task.id} />
-          )}
         </div>
 
         {/* Footer - only show on overview tab */}

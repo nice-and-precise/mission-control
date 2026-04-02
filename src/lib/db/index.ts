@@ -23,10 +23,6 @@ function bootRuntimeSideEffects(): void {
     return;
   }
 
-  import('@/lib/autopilot/recovery').then(({ recoverOrphanedCycles }) =>
-    recoverOrphanedCycles().catch(err => console.warn('[Recovery] Failed:', err))
-  );
-
   // Keep Mission Control's agent catalog synced with OpenClaw-installed agents
   ensureCatalogSyncScheduled();
   ensureHealthCheckScheduled();

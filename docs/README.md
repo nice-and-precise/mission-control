@@ -7,6 +7,8 @@ Start here when you need to know which Mission Control docs to trust.
 - [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md): shareable verification contract for a fresh clone or handoff
 - [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md): canonical truth for this machine and this local checkout
 - [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md): short local ops commands for start, health, backup, and cleanup conventions
+- [REPOSITORY_POLICY.md](REPOSITORY_POLICY.md): canonical branch, remote, and PR policy for this checkout
+- [FORK_DETACH_CHECKLIST.md](FORK_DETACH_CHECKLIST.md): exact admin sequence for converting this GitHub fork into a standalone repo
 - [USER_GUIDE.md](USER_GUIDE.md): operator entrypoint that separates portable setup from machine-local runbooks
 - [../README.md](../README.md): upstream/public-facing product guide
 - [../ORCHESTRATION.md](../ORCHESTRATION.md): workflow behavior and runtime evidence expectations
@@ -27,7 +29,7 @@ Start here when you need to know which Mission Control docs to trust.
 ## Documentation Conventions
 
 - Keep machine-specific truth in [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md), not in upstream/public docs.
-- On this machine, use the standard remote model inside `mission-control/`: `origin` = your fork, `upstream` = the source repo.
+- Treat this checkout as a product repo: `origin/main` is the working trunk and `upstream` is read-only comparison input.
 - Keep the reproducible verification gate in [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md), not in ad hoc handoff notes.
 - Keep local operator commands in [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md), not scattered across status notes.
 - Use repo-relative links inside docs.

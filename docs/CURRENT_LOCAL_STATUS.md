@@ -2,20 +2,25 @@
 
 This is the canonical current-state document for the local checkout at [the repo root](../).
 
-Use this page when you need the truth about this machine and this worktree. Treat the top-level [README.md](../README.md) and [CHANGELOG.md](../CHANGELOG.md) as upstream/public-facing docs first, then use this page for local deviations, verified runtime evidence, and known gaps.
+Use this page when you need the truth about this machine and this worktree. Treat the top-level [README.md](../README.md) and [CHANGELOG.md](../CHANGELOG.md) as product-facing docs, then use this page for local deviations, verified runtime evidence, and known gaps.
 
 For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md). For the docs map, use [docs/README.md](README.md).
 
 ## Snapshot
 
-- Date verified: `2026-03-29`
+- Date verified: `2026-04-01`
 - Upstream base: `v2.4.0`
 - Local checkout state: `v2.4.0-local-baseline`
 - Git ref: `work/from-pre-real-work-baseline-20260327`
 - Baseline commit: `9956877`
 - Git remote model on this machine:
   - `origin` -> `nice-and-precise/mission-control`
-  - `upstream` -> `crshdn/mission-control`
+  - `source` -> `crshdn/mission-control` (optional read-only comparison remote)
+- Canonical product trunk:
+  - `origin/main`
+- Repository policy:
+  - day-to-day work branches must be based on `origin/main`
+  - `source/main` is for comparison and selective import work only when the `source` remote is present
 - Local app URL: `http://localhost:4000`
 - Local runtime project root override:
   - `PROJECTS_PATH=/Users/jordan/Projects`
@@ -26,7 +31,7 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Verified Runtime Behavior
 
-The following facts were re-verified against the live local runtime on `2026-03-28`:
+The following facts were re-verified against the live local runtime on `2026-04-01`:
 
 - `npm run dev` is the default local operating mode on `localhost:4000`
   - `GET /api/health` returned HTTP `200` with `{"status":"ok","uptime_seconds":433,"version":"2.4.0"}` during this cleanup pass
@@ -57,7 +62,13 @@ The following facts were re-verified against the live local runtime on `2026-03-
   - non-shell file tools such as `read`, `edit`, `find`, and `glob` must use absolute paths under the task workspace
 - Planning completion now reconciles from transcript truth instead of relying only on live poll timing
   - if a planner run already finished, Mission Control can recover the completed spec from stored/OpenClaw transcript history on a later read
+  - if OpenClaw omits oversized transcript entries, Mission Control now surfaces a structured `transcriptIssue` instead of silently waiting forever
   - this local checkout also tolerates the malformed planner `constraints` JSON shape observed on `2026-03-28`, so an almost-valid completion payload does not leave the task stuck in `Waiting for response...`
+- Session history, model discovery, and detached work are now separated into explicit operator surfaces
+  - authenticated `GET /api/openclaw/sessions/{id}/history` resolves either a session key or runtime session ID into a normalized Mission Control transcript payload
+  - `GET /api/openclaw/models` now separates `agentTargets` from `providerModels`, and local Autopilot defaults to `openclaw`
+  - `GET /api/openclaw/background-tasks` exposes the OpenClaw task ledger as read-only observability and correlates known session keys back to Mission Control task sessions when possible
+  - the detached-work route now also surfaces `status`, `sourceChannel`, and `warning` so operators can see degraded ledger reads instead of treating them as a silent empty state
 - The session detail route no longer crashes on `sessions.list` payload shape differences
   - authenticated `GET /api/openclaw/sessions/{id}` now returns a normal `404` for a missing session instead of a `500`
 - Static error-page build regression is not reproducible on the current checkout
@@ -67,11 +78,11 @@ The following facts were re-verified against the live local runtime on `2026-03-
 
 These are still real local limitations as of this verification pass:
 
-1. Historical transcript replay is still intentionally unavailable through Mission Control's public route.
-   `GET /api/openclaw/sessions/{id}/history` remains `501` even though Mission Control now uses the official gateway history endpoint internally for transcript-based closeout reconciliation.
+1. Public session history is available, but it is still bounded by OpenClaw's transcript limits.
+   Oversized transcript entries can be omitted upstream, and Mission Control now surfaces that as a `transcriptIssue` rather than pretending the transcript is complete.
 
-2. The local checkout is intentionally a local baseline relative to upstream.
-   This branch preserves the verified local OpenClaw compatibility and workflow patches; it is not intended to be a pristine mirror of upstream `v2.4.0`.
+2. This checkout historically carried upstream-based work, but that is no longer the intended operating model.
+   The current policy is documented in [REPOSITORY_POLICY.md](REPOSITORY_POLICY.md): `origin/main` is the product trunk, and upstream is reference input only.
 
 3. A local browser-extension conflict can still crash `next dev` in a normal Chrome profile even when Mission Control itself is healthy.
    Current evidence points to Next App Router's internal `use-reducer-with-devtools` path being activated by Redux DevTools-style extensions. A clean browser session loads Mission Control normally, so this should be triaged as a local dev-environment conflict unless it also reproduces in a clean browser.
@@ -115,7 +126,7 @@ ls -ld .next .next-dev
 | Protected localhost callbacks need bearer auth when `MC_API_TOKEN` is set | [ORCHESTRATION.md](../ORCHESTRATION.md), [docs/AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) | `verified` | dispatch prompts and local protected routes require bearer auth on this machine | Keep callback examples aligned with the real auth requirement |
 | `GET /api/openclaw/sessions/{id}` no longer crashes on a non-array `sessions.list` payload | local runtime | `verified` | authenticated request now returns `404` for a missing session instead of `500` | Keep the client-side session-list normalization in place |
 | Workflow advancement still depends on explicit completion markers, with gateway-history fallback for missed callbacks | [ORCHESTRATION.md](../ORCHESTRATION.md), [docs/AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) | `verified with local deviation` | clean-room smoke completed end-to-end, and earlier missed callbacks were recoverable from gateway history | Keep active docs precise about evidence visibility versus transcript-based closeout recovery |
-| Session-history replay is available through Mission Control's public route | stale internal assumption | `known gap` | `GET /api/openclaw/sessions/{id}/history` returns `501` | Keep limitation explicit in active docs |
+| Session-history replay is available through Mission Control's public route | local runtime | `verified with caveat` | authenticated `GET /api/openclaw/sessions/{id}/history` returns normalized transcript payloads for valid session refs | Keep docs explicit that OpenClaw history is bounded and may omit oversized entries |
 | Static error-page build regression is currently reproducible from source | local status note from earlier session | `not reproducible` | current `npm run build` exits `0` on this worktree | Only reopen if a fresh failing revision or exact repro is captured |
 | Current test and build gate succeeds on the pinned Node runtime | [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md), [../README.md](../README.md) | `verified` | `nvm use 24.13.0`, `npm test`, and `npm run build` all exited `0` on `2026-03-29` | Keep `.nvmrc`, runtime preflight, and verification checklist aligned |
 

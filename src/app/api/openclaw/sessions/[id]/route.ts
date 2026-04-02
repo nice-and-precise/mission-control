@@ -3,6 +3,7 @@ import { getOpenClawClient } from '@/lib/openclaw/client';
 import { getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 
+export const dynamic = 'force-dynamic';
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
@@ -24,9 +25,9 @@ export async function GET(request: Request, { params }: RouteParams) {
       }
     }
 
-    // List sessions and find the one with matching ID
+    // List sessions and find the one with matching ID or key
     const sessions = await client.listSessions();
-    const session = sessions.find((s) => s.id === id);
+    const session = sessions.find((s) => s.id === id || s.sessionId === id || s.key === id);
 
     if (!session) {
       return NextResponse.json(

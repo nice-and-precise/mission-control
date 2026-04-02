@@ -6,7 +6,8 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Bot, CheckCircle, Circle, XCircle, Trash2, Check } from 'lucide-react';
+import { Fragment } from 'react';
+import { Bot, CheckCircle, Circle, XCircle, Trash2, Check, History } from 'lucide-react';
 
 interface SessionWithAgent {
   id: string;
@@ -30,6 +31,7 @@ interface SessionsListProps {
 export function SessionsList({ taskId }: SessionsListProps) {
   const [sessions, setSessions] = useState<SessionWithAgent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedHistory, setExpandedHistory] = useState<Record<string, string[]>>({});
 
   const loadSessions = useCallback(async () => {
     try {
@@ -122,6 +124,46 @@ export function SessionsList({ taskId }: SessionsListProps) {
     }
   };
 
+  const toggleHistory = async (sessionRef: string) => {
+    if (expandedHistory[sessionRef]) {
+      setExpandedHistory((prev) => {
+        const next = { ...prev };
+        delete next[sessionRef];
+        return next;
+      });
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/openclaw/sessions/${encodeURIComponent(sessionRef)}/history?limit=10`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to load history');
+      }
+      const lines = Array.isArray(data.items)
+        ? data.items
+            .map((item: { role?: string; content?: unknown; message?: { content?: unknown } }) => {
+              const content = typeof item.content === 'string'
+                ? item.content
+                : Array.isArray(item.content)
+                  ? item.content.map((entry) => (entry && typeof entry === 'object' && typeof (entry as { text?: string }).text === 'string') ? (entry as { text: string }).text : '').filter(Boolean).join('\n')
+                  : '';
+              const fallback = typeof item.message?.content === 'string' ? item.message.content : '';
+              const text = (content || fallback || '').trim();
+              return text ? `${item.role || 'message'}: ${text}` : null;
+            })
+            .filter((line: string | null): line is string => Boolean(line))
+        : [];
+      setExpandedHistory((prev) => ({ ...prev, [sessionRef]: lines.slice(-5) }));
+    } catch (error) {
+      console.error('Failed to load session history:', error);
+      setExpandedHistory((prev) => ({
+        ...prev,
+        [sessionRef]: [error instanceof Error ? error.message : 'Failed to load session history'],
+      }));
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -142,74 +184,89 @@ export function SessionsList({ taskId }: SessionsListProps) {
   return (
     <div className="space-y-3">
       {sessions.map((session) => (
-        <div
-          key={session.id}
-          className="flex gap-3 p-3 bg-mc-bg rounded-lg border border-mc-border"
-        >
-          {/* Agent Avatar */}
-          <div className="flex-shrink-0">
-            {session.agent_avatar_emoji ? (
-              <span className="text-2xl">{session.agent_avatar_emoji}</span>
-            ) : (
-              <Bot className="w-8 h-8 text-mc-accent" />
-            )}
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 min-w-0">
-            {/* Agent name and status */}
-            <div className="flex items-center gap-2 mb-1">
-              {getStatusIcon(session.status)}
-              <span className="font-medium text-mc-text">
-                {session.agent_name || 'Sub-Agent'}
-              </span>
-              <span className="text-xs text-mc-text-secondary capitalize">
-                {session.status}
-              </span>
+        <Fragment key={session.id}>
+          <div className="flex gap-3 p-3 bg-mc-bg rounded-lg border border-mc-border">
+            {/* Agent Avatar */}
+            <div className="flex-shrink-0">
+              {session.agent_avatar_emoji ? (
+                <span className="text-2xl">{session.agent_avatar_emoji}</span>
+              ) : (
+                <Bot className="w-8 h-8 text-mc-accent" />
+              )}
             </div>
 
-            {/* Session ID */}
-            <div className="text-xs text-mc-text-secondary font-mono mb-2 truncate">
-              Session: {session.openclaw_session_id}
-            </div>
-
-            {/* Duration and timestamps */}
-            <div className="flex items-center gap-3 text-xs text-mc-text-secondary">
-              <span>
-                Duration: {formatDuration(session.created_at, session.ended_at)}
-              </span>
-              <span>•</span>
-              <span>Started {formatTimestamp(session.created_at)}</span>
-            </div>
-
-            {/* Channel */}
-            {session.channel && (
-              <div className="mt-2 text-xs text-mc-text-secondary">
-                Channel: <span className="font-mono">{session.channel}</span>
+            {/* Content */}
+            <div className="flex-1 min-w-0">
+              {/* Agent name and status */}
+              <div className="flex items-center gap-2 mb-1">
+                {getStatusIcon(session.status)}
+                <span className="font-medium text-mc-text">
+                  {session.agent_name || 'Sub-Agent'}
+                </span>
+                <span className="text-xs text-mc-text-secondary capitalize">
+                  {session.status}
+                </span>
               </div>
-            )}
-          </div>
 
-          {/* Action Buttons */}
-          <div className="flex flex-col gap-1">
-            {session.status === 'active' && (
+              {/* Session ID */}
+              <div className="text-xs text-mc-text-secondary font-mono mb-2 truncate">
+                Session: {session.openclaw_session_id}
+              </div>
+
+              {/* Duration and timestamps */}
+              <div className="flex items-center gap-3 text-xs text-mc-text-secondary">
+                <span>
+                  Duration: {formatDuration(session.created_at, session.ended_at)}
+                </span>
+                <span>•</span>
+                <span>Started {formatTimestamp(session.created_at)}</span>
+              </div>
+
+              {/* Channel */}
+              {session.channel && (
+                <div className="mt-2 text-xs text-mc-text-secondary">
+                  Channel: <span className="font-mono">{session.channel}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex flex-col gap-1">
+              {session.status === 'active' && (
+                <button
+                  onClick={() => handleMarkComplete(session.openclaw_session_id)}
+                  className="p-1.5 hover:bg-mc-bg-tertiary rounded text-green-500"
+                  title="Mark as complete"
+                >
+                  <Check className="w-4 h-4" />
+                </button>
+              )}
               <button
-                onClick={() => handleMarkComplete(session.openclaw_session_id)}
-                className="p-1.5 hover:bg-mc-bg-tertiary rounded text-green-500"
-                title="Mark as complete"
+                onClick={() => toggleHistory(session.openclaw_session_id)}
+                className="p-1.5 hover:bg-mc-bg-tertiary rounded text-mc-text-secondary"
+                title="Toggle history"
               >
-                <Check className="w-4 h-4" />
+                <History className="w-4 h-4" />
               </button>
-            )}
-            <button
-              onClick={() => handleDelete(session.openclaw_session_id)}
-              className="p-1.5 hover:bg-mc-bg-tertiary rounded text-red-500"
-              title="Delete session"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+              <button
+                onClick={() => handleDelete(session.openclaw_session_id)}
+                className="p-1.5 hover:bg-mc-bg-tertiary rounded text-red-500"
+                title="Delete session"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-        </div>
+          {expandedHistory[session.openclaw_session_id] && (
+            <div className="ml-11 mt-2 rounded-lg border border-mc-border bg-mc-bg p-3 text-xs text-mc-text-secondary space-y-2">
+              {expandedHistory[session.openclaw_session_id].map((line, index) => (
+                <div key={`${session.openclaw_session_id}-${index}`} className="whitespace-pre-wrap break-words font-mono">
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
+        </Fragment>
       ))}
     </div>
   );

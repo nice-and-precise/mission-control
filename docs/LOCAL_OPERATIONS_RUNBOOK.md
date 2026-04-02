@@ -4,7 +4,7 @@ Short local commands for this checkout.
 
 For the machine-local OpenClaw runtime owner contract, use [../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md](../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md).
 
-For updates on this Mac's local-prefix install, use `../scripts/update_openclaw_local_runtime.sh` from the workspace root instead of `openclaw update`.
+For updates on this Mac's local-prefix install, use `../scripts/update_openclaw_local_runtime.sh` from the workspace root instead of `openclaw update`. The helper reruns the official `install-cli.sh` flow against `~/.openclaw`.
 
 After `openclaw gateway restart`, allow a short warm-up window before treating a failed RPC probe as a real outage. The LaunchAgent can report running a few seconds before the gateway has rebound `127.0.0.1:18789`.
 
@@ -37,9 +37,28 @@ lsof -nP -iTCP:4000 -sTCP:LISTEN
 For this checkout on Jordan's machine:
 
 - `origin` = `nice-and-precise/mission-control`
-- `upstream` = `crshdn/mission-control`
+- `source` = `crshdn/mission-control` (optional read-only comparison remote)
 
-Use `git fetch upstream` when you need to compare against source Mission Control. Use `git push origin <branch>` only for branches you intend to publish from this checkout.
+Policy:
+
+- Treat `origin/main` as the canonical product trunk.
+- Treat `source` as a read-only source reference, not the default branch base for new work.
+- Open day-to-day PRs against `nice-and-precise/main`, not against `crshdn/main`.
+
+Safe commands:
+
+```bash
+git fetch origin
+git fetch source
+git switch -c work/<topic> origin/main
+npm run git:check-policy
+```
+
+Install the tracked hooks for this clone:
+
+```bash
+npm run git:install-hooks
+```
 
 ## Health Check
 
@@ -165,6 +184,36 @@ If that direct call succeeds but Mission Control still fails, restart `npm run d
 
 Keep `AUTOPILOT_MODEL=openclaw` in `mission-control/.env.local` on this machine. Do not hardcode provider model IDs like `anthropic/claude-sonnet-4-6` in local Autopilot routes unless the current OpenClaw agent policy explicitly allows that override.
 
+## OpenClaw Operator Surfaces
+
+Mission Control now separates the main OpenClaw operator surfaces:
+
+- `/api/openclaw/sessions/{id}/history` for normalized read-only transcript history by session key or runtime session ID
+- `/api/openclaw/models` for `agentTargets` versus `providerModels`
+- `/api/openclaw/background-tasks` for detached OpenClaw task-ledger visibility
+
+Quick verification:
+
+```bash
+TOKEN="${MC_API_TOKEN:-your-token}"
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/openclaw/models | jq
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/openclaw/sessions/<SESSION_KEY_OR_ID>/history | jq
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:4000/api/openclaw/background-tasks?taskId=<TASK_ID>" | jq
+```
+
+What to expect:
+
+- models response includes `agentTargets`, `providerModels`, `defaultAgentTarget`, and `defaultProviderModel`
+- history response includes `sessionRef`, `resolvedSessionKey`, `resolvedSessionId`, `items`, `hasMore`, and `source`
+- background-task response includes top-level `status`, `sourceChannel`, and `warning` plus detached task `id`, `runId`, `sessionKey`, `runtimeKind`, `status`, and any correlated Mission Control session metadata
+- use `status: "degraded"` to distinguish OpenClaw CLI contract issues from a true empty detached-work ledger
+
 ## Immediate Ended-Run Recovery
 
 Mission Control now retries transcript-based closeout during the normal workspace status poll, not only during the background health sweep.
@@ -226,6 +275,7 @@ Use this ladder when a task stays on `Planning` with `Waiting for response...` e
    - `Planning Complete — Awaiting Approval`
    - the generated spec
    - suggested task agents
+   - a transcript warning instead of a silent spinner if OpenClaw omitted oversized history entries
 4. Only use the recovery button if the completed plan still does not appear after refresh.
 5. If recovery still fails, inspect the API directly:
 

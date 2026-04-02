@@ -6,8 +6,11 @@ import { finalizePlanningCompletion, reconcilePlanningTranscript } from '@/lib/p
 import { cleanupTaskScopedAgents } from '@/lib/planning-agents';
 // File system imports removed - using OpenClaw API instead
 
-// Planning session prefix for OpenClaw (must match agent:main: format)
-const PLANNING_SESSION_PREFIX = 'agent:main:planning:';
+export const dynamic = 'force-dynamic';
+
+// Default planning session prefix for OpenClaw
+// Can be overridden per-agent via the session_key_prefix column on agents table
+const DEFAULT_SESSION_KEY_PREFIX = 'agent:main:';
 
 // GET /api/tasks/[id]/planning - Get planning state
 export async function GET(
@@ -47,6 +50,7 @@ export async function GET(
           currentQuestion: null,
           completion: null,
           changed: false,
+          transcriptIssue: null,
         }
       : await reconcilePlanningTranscript(task, { refreshFromOpenClaw: true });
 
@@ -67,6 +71,7 @@ export async function GET(
       sessionKey: task.planning_session_key,
       messages: resolution.messages,
       currentQuestion: isComplete ? null : resolution.currentQuestion,
+      transcriptIssue: resolution.transcriptIssue || null,
       isComplete,
       spec,
       agents,
@@ -90,6 +95,9 @@ export async function POST(
   const { id: taskId } = await params;
 
   try {
+    const body = await request.json().catch(() => ({}));
+    const customSessionKeyPrefix = body.session_key_prefix;
+
     // Get task
     const task = getDb().prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as {
       id: string;
@@ -112,10 +120,18 @@ export async function POST(
 
     // Check if there are other orchestrators available before starting planning with the default master agent
     // Get the default master agent for this workspace
-    const defaultMaster = queryOne<{ id: string }>(
-      `SELECT id FROM agents WHERE is_master = 1 AND workspace_id = ? ORDER BY created_at ASC LIMIT 1`,
+    const defaultMaster = queryOne<{ id: string; session_key_prefix?: string }>(
+      `SELECT id, session_key_prefix FROM agents WHERE is_master = 1 AND workspace_id = ? ORDER BY created_at ASC LIMIT 1`,
       [task.workspace_id]
     );
+
+    // Get assigned agent if any (for session_key_prefix)
+    const taskWithAgent = getDb().prepare(`
+      SELECT a.session_key_prefix 
+      FROM tasks t 
+      LEFT JOIN agents a ON t.assigned_agent_id = a.id 
+      WHERE t.id = ?
+    `).get(taskId) as { session_key_prefix?: string } | undefined;
 
     const otherOrchestrators = queryAll<{
       id: string;
@@ -140,7 +156,10 @@ export async function POST(
     }
 
     // Create session key for this planning task
-    const sessionKey = `${PLANNING_SESSION_PREFIX}${taskId}`;
+    // Priority: custom prefix > assigned agent's prefix > master agent's prefix > default prefix
+    const basePrefix = customSessionKeyPrefix || taskWithAgent?.session_key_prefix || defaultMaster?.session_key_prefix || DEFAULT_SESSION_KEY_PREFIX;
+    const planningPrefix = basePrefix + 'planning:';
+    const sessionKey = `${planningPrefix}${taskId}`;
 
     // Build the initial planning prompt
     const planningPrompt = `PLANNING REQUEST

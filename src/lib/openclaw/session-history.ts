@@ -1,11 +1,8 @@
 import { parseAgentSignal } from '@/lib/agent-signals';
+import { getOpenClawClient } from './client';
 
-const GATEWAY_HTTP_URL =
-  process.env.OPENCLAW_GATEWAY_URL?.replace('ws://', 'http://').replace('wss://', 'https://') ||
-  'http://127.0.0.1:18789';
-const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
-const GATEWAY_READ_SCOPE = 'operator.read';
 const DEFAULT_HISTORY_LIMIT = 100;
+const OVERSIZED_HISTORY_PLACEHOLDER = '[chat.history omitted: message too large]';
 
 export interface GatewayTranscriptItem {
   role?: string;
@@ -23,11 +20,22 @@ export interface GatewayTranscriptItem {
 }
 
 export interface GatewaySessionHistoryPayload {
+  sessionId?: string;
   sessionKey?: string;
   items?: GatewayTranscriptItem[];
   messages?: GatewayTranscriptItem[];
   hasMore?: boolean;
   nextCursor?: string | null;
+}
+
+export interface NormalizedGatewaySessionHistory {
+  sessionRef: string;
+  resolvedSessionKey: string | null;
+  resolvedSessionId: string | null;
+  items: GatewayTranscriptItem[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  source: 'chat.history';
 }
 
 export type GatewayTaskRunOutcome =
@@ -52,7 +60,7 @@ export interface GatewayRunWindowInspection {
 type GatewaySessionHistoryResolver = (
   sessionKeyOrId: string,
   limit: number,
-) => Promise<GatewaySessionHistoryPayload>;
+) => Promise<GatewaySessionHistoryPayload | NormalizedGatewaySessionHistory>;
 
 let gatewaySessionHistoryResolverForTests: GatewaySessionHistoryResolver | null = null;
 
@@ -65,36 +73,68 @@ export function setGatewaySessionHistoryResolverForTests(
 export async function loadGatewaySessionHistory(
   sessionKeyOrId: string,
   limit = DEFAULT_HISTORY_LIMIT,
-): Promise<GatewaySessionHistoryPayload> {
+  options?: { includeTools?: boolean },
+): Promise<NormalizedGatewaySessionHistory> {
   if (gatewaySessionHistoryResolverForTests) {
-    return gatewaySessionHistoryResolverForTests(sessionKeyOrId, limit);
+    const payload = await gatewaySessionHistoryResolverForTests(sessionKeyOrId, limit);
+    const normalized = normalizeGatewaySessionHistoryPayload(sessionKeyOrId, payload);
+    return {
+      ...normalized,
+      items: options?.includeTools ? normalized.items : stripToolEvents(normalized.items),
+    };
   }
 
-  if (!GATEWAY_TOKEN) {
-    throw new Error('OPENCLAW_GATEWAY_TOKEN is not configured for session history lookups.');
+  const client = getOpenClawClient();
+  if (!client.isConnected()) {
+    await client.connect();
   }
 
-  const url = new URL(
-    `/sessions/${encodeURIComponent(sessionKeyOrId)}/history`,
-    `${GATEWAY_HTTP_URL.replace(/\/$/, '')}/`,
-  );
-  url.searchParams.set('limit', String(limit));
-  url.searchParams.set('includeTools', '1');
-
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${GATEWAY_TOKEN}`,
-      'x-openclaw-scopes': GATEWAY_READ_SCOPE,
-    },
-    cache: 'no-store',
+  const resolvedSession = await resolveGatewaySessionForHistory(sessionKeyOrId);
+  const payload = await client.call<unknown>('chat.history', {
+    sessionKey: resolvedSession.sessionKey,
+    limit,
   });
+  const normalized = normalizeGatewaySessionHistoryPayload(sessionKeyOrId, payload);
+  const items = options?.includeTools ? normalized.items : stripToolEvents(normalized.items);
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gateway session history lookup failed (${response.status}): ${errorText}`);
-  }
+  return {
+    ...normalized,
+    resolvedSessionKey: resolvedSession.sessionKey,
+    resolvedSessionId: resolvedSession.sessionId,
+    items,
+  };
+}
 
-  return response.json() as Promise<GatewaySessionHistoryPayload>;
+export function normalizeGatewaySessionHistoryPayload(
+  sessionRef: string,
+  payload: GatewaySessionHistoryPayload | NormalizedGatewaySessionHistory | unknown,
+): NormalizedGatewaySessionHistory {
+  const record = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const items = Array.isArray(record.items)
+    ? record.items as GatewayTranscriptItem[]
+    : Array.isArray(record.messages)
+      ? record.messages as GatewayTranscriptItem[]
+      : Array.isArray(payload)
+        ? payload as GatewayTranscriptItem[]
+        : [];
+
+  return {
+    sessionRef,
+    resolvedSessionKey:
+      optionalString(record.resolvedSessionKey) ||
+      optionalString(record.sessionKey) ||
+      optionalString(record.session_key) ||
+      (sessionRef.includes(':') ? sessionRef : null),
+    resolvedSessionId:
+      optionalString(record.resolvedSessionId) ||
+      optionalString(record.sessionId) ||
+      optionalString(record.session_id) ||
+      (!sessionRef.includes(':') ? sessionRef : null),
+    items,
+    hasMore: Boolean(record.hasMore),
+    nextCursor: optionalString(record.nextCursor),
+    source: 'chat.history',
+  };
 }
 
 export async function resolveTaskRunOutcomeFromGatewayHistory(args: {
@@ -178,7 +218,14 @@ async function loadGatewaySessionHistoryWithFallback(
 
   for (const sessionRef of sessionRefs) {
     try {
-      return await loadGatewaySessionHistory(sessionRef, limit);
+      const payload = await loadGatewaySessionHistory(sessionRef, limit, { includeTools: true });
+      return {
+        sessionId: payload.resolvedSessionId || undefined,
+        sessionKey: payload.resolvedSessionKey || undefined,
+        items: payload.items,
+        hasMore: payload.hasMore,
+        nextCursor: payload.nextCursor,
+      };
     } catch (error) {
       lastError = error as Error;
     }
@@ -192,6 +239,119 @@ function getTranscriptItems(payload: GatewaySessionHistoryPayload): GatewayTrans
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
   const source = items.length > 0 ? items : messages;
   return [...source].reverse();
+}
+
+async function resolveGatewaySessionForHistory(sessionKeyOrId: string): Promise<{
+  sessionKey: string;
+  sessionId: string | null;
+}> {
+  if (sessionKeyOrId.includes(':')) {
+    return {
+      sessionKey: sessionKeyOrId,
+      sessionId: null,
+    };
+  }
+
+  const client = getOpenClawClient();
+  const sessions = await client.listSessions();
+  const session = sessions.find((candidate) => {
+    const candidateId = optionalString(candidate.sessionId) || optionalString(candidate.id);
+    return candidateId === sessionKeyOrId;
+  });
+
+  if (!session?.key) {
+    throw new Error(`Unable to resolve OpenClaw session key for session reference: ${sessionKeyOrId}`);
+  }
+
+  return {
+    sessionKey: session.key,
+    sessionId: optionalString(session.sessionId) || optionalString(session.id),
+  };
+}
+
+function stripToolEvents(items: GatewayTranscriptItem[]): GatewayTranscriptItem[] {
+  return items.flatMap((item) => {
+    const role = getItemRole(item);
+    if (role === 'toolresult' || role === 'tool') {
+      return [];
+    }
+
+    const filteredItem = stripToolContentFromItem(item);
+    if (!filteredItem) {
+      return [];
+    }
+
+    return [filteredItem];
+  });
+}
+
+function stripToolContentFromItem(item: GatewayTranscriptItem): GatewayTranscriptItem | null {
+  const nextItem: GatewayTranscriptItem = {
+    ...item,
+    message: item.message ? { ...item.message } : undefined,
+  };
+
+  const filteredContent = stripToolContent(item.content);
+  if (filteredContent !== undefined) {
+    nextItem.content = filteredContent;
+  }
+
+  if (nextItem.message) {
+    const filteredMessageContent = stripToolContent(nextItem.message.content);
+    if (filteredMessageContent !== undefined) {
+      nextItem.message.content = filteredMessageContent;
+    }
+  }
+
+  const hasStandaloneContent = hasRenderableContent(nextItem.content);
+  const hasMessageContent = hasRenderableContent(nextItem.message?.content);
+  const hasMessageMetadata =
+    optionalString(nextItem.message?.errorMessage) || optionalString(nextItem.message?.stopReason);
+  const hasItemMetadata = optionalString(nextItem.errorMessage) || optionalString(nextItem.stopReason);
+
+  if (!hasStandaloneContent && !hasMessageContent && !hasMessageMetadata && !hasItemMetadata) {
+    return null;
+  }
+
+  return nextItem;
+}
+
+function stripToolContent(content: unknown): unknown {
+  if (!Array.isArray(content)) {
+    return content;
+  }
+
+  const filtered = content.filter((entry) => {
+    if (!entry || typeof entry !== 'object') return true;
+    const record = entry as Record<string, unknown>;
+    return record.type !== 'toolCall' && record.type !== 'toolResult';
+  });
+
+  return filtered;
+}
+
+function hasRenderableContent(content: unknown): boolean {
+  if (typeof content === 'string') {
+    return content.trim().length > 0;
+  }
+
+  if (Array.isArray(content)) {
+    return content.some((entry) => {
+      if (typeof entry === 'string') {
+        return entry.trim().length > 0;
+      }
+      if (!entry || typeof entry !== 'object') {
+        return false;
+      }
+      const record = entry as Record<string, unknown>;
+      return (
+        (typeof record.text === 'string' && record.text.trim().length > 0) ||
+        (typeof record.thinking === 'string' && record.thinking.trim().length > 0)
+      );
+    });
+  }
+
+  return false;
 }
 
 function filterTranscriptItemsToRunWindow(
@@ -235,11 +395,11 @@ function getItemTimestamp(item: GatewayTranscriptItem): number | null {
   return normalizeGatewayTimestamp(item.timestamp) ?? normalizeGatewayTimestamp(item.message?.timestamp);
 }
 
-function extractTextContent(item: GatewayTranscriptItem): string {
+export function extractTextContent(item: GatewayTranscriptItem): string {
   return extractContentText(item.content) || extractContentText(item.message?.content) || '';
 }
 
-function extractContentText(content: unknown): string {
+export function extractContentText(content: unknown): string {
   if (typeof content === 'string') return content.trim();
 
   if (Array.isArray(content)) {
@@ -255,6 +415,14 @@ function extractContentText(content: unknown): string {
   }
 
   return '';
+}
+
+export function hasOversizedHistoryOmission(items: GatewayTranscriptItem[]): boolean {
+  return items.some((item) => extractTextContent(item).includes(OVERSIZED_HISTORY_PLACEHOLDER));
+}
+
+export function getOversizedHistoryOmissionMessage(): string {
+  return 'OpenClaw omitted one or more oversized transcript entries from session history. Planning recovery needs the full transcript.';
 }
 
 function findSignalMessage(text: string): string | null {
@@ -304,7 +472,7 @@ function compactWhitespace(value: string): string {
 }
 
 function optionalString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function normalizeGatewayTimestamp(value: unknown): number | null {

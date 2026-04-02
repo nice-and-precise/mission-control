@@ -29,6 +29,9 @@ test('gateway HTTP completions send the required OpenClaw scopes header', async 
       'Authorization': 'Bearer test-token',
       'x-openclaw-scopes': 'operator.read,operator.write',
     });
+
+    const body = JSON.parse(String(capturedInit?.body));
+    assert.equal(body.model, 'openclaw');
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.OPENCLAW_GATEWAY_TOKEN;
@@ -55,17 +58,42 @@ test('gateway HTTP completions route provider model overrides through x-openclaw
 
   try {
     const mod = await import(`./llm?test-override=${Date.now()}`);
-    await mod.complete('hello', { model: 'anthropic/claude-sonnet-4-6' });
+    await mod.complete('hello', { model: 'anthropic/claude-sonnet-4-5' });
 
     assert.deepEqual(capturedInit?.headers, {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer test-token',
       'x-openclaw-scopes': 'operator.read,operator.write',
-      'x-openclaw-model': 'anthropic/claude-sonnet-4-6',
+      'x-openclaw-model': 'anthropic/claude-sonnet-4-5',
     });
 
     const body = JSON.parse(String(capturedInit?.body));
     assert.equal(body.model, 'openclaw');
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  }
+});
+
+test('gateway HTTP completions fail fast for disallowed provider overrides', async () => {
+  process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
+
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    throw new Error('fetch should not be called');
+  };
+
+  try {
+    const mod = await import(`./llm?test-invalid=${Date.now()}`);
+
+    await assert.rejects(
+      () => mod.complete('hello', { model: 'google/gemini-2.5-flash' }),
+      /not allowed by the current OpenClaw agent policy/i,
+    );
+    assert.equal(fetchCalled, false);
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.OPENCLAW_GATEWAY_TOKEN;

@@ -265,8 +265,10 @@ Make sure you're registering sub-agents via the `/api/tasks/[id]/subagent` endpo
 This means Mission Control found task-linked sessions, but none of them are still active.
 
 Current limitation:
-- `/api/openclaw/sessions/[id]/history` still returns `501`
-- Agent Live can show live streaming and terminal state, but not historical transcript replay
+- `/api/openclaw/sessions/[id]/history` is available as a read-only transcript surface
+- Agent Live is still the primary live surface, while historical transcript replay is bounded by OpenClaw's history limits
+- Detached OpenClaw work appears separately in the task modal's `Detached Work` tab and via `/api/openclaw/background-tasks`
+- `/api/openclaw/background-tasks` now returns degraded-ledger metadata so operators can distinguish "no detached work" from "task ledger unavailable"
 
 ## 📚 More Information
 

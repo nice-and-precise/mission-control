@@ -260,10 +260,12 @@ test('planning poll recovers completion even when no new assistant messages arri
   ];
 
   seedTask({ id: taskId, workspaceId, messages });
-  setOpenClawMessagesResolverForTests(async () => [
-    { role: 'assistant', content: messages[1].content },
-    { role: 'assistant', content: messages[3].content },
-  ]);
+  setOpenClawMessagesResolverForTests(async () => ({
+    messages: [
+      { role: 'assistant', content: messages[1].content },
+      { role: 'assistant', content: messages[3].content },
+    ],
+  }));
 
   const response = await getPlanningPollRoute(
     new NextRequest(`http://localhost/api/tasks/${taskId}/planning/poll`),
@@ -292,10 +294,12 @@ test('planning poll merges a completion from OpenClaw transcript and persists it
   const completionMessage = planningCompletion('Merged Transcript Plan');
 
   seedTask({ id: taskId, workspaceId, messages: storedMessages });
-  setOpenClawMessagesResolverForTests(async () => [
-    { role: 'assistant', content: storedMessages[1].content },
-    { role: 'assistant', content: completionMessage.content },
-  ]);
+  setOpenClawMessagesResolverForTests(async () => ({
+    messages: [
+      { role: 'assistant', content: storedMessages[1].content },
+      { role: 'assistant', content: completionMessage.content },
+    ],
+  }));
 
   const response = await getPlanningPollRoute(
     new NextRequest(`http://localhost/api/tasks/${taskId}/planning/poll`),
@@ -334,10 +338,12 @@ test('force-complete route reuses transcript reconciliation before finalizing', 
   const completionMessage = planningCompletion('Recovered Force Complete Plan');
 
   seedTask({ id: taskId, workspaceId, messages: storedMessages });
-  setOpenClawMessagesResolverForTests(async () => [
-    { role: 'assistant', content: storedMessages[1].content },
-    { role: 'assistant', content: completionMessage.content },
-  ]);
+  setOpenClawMessagesResolverForTests(async () => ({
+    messages: [
+      { role: 'assistant', content: storedMessages[1].content },
+      { role: 'assistant', content: completionMessage.content },
+    ],
+  }));
 
   const response = await postPlanningForceCompleteRoute(
     new NextRequest(`http://localhost/api/tasks/${taskId}/planning/force-complete`, { method: 'POST' }),
@@ -355,4 +361,40 @@ test('force-complete route reuses transcript reconciliation before finalizing', 
   );
   assert.equal(stored?.planning_complete, 1);
   assert.equal(stored?.status_reason, 'Planning force-completed by user — awaiting approval');
+});
+
+test('planning poll surfaces transcript issues instead of silently idling', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+  const messages: PlanningMessage[] = [
+    { role: 'user', content: 'Start', timestamp: 1 },
+    planningQuestion('What should this do?'),
+  ];
+
+  seedTask({ id: taskId, workspaceId, messages });
+  setOpenClawMessagesResolverForTests(async () => ({
+    messages: [{ role: 'assistant', content: messages[1].content }],
+    transcriptIssue: {
+      code: 'history_omitted',
+      message: 'OpenClaw omitted one or more oversized transcript entries.',
+    },
+  }));
+
+  const response = await getPlanningPollRoute(
+    new NextRequest(`http://localhost/api/tasks/${taskId}/planning/poll`),
+    { params: Promise.resolve({ id: taskId }) },
+  );
+  const payload = await response.json() as {
+    hasUpdates: boolean;
+    complete: boolean;
+    transcriptIssue: { code: string; message: string } | null;
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.hasUpdates, true);
+  assert.equal(payload.complete, false);
+  assert.deepEqual(payload.transcriptIssue, {
+    code: 'history_omitted',
+    message: 'OpenClaw omitted one or more oversized transcript entries.',
+  });
 });

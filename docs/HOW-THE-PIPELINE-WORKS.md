@@ -34,7 +34,8 @@ Failures route back to `Builder` unless `Avery` explicitly changes the path.
 - Activities, Deliverables, Sessions, and Agent Live are the primary runtime surfaces.
 - Workflow advancement still depends on explicit completion markers such as `TASK_COMPLETE`, `BLOCKED`, `TEST_PASS`, `TEST_FAIL`, `VERIFY_PASS`, and `VERIFY_FAIL`.
 - If a run ends before the live listener catches the marker, Mission Control can use the official OpenClaw gateway session-history endpoint internally to recover a missed marker or synthesize an explicit runtime blocker.
-- Mission Control's public `GET /api/openclaw/sessions/{id}/history` route is still intentionally `501`, so review should not rely on that route.
+- Mission Control's public `GET /api/openclaw/sessions/{id}/history` route is now available as a read-only review aid, but OpenClaw can omit oversized entries from bounded transcript history.
+- Detached OpenClaw background work is visible separately through Mission Control's background-task ledger; it is an observability surface, not workflow control.
 
 ## What a Good Handoff Looks Like
 

@@ -388,10 +388,17 @@ export interface OpenClawMessage {
 
 export interface OpenClawSessionInfo {
   id: string;
-  channel: string;
+  key?: string;
+  sessionId?: string;
+  channel?: string;
   peer?: string;
   model?: string;
-  status: string;
+  status?: string;
+  kind?: string;
+  updatedAt?: number;
+  startedAt?: number;
+  endedAt?: number;
+  [key: string]: unknown;
 }
 
 // OpenClaw history message format (from Gateway)
@@ -399,6 +406,56 @@ export interface OpenClawHistoryMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp?: string;
+}
+
+export interface OpenClawAgentTarget {
+  id: string;
+  label: string;
+}
+
+export interface OpenClawProviderModel {
+  id: string;
+  label: string;
+}
+
+export interface OpenClawModelsResponse {
+  defaultAgentTarget?: string;
+  defaultProviderModel?: string;
+  agentTargets: OpenClawAgentTarget[];
+  providerModels: OpenClawProviderModel[];
+  source: 'remote' | 'local' | 'fallback';
+  error?: string;
+}
+
+export interface OpenClawBackgroundTask {
+  id: string;
+  taskId?: string | null;
+  runId?: string | null;
+  sessionKey?: string | null;
+  runtimeKind?: string | null;
+  status?: string | null;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  updatedAt?: string | null;
+  endedAt?: string | null;
+  correlatedSession?: {
+    id: string;
+    taskId?: string | null;
+    openclawSessionId: string;
+    status: string;
+    agentId?: string | null;
+    agentName?: string | null;
+  } | null;
+}
+
+export type OpenClawBackgroundTasksStatus = 'ok' | 'degraded';
+export type OpenClawBackgroundTasksSourceChannel = 'stdout' | 'stderr' | 'fallback' | 'none';
+
+export interface OpenClawBackgroundTasksResponse {
+  tasks: OpenClawBackgroundTask[];
+  status: OpenClawBackgroundTasksStatus;
+  sourceChannel: OpenClawBackgroundTasksSourceChannel;
+  warning?: string | null;
 }
 
 // Agent with OpenClaw session info (extended for UI use)

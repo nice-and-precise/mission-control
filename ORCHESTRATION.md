@@ -283,8 +283,10 @@ Fallback behavior:
 - If a run ends before the live chat listener catches a terminal marker, Mission Control now uses the official gateway session history endpoint internally to recover a missed explicit marker or synthesize an explicit runtime blocker before falling back to the generic unreconciled-ended-run error
 
 Current limitation:
-- Historical transcript replay is still unsupported
-- `GET /api/openclaw/sessions/{id}/history` returns `501`
+- `GET /api/openclaw/sessions/{id}/history` is now available as a read-only transcript surface
+- OpenClaw's history payload is still bounded, so oversized entries can be omitted by the gateway and should not be treated as the sole source of workflow truth
+- Detached OpenClaw work is exposed separately through `GET /api/openclaw/background-tasks` and the task modal's `Detached Work` tab
+- The detached-work surface now distinguishes a true empty ledger from a degraded CLI read via `status`, `sourceChannel`, and `warning`
 - If the local machine points `PROJECTS_PATH` at a file-provider-managed root on macOS, builder dispatch will now fail fast with an explicit workspace-root error instead of trying to run from that path
 
 ## Debugging
@@ -315,6 +317,9 @@ Then refresh and watch for:
 | `/api/tasks/{id}/subagent` | GET | List sub-agents |
 | `/api/tasks/{id}/subagent` | POST | Register sub-agent |
 | `/api/openclaw/sessions` | GET | List all sessions |
+| `/api/openclaw/sessions/{id}/history` | GET | Read normalized session history by session key or session ID |
+| `/api/openclaw/models` | GET | List OpenClaw agent targets and validated provider overrides |
+| `/api/openclaw/background-tasks` | GET | List detached OpenClaw background tasks and degraded ledger metadata |
 | `/api/openclaw/sessions/{id}` | PATCH | Update session (mark complete) |
 | `/api/openclaw/sessions/{id}` | DELETE | Delete a session |
 | `/api/files/reveal` | POST | Open file in Finder |

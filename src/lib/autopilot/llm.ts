@@ -1,3 +1,5 @@
+import { isOpenClawAgentTarget, validateProviderModelOverride } from '@/lib/openclaw/model-catalog';
+
 /**
  * Lightweight LLM completion via OpenClaw Gateway's OpenAI-compatible endpoint.
  * Uses /v1/chat/completions for stateless prompt→response (no agent sessions).
@@ -6,7 +8,7 @@
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL?.replace('ws://', 'http://').replace('wss://', 'https://') || 'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
 const GATEWAY_SCOPES = 'operator.read,operator.write';
-const DEFAULT_MODEL = process.env.AUTOPILOT_MODEL || 'anthropic/claude-sonnet-4-6';
+const DEFAULT_MODEL = process.env.AUTOPILOT_MODEL || 'openclaw';
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 5_000; // 5s, 10s, 20s exponential backoff
@@ -27,13 +29,6 @@ export interface CompletionResult {
     completionTokens: number;
     totalTokens: number;
   };
-}
-
-function isOpenClawAgentTarget(model: string): boolean {
-  return model === 'openclaw'
-    || model === 'openclaw/default'
-    || model.startsWith('openclaw/')
-    || model.startsWith('agent:');
 }
 
 export function buildGatewayRequestHeaders(model: string): Record<string, string> {
@@ -72,6 +67,7 @@ export async function complete(prompt: string, options: CompletionOptions = {}):
   } = options;
 
   const messages: Array<{ role: string; content: string }> = [];
+  await validateProviderModelOverride(model);
   if (systemPrompt) {
     messages.push({ role: 'system', content: systemPrompt });
   }

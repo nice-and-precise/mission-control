@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { X, Save, Trash2 } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
-import type { Agent, AgentStatus } from '@/lib/types';
+import type { Agent, AgentStatus, OpenClawAgentTarget, OpenClawProviderModel } from '@/lib/types';
 
 interface AgentModalProps {
   agent?: Agent;
@@ -18,8 +18,10 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
   const { addAgent, updateAgent, agents } = useMissionControl();
   const [activeTab, setActiveTab] = useState<'info' | 'soul' | 'user' | 'agents'>('info');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [defaultModel, setDefaultModel] = useState<string>('');
+  const [agentTargets, setAgentTargets] = useState<OpenClawAgentTarget[]>([]);
+  const [providerModels, setProviderModels] = useState<OpenClawProviderModel[]>([]);
+  const [defaultAgentTarget, setDefaultAgentTarget] = useState<string>('');
+  const [defaultProviderModel, setDefaultProviderModel] = useState<string>('');
   const [modelsLoading, setModelsLoading] = useState(true);
 
   const [form, setForm] = useState({
@@ -33,7 +35,27 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
     user_md: agent?.user_md || '',
     agents_md: agent?.agents_md || '',
     model: agent?.model || '',
+    session_key_prefix: agent?.session_key_prefix || '',
   });
+
+  // Fetch fresh agent data when modal opens (store data may be stale)
+  useEffect(() => {
+    if (!agent?.id) return;
+    let cancelled = false;
+    fetch(`/api/agents/${agent.id}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(fresh => {
+        if (cancelled || !fresh) return;
+        setForm(prev => ({
+          ...prev,
+          soul_md: fresh.soul_md || '',
+          user_md: fresh.user_md || '',
+          agents_md: fresh.agents_md || '',
+        }));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [agent?.id]);
 
   // Load available models from OpenClaw config
   useEffect(() => {
@@ -42,11 +64,13 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
         const res = await fetch('/api/openclaw/models');
         if (res.ok) {
           const data = await res.json();
-          setAvailableModels(data.availableModels || []);
-          setDefaultModel(data.defaultModel || '');
+          setAgentTargets(data.agentTargets || []);
+          setProviderModels(data.providerModels || []);
+          setDefaultAgentTarget(data.defaultAgentTarget || '');
+          setDefaultProviderModel(data.defaultProviderModel || '');
           // If agent has no model set, use default
-          if (!agent?.model && data.defaultModel) {
-            setForm(prev => ({ ...prev, model: data.defaultModel }));
+          if (!agent?.model && data.defaultAgentTarget) {
+            setForm(prev => ({ ...prev, model: data.defaultAgentTarget }));
           }
         }
       } catch (error) {
@@ -66,11 +90,15 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
       const url = agent ? `/api/agents/${agent.id}` : '/api/agents';
       const method = agent ? 'PATCH' : 'POST';
 
+      const trimmedPrefix = form.session_key_prefix?.trim();
+      const normalizedPrefix = !trimmedPrefix ? '' : trimmedPrefix.endsWith(':') ? trimmedPrefix : trimmedPrefix + ':';
+
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          session_key_prefix: normalizedPrefix || undefined,
           workspace_id: workspaceId || agent?.workspace_id || 'default',
         }),
       });
@@ -121,8 +149,8 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
   ] as const;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-mc-bg-secondary border border-mc-border rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-3 sm:p-4">
+      <div className="bg-mc-bg-secondary border border-mc-border rounded-t-xl sm:rounded-lg w-full max-w-2xl max-h-[92vh] sm:max-h-[90vh] flex flex-col pb-[env(safe-area-inset-bottom)] sm:pb-0">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-mc-border">
           <h2 className="text-lg font-semibold">
@@ -137,12 +165,12 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-mc-border">
+        <div className="flex border-b border-mc-border overflow-x-auto">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              className={`px-4 min-h-11 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'border-mc-accent text-mc-accent'
                   : 'border-transparent text-mc-text-secondary hover:text-mc-text'
@@ -186,7 +214,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   required
-                  className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+                  className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
                   placeholder="Agent name"
                 />
               </div>
@@ -199,7 +227,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value })}
                   required
-                  className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+                  className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
                   placeholder="e.g., Code & Automation"
                 />
               </div>
@@ -222,7 +250,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
                 <select
                   value={form.status}
                   onChange={(e) => setForm({ ...form, status: e.target.value as AgentStatus })}
-                  className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+                  className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
                 >
                   <option value="standby">Standby</option>
                   <option value="working">Working</option>
@@ -248,7 +276,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
               <div>
                 <label className="block text-sm font-medium mb-1">
                   Model
-                  {defaultModel && form.model === defaultModel && (
+                  {defaultAgentTarget && form.model === defaultAgentTarget && (
                     <span className="ml-2 text-xs text-mc-text-secondary">(Default)</span>
                   )}
                 </label>
@@ -258,18 +286,39 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
                   <select
                     value={form.model}
                     onChange={(e) => setForm({ ...form, model: e.target.value })}
-                    className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+                    className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
                   >
-                    <option value="">-- Use Default Model --</option>
-                    {availableModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}{defaultModel === model ? ' (Default)' : ''}
+                    <option value="">-- Use Default Agent Target --</option>
+                    {agentTargets.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}{defaultAgentTarget === model.id ? ' (Default)' : ''}
+                      </option>
+                    ))}
+                    {providerModels.length > 0 && <option disabled>──────── Provider Overrides ────────</option>}
+                    {providerModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}{defaultProviderModel === model.id ? ' (Gateway Default Provider)' : ''}
                       </option>
                     ))}
                   </select>
                 )}
                 <p className="text-xs text-mc-text-secondary mt-1">
-                  AI model used by this agent. Leave empty to use OpenClaw default.
+                  Agent targets use the official `openclaw/*` routing contract. Provider overrides are advanced and only work when the current OpenClaw agent policy allows them.
+                </p>
+              </div>
+
+              {/* Session Key Prefix */}
+              <div>
+                <label className="block text-sm font-medium mb-1">Session Key Prefix</label>
+                <input
+                  type="text"
+                  value={form.session_key_prefix}
+                  onChange={(e) => setForm({ ...form, session_key_prefix: e.target.value })}
+                  className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+                  placeholder="agent:main:"
+                />
+                <p className="text-xs text-mc-text-secondary mt-1">
+                  OpenClaw session routing prefix. Defaults to &quot;agent:main:&quot; if not set.
                 </p>
               </div>
             </div>
@@ -328,7 +377,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
               <button
                 type="button"
                 onClick={handleDelete}
-                className="flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm"
+                className="min-h-11 flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm"
               >
                 <Trash2 className="w-4 h-4" />
                 Delete
@@ -339,14 +388,14 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm text-mc-text-secondary hover:text-mc-text"
+              className="min-h-11 px-4 py-2 text-sm text-mc-text-secondary hover:text-mc-text"
             >
               Cancel
             </button>
             <button
               onClick={handleSubmit}
               disabled={isSubmitting}
-              className="flex items-center gap-2 px-4 py-2 bg-mc-accent text-mc-bg rounded text-sm font-medium hover:bg-mc-accent/90 disabled:opacity-50"
+              className="min-h-11 flex items-center gap-2 px-4 py-2 bg-mc-accent text-mc-bg rounded text-sm font-medium hover:bg-mc-accent/90 disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
               {isSubmitting ? 'Saving...' : 'Save'}
