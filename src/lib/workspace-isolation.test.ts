@@ -139,17 +139,19 @@ test('findFileProviderManagedAncestor detects file-provider markers on Darwin pa
 });
 
 test('assertWorkspaceRootSupported throws a clear error for file-provider managed roots', () => {
-  const originalProjectsPath = process.env.PROJECTS_PATH;
-  process.env.PROJECTS_PATH = '/Users/jordan/Documents/Shared/projects';
-
-  try {
-    assert.throws(
-      () => assertWorkspaceRootSupported(),
-      /file-provider-managed directory/,
-    );
-  } finally {
-    process.env.PROJECTS_PATH = originalProjectsPath;
-  }
+  assert.throws(
+    () =>
+      assertWorkspaceRootSupported('/Users/jordan/Documents/Shared/projects', {
+        platform: 'darwin',
+        readAttributeNames: (candidatePath) => {
+          if (candidatePath === '/Users/jordan/Documents') {
+            return ['com.apple.file-provider-domain-id'];
+          }
+          return [];
+        },
+      }),
+    /file-provider-managed directory/,
+  );
 });
 
 test('shouldForceFreshWorkspace recognizes invalidation blocker hints', () => {

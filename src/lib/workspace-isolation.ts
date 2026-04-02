@@ -223,9 +223,15 @@ export function findFileProviderManagedAncestor(
   return null;
 }
 
-export function assertWorkspaceRootSupported(projectsPath = getProjectsPath()): void {
+export function assertWorkspaceRootSupported(
+  projectsPath = getProjectsPath(),
+  options?: {
+    platform?: NodeJS.Platform;
+    readAttributeNames?: (candidatePath: string) => string[];
+  },
+): void {
   const resolvedProjectsPath = path.resolve(projectsPath.replace('~', process.env.HOME || ''));
-  const fileProviderAncestor = findFileProviderManagedAncestor(resolvedProjectsPath);
+  const fileProviderAncestor = findFileProviderManagedAncestor(resolvedProjectsPath, options);
   if (!fileProviderAncestor) {
     return;
   }
