@@ -12,16 +12,17 @@ Verified on `2026-04-02` after the detach:
 - GitHub fork status: `isFork = false`
 - Parent repo: none
 - Default branch: `main`
-- Branch protection on `main`: none
-- Pull requests in `nice-and-precise/mission-control`: PR `#1` is the active reconciliation branch against `main`
+- Branch protection on `main`: treat current GitHub repo settings as canonical; the detach baseline no longer assumes an unprotected branch
+- Pull requests in `nice-and-precise/mission-control`: PR `#1` was the reconciliation PR and was merged into `main`
 - Issues: disabled
 
 Local checkout facts that matter after detaching:
 
-- Current branch: `reconcile/current-worktree-sync-20260402`
-- Current branch is pushed to `origin/reconcile/current-worktree-sync-20260402`
+- Current branch: `main`
+- Local `HEAD` matches `origin/main`
+- The temporary reconciliation branch has been merged and can be deleted locally and on `origin`
 - `origin/main` is now the canonical product trunk
-- `source/main` is kept only as read-only comparison input
+- `source/main` is kept only as read-only comparison input, and the local `source` push URL should be disabled
 - The destructive pre-detach safety steps below are historical reference now that the standalone repository state is already live
 
 ## Official GitHub Process

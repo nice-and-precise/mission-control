@@ -10,15 +10,15 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 - Date verified: `2026-04-02`
 - Upstream base: `v2.4.0`
-- Local checkout state: `reconciliation / stabilization branch awaiting merge to origin/main`
-- Git ref: `reconcile/current-worktree-sync-20260402`
-- Baseline commit: `d8ec461`
+- Local checkout state: `merged stabilization baseline on canonical origin/main`
+- Git ref: `main`
+- Baseline commit: `be9e32f`
 - GitHub PR state:
-  - PR `#1` is the current reconciliation PR against `origin/main`
-  - local `HEAD` matches `origin/reconcile/current-worktree-sync-20260402`
+  - PR `#1` merged into `origin/main` on `2026-04-02`
+  - local `HEAD` matches `origin/main`
 - Git remote model on this machine:
   - `origin` -> `nice-and-precise/mission-control`
-  - `source` -> `crshdn/mission-control` (optional read-only comparison remote)
+  - `source` -> `crshdn/mission-control` (optional read-only comparison remote, with push disabled locally)
 - Canonical product trunk:
   - `origin/main`
 - Repository policy:

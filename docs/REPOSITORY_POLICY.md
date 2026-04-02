@@ -36,6 +36,15 @@ The hooks block:
 - pushes of branches that are not based on `origin/main`
 - rebases directly onto `source/main`
 
+Recommended local remote hardening:
+
+- If you keep the optional `source` remote, set its push URL to a disabled placeholder so `git push source ...` fails closed.
+- Example:
+
+```bash
+git remote set-url --push source DISABLED
+```
+
 If you intentionally need a one-off source import, run the command with:
 
 ```bash

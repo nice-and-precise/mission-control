@@ -43,6 +43,7 @@ Policy:
 
 - Treat `origin/main` as the canonical product trunk.
 - Treat `source` as a read-only source reference, not the default branch base for new work.
+- If `source` is present, disable its push URL locally so accidental pushes fail closed.
 - Open day-to-day PRs against `nice-and-precise/main`, not against `crshdn/main`.
 
 Safe commands:
@@ -50,6 +51,7 @@ Safe commands:
 ```bash
 git fetch origin
 git fetch source
+git remote set-url --push source DISABLED
 git switch -c work/<topic> origin/main
 npm run git:check-policy
 ```

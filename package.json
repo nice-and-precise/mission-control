@@ -22,6 +22,7 @@
     "start": "MISSION_CONTROL_RUNTIME_BOOT=1 node scripts/check-runtime.js && MISSION_CONTROL_RUNTIME_BOOT=1 next start -p ${PORT:-4000}",
     "lint": "next lint",
     "test": "node scripts/check-runtime.js && mkdir -p .tmp && rm -f .tmp/mission-control-test.db* && NODE_ENV=test DATABASE_PATH=.tmp/mission-control-test.db tsx --test --test-concurrency=1 src/**/*.test.ts scripts/check-runtime.test.ts",
+    "docs:check": "bash scripts/docs-sanity.sh",
     "git:check-policy": "bash scripts/git-branch-policy.sh check",
     "git:install-hooks": "git config core.hooksPath .githooks && echo 'Configured core.hooksPath=.githooks'",
     "db:seed": "tsx src/lib/db/seed.ts",
