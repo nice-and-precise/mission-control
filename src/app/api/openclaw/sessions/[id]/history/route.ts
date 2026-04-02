@@ -1,34 +1,30 @@
-import { NextResponse } from 'next/server';
-import { getOpenClawClient } from '@/lib/openclaw/client';
+import { NextRequest, NextResponse } from 'next/server';
+import { loadGatewaySessionHistory } from '@/lib/openclaw/session-history';
 
+export const dynamic = 'force-dynamic';
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 // GET /api/openclaw/sessions/[id]/history - Get conversation history
-export async function GET(request: Request, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  const { id: sessionRef } = await params;
+  const url = new URL(request.url);
+  const includeTools = url.searchParams.get('includeTools') === '1';
+  const limitParam = Number.parseInt(url.searchParams.get('limit') || '', 10);
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100;
+
   try {
-    const { id } = await params;
-    const client = getOpenClawClient();
-
-    if (!client.isConnected()) {
-      try {
-        await client.connect();
-      } catch {
-        return NextResponse.json(
-          { error: 'Failed to connect to OpenClaw Gateway' },
-          { status: 503 }
-        );
-      }
-    }
-
-    const history = await client.getSessionHistory(id);
-    return NextResponse.json({ history });
+    const history = await loadGatewaySessionHistory(sessionRef, limit, { includeTools });
+    return NextResponse.json(history);
   } catch (error) {
-    console.error('Failed to get OpenClaw session history:', error);
+    console.error('Failed to load OpenClaw session history:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
+      {
+        error: error instanceof Error ? error.message : 'Failed to load session history',
+        sessionRef,
+      },
+      { status: 500 },
     );
   }
 }

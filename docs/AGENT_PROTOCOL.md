@@ -2,6 +2,9 @@
 
 This document describes how OpenClaw agents interact with Mission Control.
 
+> [!NOTE]
+> This is an active protocol guide, not the canonical local-status page. For the verified behavior of this local checkout, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
+
 ## Task Assignment Flow
 
 1. **Human assigns task** in Mission Control UI
@@ -25,7 +28,7 @@ This document describes how OpenClaw agents interact with Mission Control.
    ```
 
 3. **Agent works on task**
-   - Task automatically moves to "IN PROGRESS"
+   - Builder-owned work automatically moves through `ASSIGNED -> IN PROGRESS`
    - Agent status updates to "working"
    - Agent can ask the orchestrator for help via normal conversation
 
@@ -35,14 +38,16 @@ This document describes how OpenClaw agents interact with Mission Control.
      TASK_COMPLETE: Built JWT authentication system with access/refresh tokens,
      middleware for protected routes, and secure token storage.
      ```
-   - Task automatically moves to "REVIEW"
+   - Task automatically advances to the next workflow stage
    - Agent status returns to "standby"
 
-5. **the orchestrator reviews work**
-   - the orchestrator checks agent's session history
-   - the orchestrator inspects deliverables/code
-   - If approved: the orchestrator moves to "DONE"
-   - If needs work: the orchestrator moves back with feedback
+5. **Verification / approval happens**
+   - In the strict workflow, `assigned` and `in_progress` are builder-owned, `testing` is tester-owned, `review` is a queue stage, and `verification` is owned by the `reviewer` role
+   - Builder work is sequential per agent: `assigned` means the builder owns the next task in queue, while `in_progress` means that builder is the one actively running right now
+   - The verifier checks task evidence in Mission Control (Activities, Deliverables, Sessions, Agent Live) plus the actual workspace/code
+   - If approved in `verification`: the assigned reviewer emits `VERIFY_PASS` and may PATCH the task to `done`
+   - If the work needs changes: the verifier emits `VERIFY_FAIL` and routes it back through the workflow fail target
+   - Legacy direct `review -> done` approval remains a master-agent decision
 
 ## Completion Message Format
 
@@ -54,6 +59,16 @@ Include receipts when possible:
 
 ```
 TASK_COMPLETE: <summary> | deliverables: <paths/links> | verification: <how you verified>
+```
+
+Additional accepted workflow markers:
+
+```text
+BLOCKED: <what is blocked> | need: <specific input> | meanwhile: <fallback work>
+TEST_PASS: <concise testing summary>
+TEST_FAIL: <what failed>
+VERIFY_PASS: <review/verification summary>
+VERIFY_FAIL: <what still blocks approval>
 ```
 
 ## Progress Updates (to prevent work from stalling)
@@ -131,6 +146,8 @@ If you're stuck or need clarification:
 - Session ID format: `mission-control-{agent-name}`
   - Example: `mission-control-engineering`
   - Example: `mission-control-writing`
+- Mission Control starts fresh reruns by prepending `/new` on the same stable routing key
+- A healthy rerun normally keeps the same `sessionKey` and creates a new `sessionId`
 
 ### Session Linking
 - Agents are automatically linked to OpenClaw when first task is assigned
@@ -141,29 +158,63 @@ If you're stuck or need clarification:
 
 ### Task Statuses
 - **INBOX**: Unassigned, awaiting triage
-- **ASSIGNED**: Assigned to agent, auto-dispatched
-- **IN PROGRESS**: Agent actively working
-- **REVIEW**: Completed, awaiting The orchestrator's approval
+- **ASSIGNED**: Builder-owned staging state before active work begins; queued work waits here until that builder is free
+- **IN PROGRESS**: Builder actively working; one builder should only have one active `in_progress` task at a time
+- **TESTING**: Tester-owned quality gate
+- **REVIEW**: Queue stage between testing and verification in the strict workflow
+- **VERIFICATION**: Reviewer/verifier is actively evaluating whether the task is ready to ship
 - **DONE**: Approved and closed
+
+Mission Control rejects invalid manual workflow combinations with `409` instead of silently dispatching them:
+
+- `inbox -> in_progress`
+- `in_progress` explicitly assigned to a tester/reviewer
+- `testing` explicitly assigned to a builder/reviewer
+- `verification` explicitly assigned to a builder/tester
 
 ### Agent Statuses
 - **standby**: Available for work
-- **working**: Currently assigned to task(s)
+- **working**: Currently running a task
 - **offline**: Not connected to OpenClaw
 
 ## API Integration
 
-Agents don't call Mission Control APIs directly. All interaction happens through:
+Mission Control treats explicit workflow markers as the source of truth for stage transitions.
 
-1. **Receiving tasks** via OpenClaw session message
-2. **Reporting completion** via TASK_COMPLETE message
-3. **Asking questions** via normal conversation with the orchestrator
+Preferred behavior during a healthy run:
+1. **Receive tasks** via OpenClaw session message
+2. **Register activities/deliverables/sub-agent sessions** through Mission Control APIs when your runtime supports it
+3. **Report the terminal stage outcome** via `TASK_COMPLETE`, `BLOCKED`, `TEST_PASS`, `TEST_FAIL`, `VERIFY_PASS`, or `VERIFY_FAIL`
+4. **Ask questions** via normal conversation with the orchestrator
 
-Mission Control handles:
-- Task routing
-- Status updates
-- Event logging
-- Workflow enforcement
+If `MC_API_TOKEN` is configured, direct API requests to Mission Control must include `Authorization: Bearer <token>`.
+
+Mission Control now has a fallback runtime-evidence reconciler for visibility:
+- Sessions can be recovered from the live OpenClaw session tree
+- Deliverables can be recovered from the isolated workspace diff
+- Agent Live can report `session_ended` even when no active session remains
+- Repeated zombie/stalled activity spam is suppressed once the task is already marked as an unreconciled ended run
+
+Mission Control also has an ended-run transcript fallback for closeout:
+- it uses the official gateway session history endpoint internally
+- it can recover a missed explicit workflow marker after the live listener missed it
+- it can synthesize `BLOCKED: OpenClaw runtime failure: ...` when a run ended on a terminal runtime/provider error before any explicit marker was emitted
+
+Recovered Sessions / Deliverables / Agent Live evidence alone still does not move the task through the workflow.
+Explicit or transcript-recovered `TASK_COMPLETE`, `BLOCKED`, `TEST_PASS`, `TEST_FAIL`, `VERIFY_PASS`, and `VERIFY_FAIL` outcomes do.
+
+For repo-backed tasks, treat the task workspace, registered file deliverables, and the PR URL as the testing/review contract.
+Do not fail a repo-backed handoff solely because the root output directory is empty when those repo artifacts exist.
+
+For repo-backed file inspection:
+
+- shell commands should use `cd <workspace> && ...`
+- non-shell file tools such as `read`, `edit`, `find`, `glob`, and file-path `ls` should use absolute paths under the task workspace
+- if a deliverable is listed with an absolute path, copy that exact path instead of switching to a bare repo-relative path
+
+Current limitation:
+- `GET /api/openclaw/sessions/{id}/history` is now available as a read-only transcript surface, but bounded OpenClaw history can omit oversized entries
+- Treat Activities, Deliverables, Sessions, Agent Live, and explicit workflow markers as the primary operational truth; use transcript history as supporting evidence
 
 ## The orchestrator's Responsibilities
 
@@ -177,7 +228,8 @@ As master orchestrator, the orchestrator:
 - **Provides guidance** when agents are stuck
 - **Enforces quality standards**
 
-Only the orchestrator (master agent with `is_master = 1`) can approve tasks from REVIEW → DONE.
+Only the orchestrator (master agent with `is_master = 1`) can approve legacy direct `review -> done` transitions.
+For the strict workflow, the assigned `reviewer` role may complete `verification -> done`, and a master agent may also approve that transition.
 
 ## Error Handling
 
@@ -185,16 +237,26 @@ Only the orchestrator (master agent with `is_master = 1`) can approve tasks from
 - Check agent's OpenClaw session is active
 - Verify Gateway connection
 - Try manual dispatch via API
+- On macOS, verify `PROJECTS_PATH` is not inside a file-provider-managed root such as a managed `~/Documents` tree
 
 ### If completion not detected:
-- Ensure message format exactly matches: `TASK_COMPLETE: ...`
+- Ensure message format exactly matches one of the accepted workflow markers
 - Check agent session is linked correctly
-- Manually move task via UI if needed
+- Check whether the task fell back to `planning_dispatch_error = "Run ended without completion callback or workflow handoff ..."` or was reconciled into an explicit blocker from gateway history
+- Review the recovered Activities / Deliverables / Sessions / Agent Live evidence
+- Manually move task via UI only after reviewing the recovered evidence
 
-### If stuck in review:
-- the orchestrator must manually approve (drag to DONE)
-- Only master agent can approve
-- Provides quality control checkpoint
+### If a rerun replays stale blocker context:
+- Mission Control dispatch now starts a fresh OpenClaw run with `/new` on the existing routing key
+- Confirm the latest dispatch created a fresh gateway `sessionId` on the same `sessionKey`
+- If stale blocker text still appears immediately, treat it as a new bug in the dispatch/session path rather than an expected behavior
+
+### If stuck in verification:
+- verify the reviewer task actually launched and linked to the task
+- confirm the verifier dispatch includes `updated_by_agent_id` in the PATCH example
+- if the reviewer emitted `VERIFY_PASS` but the task still shows the generic unreconciled error, refresh the workspace or hit `GET /api/openclaw/status` first; that route now retries transcript-based closeout immediately
+- if the status poll does not recover it, then run the health sweep as the fallback retry path
+- only fall back to manual approval for legacy direct `review -> done` flows
 
 ## Example Workflow
 
@@ -225,6 +287,7 @@ Only the orchestrator (master agent with `is_master = 1`) can approve tasks from
 2. **Ask for help early** - don't spin wheels, ping the orchestrator
 3. **Document your work** - leave breadcrumbs for review
 4. **One task at a time** - focus before moving to next
+   Builder agents are serialized. If a second builder card is approved while the builder is already executing, it stays `assigned` and automatically starts only after the current build leaves the builder stage.
 5. **Update progress** - if task will take a while, check in with the orchestrator
 
 ## Future Enhancements

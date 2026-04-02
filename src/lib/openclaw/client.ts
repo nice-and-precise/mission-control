@@ -4,9 +4,20 @@ import { EventEmitter } from 'events';
 import type { OpenClawMessage, OpenClawSessionInfo } from '../types';
 import { loadOrCreateDeviceIdentity, signDevicePayload, buildDeviceAuthPayload, publicKeyRawBase64Url } from './device-identity';
 import { createHash } from 'crypto';
+import type { GatewayConfigSnapshot } from './model-catalog';
+
+// Types for gateway model discovery (matches OpenClaw models.list response)
+export interface GatewayModelChoice {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow?: number;
+  reasoning?: boolean;
+}
 
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'ws://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+export const OPENCLAW_OPERATOR_SCOPES = ['operator.read', 'operator.write', 'operator.admin'];
 
 // Global deduplication cache that persists across module reloads in Next.js dev
 // Use globalThis to ensure it's shared across all instances
@@ -19,6 +30,24 @@ if (!(GLOBAL_EVENT_CACHE_KEY in globalThis)) {
 }
 
 const globalProcessedEvents = (globalThis as unknown as Record<string, Map<string, number>>)[GLOBAL_EVENT_CACHE_KEY];
+
+export function buildGatewayEventDedupPayload(data: any): Record<string, unknown> {
+  return {
+    type: data.type,
+    seq: data.seq,
+    runId: data.payload?.runId,
+    stream: data.payload?.stream,
+    event: data.event,
+    sessionKey: data.payload?.sessionKey,
+    payloadSeq: data.payload?.seq,
+    payloadEventId: data.payload?.__openclaw?.id,
+    payloadEventSeq: data.payload?.__openclaw?.seq,
+    timestamp: data.payload?.timestamp,
+    payloadHash: data.payload
+      ? createHash('sha256').update(JSON.stringify(data.payload)).digest('hex').slice(0, 16)
+      : null,
+  };
+}
 
 export class OpenClawClient extends EventEmitter {
   private ws: WebSocket | null = null;
@@ -46,15 +75,7 @@ export class OpenClawClient extends EventEmitter {
    */
   private generateEventId(data: any): string {
     // Create a canonical string representation of the event
-    const canonical = JSON.stringify({
-      type: data.type,
-      seq: data.seq,
-      runId: data.payload?.runId,
-      stream: data.payload?.stream,
-      event: data.event,
-      // Include hash of payload for content-aware deduplication
-      payloadHash: data.payload ? createHash('sha256').update(JSON.stringify(data.payload)).digest('hex').slice(0, 16) : null
-    });
+    const canonical = JSON.stringify(buildGatewayEventDedupPayload(data));
 
     // Hash the canonical representation for a fixed-length ID
     return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
@@ -126,6 +147,7 @@ export class OpenClawClient extends EventEmitter {
         // Perform cleanup even if no new events have arrived
         this.performCacheCleanup();
       }, this.PERIODIC_CLEANUP_INTERVAL_MS);
+      timer.unref?.();
 
       // Store the timer globally so all instances share it
       (globalThis as Record<string, unknown>)[GLOBAL_CACHE_CLEANUP_KEY] = timer;
@@ -229,23 +251,39 @@ export class OpenClawClient extends EventEmitter {
           try {
             const data = JSON.parse(event.data as string);
 
-            // Generate unique event ID using content hashing for proper deduplication
-            const eventId = this.generateEventId(data);
+            // RPC responses (type: 'res') and legacy responses (with matching pending id)
+            // must NEVER be deduplicated — they have unique request IDs and must always
+            // be delivered to their pending resolve/reject handlers.
+            const isRpcResponse = data.type === 'res' ||
+              (data.id !== undefined && this.pendingRequests.has(data.id));
 
-            // Skip if we've already processed this event (using global cache for all instances)
-            if (globalProcessedEvents.has(eventId)) {
-              console.log('[OpenClaw] Skipping duplicate event:', eventId.slice(0, 16));
-              return;
+            if (!isRpcResponse) {
+              // Generate unique event ID using content hashing for proper deduplication
+              const eventId = this.generateEventId(data);
+
+              // Skip if we've already processed this event (using global cache for all instances)
+              if (globalProcessedEvents.has(eventId)) {
+                console.log('[OpenClaw] Skipping duplicate event:', eventId.slice(0, 16));
+                return;
+              }
+
+              // Mark this event as processed in the global cache with current timestamp for LRU
+              const now = Date.now();
+              globalProcessedEvents.set(eventId, now);
+
+              // Perform LRU cleanup if cache size exceeds limit
+              this.performCacheCleanup();
             }
 
-            // Mark this event as processed in the global cache with current timestamp for LRU
-            const now = Date.now();
-            globalProcessedEvents.set(eventId, now);
+            console.log('[OpenClaw] Received:', data.type === 'res' ? `res:${String(data.id).slice(0, 8)}` : this.generateEventId(data).slice(0, 16));
 
-            // Perform LRU cleanup if cache size exceeds limit
-            this.performCacheCleanup();
-
-            console.log('[OpenClaw] Received:', eventId.slice(0, 16));
+            // Forward gateway streaming events so subscribers can tap in
+            if (data.type === 'event' && data.event === 'agent' && data.payload) {
+              this.emit('agent_event', data.payload);
+            }
+            if (data.type === 'event' && data.event === 'chat' && data.payload) {
+              this.emit('chat_event', data.payload);
+            }
 
             // Handle challenge-response authentication (OpenClaw RequestFrame format)
             if (data.type === 'event' && data.event === 'connect.challenge') {
@@ -254,7 +292,7 @@ export class OpenClawClient extends EventEmitter {
               const requestId = crypto.randomUUID();
               const signedAtMs = Date.now();
               const role = 'operator';
-              const scopes = ['operator.admin'];
+              const scopes = OPENCLAW_OPERATOR_SCOPES;
 
               // Build device identity for the connect params
               const clientId = 'cli';
@@ -427,11 +465,55 @@ export class OpenClawClient extends EventEmitter {
 
   // Session management methods
   async listSessions(): Promise<OpenClawSessionInfo[]> {
-    return this.call<OpenClawSessionInfo[]>('sessions.list');
+    const result = await this.call<{ sessions?: OpenClawSessionInfo[] } | OpenClawSessionInfo[]>('sessions.list');
+    const sessions = Array.isArray(result)
+      ? result
+      : (result && typeof result === 'object' && Array.isArray((result as { sessions?: OpenClawSessionInfo[] }).sessions))
+        ? (result as { sessions: OpenClawSessionInfo[] }).sessions
+        : [];
+
+    return sessions.reduce<OpenClawSessionInfo[]>((normalized, session) => {
+        if (!session || typeof session !== 'object') return normalized;
+        const record = session as Record<string, unknown>;
+        const sessionId =
+          (typeof record.sessionId === 'string' && record.sessionId.trim()) ||
+          (typeof record.id === 'string' && record.id.trim()) ||
+          (typeof record.key === 'string' && record.key.trim()) ||
+          '';
+        if (!sessionId) return normalized;
+
+        const key =
+          (typeof record.key === 'string' && record.key.trim()) ||
+          (typeof record.sessionKey === 'string' && record.sessionKey.trim()) ||
+          undefined;
+
+        normalized.push({
+          ...record,
+          id: sessionId,
+          sessionId,
+          key,
+          channel: typeof record.channel === 'string' ? record.channel : undefined,
+          peer: typeof record.peer === 'string' ? record.peer : undefined,
+          model: typeof record.model === 'string' ? record.model : undefined,
+          status: typeof record.status === 'string' ? record.status : undefined,
+          kind: typeof record.kind === 'string' ? record.kind : undefined,
+          updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : undefined,
+          startedAt: typeof record.startedAt === 'number' ? record.startedAt : undefined,
+          endedAt: typeof record.endedAt === 'number' ? record.endedAt : undefined,
+        } satisfies OpenClawSessionInfo);
+
+        return normalized;
+      }, []);
   }
 
-  async getSessionHistory(sessionId: string): Promise<unknown[]> {
-    return this.call<unknown[]>('sessions.history', { session_id: sessionId });
+  async getSessionHistory(sessionRef: string): Promise<unknown> {
+    const sessionKey = sessionRef.includes(':')
+      ? sessionRef
+      : (await this.listSessions()).find((session) => session.sessionId === sessionRef || session.id === sessionRef)?.key;
+    if (!sessionKey) {
+      throw new Error(`Unable to resolve OpenClaw session key for history lookup: ${sessionRef}`);
+    }
+    return this.call<unknown>('chat.history', { sessionKey });
   }
 
   async sendMessage(sessionId: string, content: string): Promise<void> {
@@ -442,6 +524,20 @@ export class OpenClawClient extends EventEmitter {
     return this.call<OpenClawSessionInfo>('sessions.create', { channel, peer });
   }
 
+  // Agent methods
+  async listAgents(): Promise<unknown[]> {
+    const result = await this.call<{ agents?: unknown[] }>('agents.list');
+    // Gateway returns { requester, allowAny, agents: [...] }
+    if (result && typeof result === 'object' && Array.isArray((result as Record<string, unknown>).agents)) {
+      return (result as Record<string, unknown>).agents as unknown[];
+    }
+    // Fallback: if the response is already an array
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return [];
+  }
+
   // Node methods (device capabilities)
   async listNodes(): Promise<unknown[]> {
     return this.call<unknown[]>('node.list');
@@ -449,6 +545,50 @@ export class OpenClawClient extends EventEmitter {
 
   async describeNode(nodeId: string): Promise<unknown> {
     return this.call('node.describe', { node_id: nodeId });
+  }
+
+  // Model discovery methods (queries remote gateway via RPC)
+  async listModels(): Promise<GatewayModelChoice[]> {
+    const result = await this.call<{ models?: GatewayModelChoice[] }>('models.list', {});
+    if (result && typeof result === 'object' && Array.isArray((result as Record<string, unknown>).models)) {
+      return (result as Record<string, unknown>).models as GatewayModelChoice[];
+    }
+    return [];
+  }
+
+  async getConfig(): Promise<GatewayConfigSnapshot> {
+    const result = await this.call<unknown>('config.get', {});
+    if (result && typeof result === 'object') {
+      return result as GatewayConfigSnapshot;
+    }
+    return {};
+  }
+
+  /**
+   * Force-close the current connection so the next call to connect() starts fresh.
+   * Unlike disconnect(), this preserves autoReconnect so the client can recover.
+   */
+  forceReconnect(): void {
+    console.log('[OpenClaw] Force-reconnecting (dropping stale connection)');
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.onmessage = null;
+      this.ws.onopen = null;
+      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+        this.ws.close();
+      }
+      this.ws = null;
+    }
+    this.connected = false;
+    this.authenticated = false;
+    this.connecting = null;
+    this.messageHandlers.clear();
+    // Reject any pending requests so they don't leak
+    this.pendingRequests.forEach(({ reject }) => {
+      reject(new Error('Connection reset'));
+    });
+    this.pendingRequests.clear();
   }
 
   disconnect(): void {

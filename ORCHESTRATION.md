@@ -4,7 +4,11 @@ This document explains how to orchestrate tasks in Mission Control, including ho
 - Register sub-agents
 - Log activities
 - Track deliverables
-- Update task status
+- Report explicit workflow completion signals
+- Understand the runtime evidence fallback path
+
+> [!NOTE]
+> For the verified behavior of this local checkout, including machine-specific runtime overrides and known gaps, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
 
 ## API Base URL
 
@@ -14,10 +18,16 @@ http://localhost:4000
 
 Or use the `MISSION_CONTROL_URL` environment variable.
 
+If `MC_API_TOKEN` is configured, direct API calls must also include:
+
+```bash
+TOKEN="${MC_API_TOKEN:-your-token}"
+```
+
 ## Task Lifecycle
 
 ```
-INBOX → ASSIGNED → IN_PROGRESS → TESTING → REVIEW → DONE
+INBOX → ASSIGNED → IN_PROGRESS → TESTING → REVIEW → VERIFICATION → DONE
 ```
 
 **Status Descriptions:**
@@ -25,8 +35,63 @@ INBOX → ASSIGNED → IN_PROGRESS → TESTING → REVIEW → DONE
 - **ASSIGNED**: Task assigned to an agent, ready to be worked on
 - **IN_PROGRESS**: Agent actively working on the task
 - **TESTING**: Automated quality gate - runs browser tests, CSS validation, resource checks
-- **REVIEW**: Passed automated tests, awaiting human approval
+- **REVIEW**: Queue stage between testing and verification in the strict workflow
+- **VERIFICATION**: Reviewer/verifier is actively confirming the work is ready to ship
 - **DONE**: Task completed and approved
+
+## Strict Stage Ownership
+
+For the strict workflow template on this fork:
+
+- `inbox` is unassigned triage
+- `assigned` and `in_progress` are builder-owned
+- `testing` is tester-owned
+- `review` is queue-only
+- `verification` is reviewer-owned
+
+Mission Control now enforces that ownership in both task updates and dispatch:
+
+- illegal manual jumps like `inbox -> in_progress` are rejected with `409`
+- explicit role/status mismatches like `testing + builder` or `verification + tester` are rejected with `409`
+- dispatch fails closed on workflow mismatch instead of sending the wrong prompt to the wrong agent
+
+## Workflow Authority
+
+Mission Control can recover **visibility evidence** from the OpenClaw session tree and the isolated workspace when an agent run fails to POST the usual artifacts.
+
+That fallback can populate:
+- Sessions
+- Deliverables
+- Agent Live state (`no_session`, `streaming`, or `session_ended`)
+
+It does **not** advance the workflow automatically.
+
+Stage transitions still require an explicit completion signal in the agent conversation:
+- `TASK_COMPLETE: ...`
+- `BLOCKED: ... | need: ... | meanwhile: ...` for builder-stage blockers that should keep the task assigned but explicit
+- `TEST_PASS: ...`
+- `TEST_FAIL: ...`
+- `VERIFY_PASS: ...`
+- `VERIFY_FAIL: ...`
+
+For repo-backed tasks, the primary handoff surface is:
+- the task `workspace_path`
+- registered file deliverables
+- the task `pr_url` / `Pull Request` URL deliverable when present
+
+Do not treat an empty root output folder as sufficient reason to fail a repo-backed tester/reviewer handoff when those repo artifacts exist.
+
+For repo-backed testing/review prompts:
+
+- shell commands should use `cd <workspace> && ...`
+- non-shell file tools like `read`, `edit`, `find`, `glob`, and file-path-based `ls` must use absolute paths under the task workspace
+- when inspecting a deliverable, copy the absolute path exactly as listed instead of using a bare repo-relative path
+
+In the strict workflow template:
+- `review` is queue-only
+- `verification` is owned by the `reviewer` role
+- `VERIFY_PASS` can complete the task from `verification`
+- legacy direct `review -> done` approval remains master-only
 
 ## When You Receive a Task
 
@@ -35,12 +100,27 @@ When a task is dispatched to you, the message includes:
 - Output directory path
 - API endpoints to call
 
-## Required API Calls
+For task dispatches, Mission Control now starts a fresh OpenClaw run on the existing routing key by prepending `/new` to the dispatch message. That clears stale task context between reruns without changing the stable session key.
+
+That stable-key behavior is expected. A fresh rerun should normally show:
+
+- the same `sessionKey`
+- a new `sessionId`
+- fresh task instructions at the top of the latest run
+
+Do not treat reused session keys by themselves as evidence of stale dispatch state.
+
+On this machine, use a normal local projects root such as `/Users/jordan/Projects`. Do not run Mission Control builder workspaces from file-provider-managed roots like `~/Documents` if macOS has attached file-provider attributes there.
+
+## Preferred API Calls
+
+Agents and orchestrators should still call these APIs when possible. The runtime reconciliation path is only a fallback for visibility after a broken run.
 
 ### 1. Register Sub-Agent (when spawning a worker)
 
 ```bash
 curl -X POST http://localhost:4000/api/tasks/{TASK_ID}/subagent \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "openclaw_session_id": "unique-session-id",
@@ -54,6 +134,7 @@ This registers the sub-agent and increments the "Active Sub-Agents" counter.
 
 ```bash
 curl -X POST http://localhost:4000/api/tasks/{TASK_ID}/activities \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "activity_type": "updated",
@@ -86,6 +167,7 @@ EOF
 
 # Step 2: Register the deliverable (will warn if file doesn't exist)
 curl -X POST http://localhost:4000/api/tasks/{TASK_ID}/deliverables \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "deliverable_type": "file",
@@ -113,10 +195,30 @@ Deliverable types:
 
 ```bash
 curl -X PATCH http://localhost:4000/api/tasks/{TASK_ID} \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "status": "review"
+    "status": "review",
+    "updated_by_agent_id": "agent-uuid"
   }'
+```
+
+### 5. Send Explicit Completion Signal
+
+When the task stage is actually complete, send the matching signal in the OpenClaw chat/session:
+
+```text
+TASK_COMPLETE: Implemented the validator and verified the new endpoints locally.
+```
+
+Other accepted signals:
+
+```text
+BLOCKED: Workspace deadlock | need: refreshed isolated workspace | meanwhile: confirmed repo access
+TEST_PASS: Browser and API checks passed.
+TEST_FAIL: Validator failed on malformed board configuration.
+VERIFY_PASS: Review complete and ready to merge.
+VERIFY_FAIL: Found regression in the Monday.com mapping flow.
 ```
 
 ## Complete Example Workflow
@@ -124,14 +226,17 @@ curl -X PATCH http://localhost:4000/api/tasks/{TASK_ID} \
 ```bash
 TASK_ID="abc-123"
 BASE_URL="http://localhost:4000"
+TOKEN="${MC_API_TOKEN:-your-token}"
 
 # 1. Log that you're starting
 curl -X POST $BASE_URL/api/tasks/$TASK_ID/activities \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"activity_type": "updated", "message": "Starting work on task"}'
 
 # 2. Spawn a sub-agent
 curl -X POST $BASE_URL/api/tasks/$TASK_ID/subagent \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"openclaw_session_id": "subagent-'$(date +%s)'", "agent_name": "Designer"}'
 
@@ -141,6 +246,7 @@ echo "<html><body>Hello World</body></html>" > $PROJECTS_PATH/my-project/output.
 
 # 4. Register the deliverable
 curl -X POST $BASE_URL/api/tasks/$TASK_ID/deliverables \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "deliverable_type": "file",
@@ -151,14 +257,37 @@ curl -X POST $BASE_URL/api/tasks/$TASK_ID/deliverables \
 
 # 5. Log completion
 curl -X POST $BASE_URL/api/tasks/$TASK_ID/activities \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"activity_type": "completed", "message": "Design completed successfully"}'
 
-# 6. Move to review
-curl -X PATCH $BASE_URL/api/tasks/$TASK_ID \
-  -H "Content-Type: application/json" \
-  -d '{"status": "review"}'
+# 6. Report stage completion in the agent chat/session
+# TASK_COMPLETE: Completed Design and verified responsive layout locally
 ```
+
+## Runtime Evidence Fallback
+
+If the agent run crashes or ends early, Mission Control now reconciles runtime evidence before serving:
+- `GET /api/tasks/{id}/subagent`
+- `GET /api/tasks/{id}/deliverables`
+- `GET /api/tasks/{id}/agent-stream`
+
+Fallback behavior:
+- Child sessions can be recovered from the live OpenClaw session tree
+- File deliverables can be recovered from the task's isolated workspace diff
+- Agent Live returns `session_ended` when only terminal task sessions exist
+- The task modal keeps Agent Live visible for assigned, active, and unreconciled-ended runs so that terminal state is not hidden
+- Health checks suppress repeated zombie/stalled task activity once a run is already marked as an unreconciled ended run
+- Released workspace ports can be reused safely; Mission Control now enforces uniqueness only for active allocations
+- If isolated workspace creation fails during builder dispatch, Mission Control now records that as an explicit dispatch blocker instead of silently falling back to a non-isolated project path
+- If a run ends before the live chat listener catches a terminal marker, Mission Control now uses the official gateway session history endpoint internally to recover a missed explicit marker or synthesize an explicit runtime blocker before falling back to the generic unreconciled-ended-run error
+
+Current limitation:
+- `GET /api/openclaw/sessions/{id}/history` is now available as a read-only transcript surface
+- OpenClaw's history payload is still bounded, so oversized entries can be omitted by the gateway and should not be treated as the sole source of workflow truth
+- Detached OpenClaw work is exposed separately through `GET /api/openclaw/background-tasks` and the task modal's `Detached Work` tab
+- The detached-work surface now distinguishes a true empty ledger from a degraded CLI read via `status`, `sourceChannel`, and `warning`
+- If the local machine points `PROJECTS_PATH` at a file-provider-managed root on macOS, builder dispatch will now fail fast with an explicit workspace-root error instead of trying to run from that path
 
 ## Debugging
 
@@ -188,6 +317,9 @@ Then refresh and watch for:
 | `/api/tasks/{id}/subagent` | GET | List sub-agents |
 | `/api/tasks/{id}/subagent` | POST | Register sub-agent |
 | `/api/openclaw/sessions` | GET | List all sessions |
+| `/api/openclaw/sessions/{id}/history` | GET | Read normalized session history by session key or session ID |
+| `/api/openclaw/models` | GET | List OpenClaw agent targets and validated provider overrides |
+| `/api/openclaw/background-tasks` | GET | List detached OpenClaw background tasks and degraded ledger metadata |
 | `/api/openclaw/sessions/{id}` | PATCH | Update session (mark complete) |
 | `/api/openclaw/sessions/{id}` | DELETE | Delete a session |
 | `/api/files/reveal` | POST | Open file in Finder |

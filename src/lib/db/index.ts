@@ -3,8 +3,31 @@ import path from 'path';
 import fs from 'fs';
 import { schema } from './schema';
 import { runMigrations } from './migrations';
+import { ensureCatalogSyncScheduled } from '@/lib/agent-catalog-sync';
+import { ensureHealthCheckScheduled } from '@/lib/agent-health-scheduler';
+import { attachChatListener } from '@/lib/chat-listener';
+import { isRuntimeBootEnabled, RUNTIME_BOOT_ENV_FLAG } from '@/lib/runtime-boot';
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'mission-control.db');
+let runtimeSideEffectsInitializerForTests: (() => void | Promise<void>) | null = null;
+
+export function shouldBootRuntimeSideEffects(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isRuntimeBootEnabled(env);
+}
+
+function bootRuntimeSideEffects(): void {
+  if (!shouldBootRuntimeSideEffects()) return;
+
+  if (runtimeSideEffectsInitializerForTests) {
+    void runtimeSideEffectsInitializerForTests();
+    return;
+  }
+
+  // Keep Mission Control's agent catalog synced with OpenClaw-installed agents
+  ensureCatalogSyncScheduled();
+  ensureHealthCheckScheduled();
+  attachChatListener();
+}
 
 let db: Database.Database | null = null;
 
@@ -22,6 +45,8 @@ export function getDb(): Database.Database {
     // Run migrations for schema updates
     // This handles both new and existing databases
     runMigrations(db);
+
+    bootRuntimeSideEffects();
     
     if (isNewDb) {
       console.log('[DB] New database created at:', DB_PATH);
@@ -58,5 +83,12 @@ export function transaction<T>(fn: () => T): T {
   return db.transaction(fn)();
 }
 
+export function setRuntimeSideEffectsInitializerForTests(
+  initializer: (() => void | Promise<void>) | null,
+): void {
+  runtimeSideEffectsInitializerForTests = initializer;
+}
+
 // Export migration utilities for CLI use
 export { runMigrations, getMigrationStatus } from './migrations';
+export { RUNTIME_BOOT_ENV_FLAG };

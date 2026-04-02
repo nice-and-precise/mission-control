@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb, queryAll, queryOne, run } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
-import { extractJSON } from '@/lib/planning-utils';
+import { finalizePlanningCompletion, reconcilePlanningTranscript } from '@/lib/planning-utils';
+import { cleanupTaskScopedAgents } from '@/lib/planning-agents';
 // File system imports removed - using OpenClaw API instead
 
-// Planning session prefix for OpenClaw (must match agent:main: format)
-const PLANNING_SESSION_PREFIX = 'agent:main:planning:';
+export const dynamic = 'force-dynamic';
+
+// Default planning session prefix for OpenClaw
+// Can be overridden per-agent via the session_key_prefix column on agents table
+const DEFAULT_SESSION_KEY_PREFIX = 'agent:main:';
 
 // GET /api/tasks/[id]/planning - Get planning state
 export async function GET(
@@ -27,36 +31,55 @@ export async function GET(
       planning_complete?: number;
       planning_spec?: string;
       planning_agents?: string;
+      status_reason?: string;
+      planning_dispatch_error?: string;
     } | undefined;
     
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
 
-    // Parse planning messages from JSON
-    const messages = task.planning_messages ? JSON.parse(task.planning_messages) : [];
+    let statusReason = task.status_reason || null;
+    let spec = task.planning_spec ? JSON.parse(task.planning_spec) : null;
+    let agents = task.planning_agents ? JSON.parse(task.planning_agents) : null;
+    let isComplete = !!task.planning_complete;
 
-    // Find the latest question (last assistant message with question structure)
-    const lastAssistantMessage = [...messages].reverse().find((m: { role: string }) => m.role === 'assistant');
-    let currentQuestion = null;
+    const resolution = isComplete
+      ? {
+          messages: task.planning_messages ? JSON.parse(task.planning_messages) : [],
+          currentQuestion: null,
+          completion: null,
+          changed: false,
+          transcriptIssue: null,
+        }
+      : await reconcilePlanningTranscript(task, { refreshFromOpenClaw: true });
 
-    if (lastAssistantMessage) {
-      // Use extractJSON to handle code blocks and surrounding text
-      const parsed = extractJSON(lastAssistantMessage.content);
-      if (parsed && 'question' in parsed) {
-        currentQuestion = parsed;
-      }
+    if (!isComplete && resolution.completion) {
+      const finalized = await finalizePlanningCompletion(taskId, resolution.messages, resolution.completion);
+      spec = finalized.spec || {};
+      agents = finalized.agents;
+      isComplete = true;
+      statusReason = 'Planning complete — awaiting approval before execution';
+    } else if (!isComplete && resolution.changed) {
+      run('UPDATE tasks SET planning_messages = ? WHERE id = ?', [JSON.stringify(resolution.messages), taskId]);
     }
+
+    const lockedSpec = getDb().prepare('SELECT id FROM planning_specs WHERE task_id = ?').get(taskId) as { id: string } | undefined;
 
     return NextResponse.json({
       taskId,
       sessionKey: task.planning_session_key,
-      messages,
-      currentQuestion,
-      isComplete: !!task.planning_complete,
-      spec: task.planning_spec ? JSON.parse(task.planning_spec) : null,
-      agents: task.planning_agents ? JSON.parse(task.planning_agents) : null,
-      isStarted: messages.length > 0,
+      messages: resolution.messages,
+      currentQuestion: isComplete ? null : resolution.currentQuestion,
+      transcriptIssue: resolution.transcriptIssue || null,
+      isComplete,
+      spec,
+      agents,
+      isStarted: resolution.messages.length > 0,
+      isApproved: !!lockedSpec,
+      taskStatus: task.status,
+      statusReason,
+      dispatchError: lockedSpec ? (task.planning_dispatch_error || null) : null,
     });
   } catch (error) {
     console.error('Failed to get planning state:', error);
@@ -72,6 +95,9 @@ export async function POST(
   const { id: taskId } = await params;
 
   try {
+    const body = await request.json().catch(() => ({}));
+    const customSessionKeyPrefix = body.session_key_prefix;
+
     // Get task
     const task = getDb().prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as {
       id: string;
@@ -94,10 +120,18 @@ export async function POST(
 
     // Check if there are other orchestrators available before starting planning with the default master agent
     // Get the default master agent for this workspace
-    const defaultMaster = queryOne<{ id: string }>(
-      `SELECT id FROM agents WHERE is_master = 1 AND workspace_id = ? ORDER BY created_at ASC LIMIT 1`,
+    const defaultMaster = queryOne<{ id: string; session_key_prefix?: string }>(
+      `SELECT id, session_key_prefix FROM agents WHERE is_master = 1 AND workspace_id = ? ORDER BY created_at ASC LIMIT 1`,
       [task.workspace_id]
     );
+
+    // Get assigned agent if any (for session_key_prefix)
+    const taskWithAgent = getDb().prepare(`
+      SELECT a.session_key_prefix 
+      FROM tasks t 
+      LEFT JOIN agents a ON t.assigned_agent_id = a.id 
+      WHERE t.id = ?
+    `).get(taskId) as { session_key_prefix?: string } | undefined;
 
     const otherOrchestrators = queryAll<{
       id: string;
@@ -122,7 +156,10 @@ export async function POST(
     }
 
     // Create session key for this planning task
-    const sessionKey = `${PLANNING_SESSION_PREFIX}${taskId}`;
+    // Priority: custom prefix > assigned agent's prefix > master agent's prefix > default prefix
+    const basePrefix = customSessionKeyPrefix || taskWithAgent?.session_key_prefix || defaultMaster?.session_key_prefix || DEFAULT_SESSION_KEY_PREFIX;
+    const planningPrefix = basePrefix + 'planning:';
+    const sessionKey = `${planningPrefix}${taskId}`;
 
     // Build the initial planning prompt
     const planningPrompt = `PLANNING REQUEST
@@ -207,6 +244,7 @@ export async function DELETE(
     }
 
     // Clear planning-related fields
+    cleanupTaskScopedAgents(taskId);
     run(`
       UPDATE tasks
       SET planning_session_key = NULL,
@@ -214,10 +252,15 @@ export async function DELETE(
           planning_complete = 0,
           planning_spec = NULL,
           planning_agents = NULL,
+          planning_dispatch_error = NULL,
+          assigned_agent_id = NULL,
+          status_reason = NULL,
           status = 'inbox',
           updated_at = datetime('now')
       WHERE id = ?
     `, [taskId]);
+
+    run('DELETE FROM planning_specs WHERE task_id = ?', [taskId]);
 
     // Broadcast task update
     const updatedTask = queryOne('SELECT * FROM tasks WHERE id = ?', [taskId]);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CheckCircle, Circle, Lock, AlertCircle, Loader2, X } from 'lucide-react';
+import type { SuggestedPlanningAgent } from '@/lib/types';
 
 interface PlanningOption {
   id: string;
@@ -24,6 +25,10 @@ interface PlanningState {
   sessionKey?: string;
   messages: PlanningMessage[];
   currentQuestion?: PlanningQuestion;
+  transcriptIssue?: {
+    code: string;
+    message: string;
+  } | null;
   isComplete: boolean;
   dispatchError?: string;
   spec?: {
@@ -33,14 +38,11 @@ interface PlanningState {
     success_criteria: string[];
     constraints: Record<string, unknown>;
   };
-  agents?: Array<{
-    name: string;
-    role: string;
-    avatar_emoji: string;
-    soul_md: string;
-    instructions: string;
-  }>;
+  agents?: SuggestedPlanningAgent[];
   isStarted: boolean;
+  isApproved?: boolean;
+  taskStatus?: string;
+  statusReason?: string | null;
 }
 
 interface PlanningTabProps {
@@ -60,13 +62,20 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
   const [isWaitingForResponse, setIsWaitingForResponse] = useState(false);
   const [retryingDispatch, setRetryingDispatch] = useState(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
+  const [stalePlanning, setStalePlanning] = useState(false);
+  const [forceCompleting, setForceCompleting] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [noNewMessageCount, setNoNewMessageCount] = useState(0);
 
   // Refs to track polling state without triggering re-renders
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingWarningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingHardTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isPollingRef = useRef(false);
   const lastSubmissionRef = useRef<{ answer: string; otherText?: string } | null>(null);
   const currentQuestionRef = useRef<string | undefined>(undefined);
+
+  const transcriptIssue = state?.transcriptIssue || null;
   
 
 
@@ -78,7 +87,6 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
         const data = await res.json();
         setState(data);
         currentQuestionRef.current = data.currentQuestion?.question;
-        // Don't call onSpecLocked on initial load - only when planning completes actively
       }
     } catch (err) {
       console.error('Failed to load planning state:', err);
@@ -94,9 +102,13 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
       clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
     }
-    if (pollingTimeoutRef.current) {
-      clearTimeout(pollingTimeoutRef.current);
-      pollingTimeoutRef.current = null;
+    if (pollingWarningTimeoutRef.current) {
+      clearTimeout(pollingWarningTimeoutRef.current);
+      pollingWarningTimeoutRef.current = null;
+    }
+    if (pollingHardTimeoutRef.current) {
+      clearTimeout(pollingHardTimeoutRef.current);
+      pollingHardTimeoutRef.current = null;
     }
     setIsWaitingForResponse(false);
   }, []);
@@ -111,43 +123,74 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
       if (res.ok) {
         const data = await res.json();
 
-        if (data.hasUpdates) {
-          setState(prev => ({
-            ...prev!,
-            messages: data.messages,
-            isComplete: data.complete,
-            spec: data.spec,
-            agents: data.agents,
-            currentQuestion: data.currentQuestion,
-            dispatchError: data.dispatchError,
-          }));
+        // Track stale planning state from server
+        if (data.stalePlanning) {
+          setStalePlanning(true);
+        }
 
-          // Only clear selection and other text when the question actually changes
-          // This prevents clearing selection when getting updates for the same question
-          const questionChanged = currentQuestionRef.current !== data.currentQuestion?.question;
-          
-          // Update ref when question changes
-          if (data.currentQuestion) {
-            currentQuestionRef.current = data.currentQuestion.question;
+        // Track consecutive "no updates" polls — if we get 15+ (30 seconds)
+        // with no movement after submitting an answer, something is wrong
+        if (!data.hasUpdates && isWaitingForResponse) {
+          setNoNewMessageCount(prev => {
+            const next = prev + 1;
+            if (next >= 15) setStalePlanning(true);
+            return next;
+          });
+        }
+
+        if (data.hasUpdates) {
+          // Clear any stale waiting warnings once updates are flowing
+          setError(null);
+          setStalePlanning(false);
+          setNoNewMessageCount(0);
+
+          const newQuestion = data.currentQuestion?.question;
+          const questionChanged = newQuestion && currentQuestionRef.current !== newQuestion;
+
+          // Force a full state reload from server to avoid stale state issues
+          const freshRes = await fetch(`/api/tasks/${taskId}/planning`);
+          if (freshRes.ok) {
+            const freshData = await freshRes.json();
+            setState(freshData);
+          } else {
+            setState(prev => ({
+              ...prev!,
+              messages: data.messages,
+              isComplete: data.complete,
+              spec: data.spec,
+              agents: data.agents,
+              currentQuestion: data.currentQuestion,
+              transcriptIssue: data.transcriptIssue || null,
+              dispatchError: data.dispatchError,
+            }));
           }
 
           if (questionChanged) {
+            currentQuestionRef.current = newQuestion;
             setSelectedOption(null);
             setOtherText('');
-            setIsSubmittingAnswer(false); // Clear submitting state when new question arrives
+            setIsSubmittingAnswer(false);
+          }
+          // Always clear submitting state when we have a question
+          if (data.currentQuestion) {
+            setIsSubmittingAnswer(false);
+            setSubmitting(false);
           }
 
           // Show dispatch error if present
-          if (data.dispatchError) {
+          if (data.dispatchError && data.isApproved) {
             setError(`Planning completed but dispatch failed: ${data.dispatchError}`);
           }
 
-          if (data.complete && onSpecLocked) {
-            onSpecLocked();
+          // Only stop polling when we actually have a question or completion
+          if (data.transcriptIssue) {
+            setStalePlanning(true);
           }
 
-          setIsWaitingForResponse(false);
-          stopPolling(); // Stop polling when we get a response
+          if (data.currentQuestion || data.complete || data.dispatchError || data.transcriptIssue) {
+            setIsWaitingForResponse(false);
+            stopPolling();
+          }
         }
       }
     } catch (err) {
@@ -160,20 +203,26 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
   // Start polling when waiting for response
   const startPolling = useCallback(() => {
     stopPolling();
+    setError(null);
     setIsWaitingForResponse(true);
 
-    // Poll every 2 seconds - need faster feedback for planning UX
-    // Planning is typically short-lived, so this is acceptable
+    // Poll every 2 seconds for responsive UX
     pollingIntervalRef.current = setInterval(() => {
       pollForUpdates();
     }, 2000);
 
-    // Set a 30-second timeout - if no response, show error
-    // Don't clear selection - user can retry with same selection
-    pollingTimeoutRef.current = setTimeout(() => {
+    // Soft warning at 90s, but keep polling so long responses can still complete
+    pollingWarningTimeoutRef.current = setTimeout(() => {
+      setError('The orchestrator is still processing. You can refresh safely — you will not lose your place in Planning Mode.');
+    }, 90000);
+
+    // Hard timeout at 5 minutes to avoid infinite wait states
+    pollingHardTimeoutRef.current = setTimeout(() => {
       stopPolling();
-      setError('The orchestrator is taking too long to respond. Please try submitting again or refresh the page.');
-    }, 30000);
+      setSubmitting(false);
+      setIsSubmittingAnswer(false);
+      setError('The orchestrator timed out after an extended wait. Please refresh the page and retry your last answer.');
+    }, 300000);
   }, [pollForUpdates, stopPolling]);
 
   // Update currentQuestion ref when state changes
@@ -189,6 +238,13 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
     return () => stopPolling();
   }, [loadState, stopPolling]);
 
+  // Auto-start polling if planning is in progress but no question loaded yet
+  useEffect(() => {
+    if (state && state.isStarted && !state.isComplete && !state.currentQuestion && !state.transcriptIssue && !isWaitingForResponse) {
+      startPolling();
+    }
+  }, [state, isWaitingForResponse, startPolling]);
+
   // Start planning session
   const startPlanning = async () => {
     setStarting(true);
@@ -203,6 +259,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           ...prev!,
           sessionKey: data.sessionKey,
           messages: data.messages || [],
+          transcriptIssue: null,
           isStarted: true,
         }));
 
@@ -228,8 +285,8 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
 
     // Store submission for retry
     const submission = {
-      answer: selectedOption === 'other' ? 'Other' : selectedOption,
-      otherText: selectedOption === 'other' ? otherText : undefined,
+      answer: selectedOption?.toLowerCase() === 'other' ? 'other' : selectedOption,
+      otherText: selectedOption?.toLowerCase() === 'other' ? otherText : undefined,
     };
     lastSubmissionRef.current = submission;
 
@@ -260,7 +317,8 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
       setSelectedOption(null);
       setOtherText('');
     } finally {
-      setSubmitting(false);
+      // Don't re-enable submit button here — wait until next question arrives
+      // setSubmitting(false) is handled when polling gets the new question
     }
   };
 
@@ -327,6 +385,60 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
     }
   };
 
+  // Force complete planning when stuck
+  const forceCompletePlanning = async () => {
+    setForceCompleting(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/planning/force-complete`, {
+        method: 'POST',
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setStalePlanning(false);
+        setNoNewMessageCount(0);
+        // Reload full state
+        await loadState();
+      } else {
+        setError(data.error || 'Failed to force-complete planning');
+      }
+    } catch (err) {
+      setError('Failed to force-complete planning');
+    } finally {
+      setForceCompleting(false);
+    }
+  };
+
+  const approvePlanning = async () => {
+    setApproving(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/planning/approve`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'Failed to approve plan');
+        return;
+      }
+
+      if (onSpecLocked) {
+        onSpecLocked();
+      } else {
+        await loadState();
+      }
+    } catch (err) {
+      setError('Failed to approve plan');
+    } finally {
+      setApproving(false);
+    }
+  };
+
   // Cancel planning
   const cancelPlanning = async () => {
     if (!confirm('Are you sure you want to cancel planning? This will reset the planning state.')) {
@@ -376,19 +488,37 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
     return (
       <div className="p-4 space-y-6">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-green-400">
+          <div className={`flex items-center gap-2 ${state.isApproved ? 'text-green-400' : 'text-amber-400'}`}>
             <Lock className="w-5 h-5" />
-            <span className="font-medium">Planning Complete</span>
+            <span className="font-medium">{state.isApproved ? 'Plan Approved' : 'Planning Complete — Awaiting Approval'}</span>
           </div>
-          {state.dispatchError && (
+          {state.isApproved && state.dispatchError && (
             <div className="text-right">
               <span className="text-sm text-amber-400">⚠️ Dispatch Failed</span>
             </div>
           )}
         </div>
+
+        {state.statusReason && (
+          <div className={`rounded-lg border p-3 text-sm ${state.isApproved ? 'border-green-500/30 bg-green-500/10 text-green-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>
+            {state.statusReason}
+          </div>
+        )}
+
+        {transcriptIssue && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+              <div>
+                <p className="font-medium text-amber-300">OpenClaw transcript was truncated</p>
+                <p>{transcriptIssue.message}</p>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Dispatch Error with Retry */}
-        {state.dispatchError && (
+        {state.isApproved && state.dispatchError && (
           <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
             <div className="flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
@@ -450,10 +580,38 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           )}
         </div>
         
-        {/* Generated Agents */}
+        {!state.isApproved && (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={approvePlanning}
+              disabled={approving}
+              className="px-4 py-2 bg-mc-accent text-mc-bg rounded-lg font-medium hover:bg-mc-accent/90 disabled:opacity-50 flex items-center gap-2"
+            >
+              {approving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Approving...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  Approve & Start Build
+                </>
+              )}
+            </button>
+            <span className="text-xs text-mc-text-secondary">
+              Execution will not start until you approve this plan.
+            </span>
+          </div>
+        )}
+        
+        {/* Suggested Task Agents */}
         {state.agents && state.agents.length > 0 && (
           <div>
-            <h3 className="font-medium mb-2">Agents Created:</h3>
+            <h3 className="font-medium mb-2">Suggested Task Agents:</h3>
+            <p className="text-xs text-mc-text-secondary mb-3">
+              These are planner suggestions for this task. They stay in the task plan only and are not created as agent records or used as the execution team unless you explicitly create them later.
+            </p>
             <div className="space-y-2">
               {state.agents.map((agent, i) => (
                 <div key={i} className="bg-mc-bg border border-mc-border rounded-lg p-3 flex items-center gap-3">
@@ -538,6 +696,18 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
 
       {/* Question area */}
       <div className="flex-1 overflow-y-auto p-6">
+        {transcriptIssue && (
+          <div className="mx-auto mb-6 max-w-xl rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+              <div>
+                <p className="font-medium text-amber-300">Transcript recovery needs attention</p>
+                <p>{transcriptIssue.message}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {state?.currentQuestion ? (
           <div className="max-w-xl mx-auto">
             <h3 className="text-lg font-medium mb-6">
@@ -595,16 +765,32 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
             </div>
 
             {error && (
-              <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+              <div
+                className={`mt-4 p-3 border rounded-lg ${
+                  error.includes('still processing')
+                    ? 'bg-orange-500/10 border-orange-500/40'
+                    : 'bg-red-500/10 border-red-500/30'
+                }`}
+              >
                 <div className="flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                  <AlertCircle
+                    className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                      error.includes('still processing') ? 'text-orange-300' : 'text-red-400'
+                    }`}
+                  />
                   <div className="flex-1">
-                    <p className="text-red-400 text-sm">{error}</p>
+                    <p className={`text-sm ${error.includes('still processing') ? 'text-orange-200' : 'text-red-400'}`}>
+                      {error}
+                    </p>
                     {!isWaitingForResponse && lastSubmissionRef.current && (
                       <button
                         onClick={handleRetry}
                         disabled={submitting}
-                        className="mt-2 text-xs text-red-400 hover:text-red-300 underline disabled:opacity-50"
+                        className={`mt-2 text-xs underline disabled:opacity-50 ${
+                          error.includes('still processing')
+                            ? 'text-orange-300 hover:text-orange-200'
+                            : 'text-red-400 hover:text-red-300'
+                        }`}
                       >
                         {submitting ? 'Retrying...' : 'Retry'}
                       </button>
@@ -643,10 +829,52 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
         ) : (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <Loader2 className="w-8 h-8 animate-spin text-mc-accent mx-auto mb-2" />
-              <p className="text-mc-text-secondary">
-                {isWaitingForResponse ? 'Waiting for response...' : 'Waiting for next question...'}
-              </p>
+              {stalePlanning ? (
+                <>
+                  <AlertCircle className="w-8 h-8 text-amber-400 mx-auto mb-3" />
+                  <p className="text-amber-300 font-medium mb-2">
+                    {transcriptIssue ? 'Planning transcript needs recovery' : 'Planning appears stuck'}
+                  </p>
+                  <p className="text-mc-text-secondary text-sm mb-4 max-w-sm">
+                    {transcriptIssue
+                      ? transcriptIssue.message
+                      : 'The orchestrator hasn&apos;t responded in a while. This can happen when the plan finished but Mission Control did not reconcile the completion into the approval state.'}
+                  </p>
+                  <div className="flex items-center justify-center gap-3">
+                    <button
+                      onClick={forceCompletePlanning}
+                      disabled={forceCompleting}
+                      className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-sm rounded-lg border border-amber-500/30 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {forceCompleting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="w-4 h-4" />
+                          Recover Plan for Approval
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={cancelPlanning}
+                      disabled={canceling}
+                      className="px-4 py-2 text-mc-text-secondary hover:text-mc-accent-red text-sm rounded-lg border border-mc-border hover:border-mc-accent-red/30"
+                    >
+                      Cancel Planning
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Loader2 className="w-8 h-8 animate-spin text-mc-accent mx-auto mb-2" />
+                  <p className="text-mc-text-secondary">
+                    {isWaitingForResponse ? 'Waiting for response...' : 'Waiting for next question...'}
+                  </p>
+                </>
+              )}
             </div>
           </div>
         )}

@@ -6,6 +6,8 @@ Deploy Mission Control as a live, read-only demo at `missioncontrol.ghray.com`.
 
 **SSH:** `ssh small-sites` (or `ssh root@178.156.199.255 -p 10100`)
 
+This guide keeps the demo server on Node 20 to match Mission Control's Docker and production runtime baseline. For local development on your laptop, `nvm use` now defaults this repo to Node 24. Node 20 and Node 24 are both supported locally, but switching between them requires a fresh `npm ci` before you start the app again.
+
 ---
 
 ## Step 1: Install Node.js (if not installed)
@@ -27,7 +29,7 @@ cd mission-control-demo
 ## Step 3: Install dependencies
 
 ```bash
-npm install
+npm ci
 ```
 
 ## Step 4: Create environment file
@@ -51,7 +53,7 @@ npm run build
 
 ```bash
 # Start briefly to create schema
-PORT=4000 npx next start -p 4000 &
+PORT=4000 npm run start &
 sleep 5
 curl -s http://localhost:4000/api/workspaces > /dev/null
 kill %1
@@ -67,7 +69,7 @@ node scripts/demo-seed.js --db ./mission-control-demo.db
 npm install -g pm2
 
 # Start Mission Control
-pm2 start "npx next start -p 4000" --name mc-demo --cwd /var/www/mission-control-demo
+pm2 start "npm run start" --name mc-demo --cwd /var/www/mission-control-demo --env PORT=4000
 
 # Start the simulator (generates live activity every 15 seconds)
 pm2 start scripts/demo-simulator.js --name mc-simulator --cwd /var/www/mission-control-demo -- --db ./mission-control-demo.db --interval 15000
@@ -124,7 +126,7 @@ pm2 start mc-demo mc-simulator
 
 # Update code
 git pull
-npm install
+npm ci
 npm run build
 pm2 restart all
 ```

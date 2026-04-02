@@ -1,115 +1,110 @@
-# Real-Time Integration - Verification Checklist
+# Mission Control Verification Checklist
 
-## Pre-Deployment Checks
+Use this as the shareable verification contract for a fresh clone, handoff, or local baseline refresh.
 
-### Code Quality
-- [x] TypeScript compiles without errors (`npx tsc --noEmit`)
-- [x] All new files follow project structure
-- [x] Code is well-commented
-- [x] No console.log statements in production paths
-- [x] Error handling implemented
-- [x] Type safety maintained
+For Jordan's current machine-specific deviations, use [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
 
-### Database
-- [x] Schema includes new tables (task_activities, task_deliverables)
-- [x] Indexes created for performance
-- [x] Foreign keys properly configured
-- [x] ON DELETE CASCADE set up
-- [x] Migration runs without errors
+## OpenClaw Gate
 
-### Backend
-- [x] SSE endpoint working (/api/events/stream)
-- [x] Activities API functional (GET/POST)
-- [x] Deliverables API functional (GET/POST)
-- [x] Sub-agent registration API functional (GET/POST)
-- [x] Event broadcasting implemented
-- [x] All task operations trigger SSE events
+Run from the workspace root unless noted otherwise.
 
-### Frontend
-- [x] useSSE hook implemented
-- [x] SSE connection auto-establishes
-- [x] Keep-alive pings working
-- [x] Auto-reconnect on disconnect
-- [x] ActivityLog component renders
-- [x] DeliverablesList component renders
-- [x] SessionsList component renders
-- [x] TaskModal tabs functional
-- [x] Agent counter displays
+```bash
+./scripts/update_openclaw_local_runtime.sh
+python3 scripts/cleanup_openclaw_2026_3_28.py
+python3 scripts/sync_openclaw_model_lanes.py
+openclaw config validate --json
+openclaw doctor
+openclaw gateway restart
+sleep 8
+openclaw gateway status --require-rpc --deep
+openclaw status --json
+openclaw secrets audit --json
+openclaw logs --plain --limit 200
+openclaw health
+```
 
-### Testing
-- [x] Dev server starts successfully
-- [x] No TypeScript errors
-- [x] Database migrations tested
-- [x] SSE connection verified
-- [x] Multi-client sync tested
+Pass criteria:
 
-### Documentation
-- [x] CHANGELOG.md updated
-- [x] README.md reflects new features (if applicable)
-- [x] API documentation complete
-- [x] Testing guide created
-- [x] Quick start guide written
-- [x] Implementation summary documented
+- OpenClaw reports `2026.4.1` or newer
+- config validation returns `valid: true`
+- `doctor` does not report stale `qwen-portal-auth` plugin warnings
+- `gateway status --require-rpc` and `openclaw health` both succeed
+- `openclaw status --json` reports a healthy gateway with `authWarning = null`
+- `openclaw secrets audit --json` keeps `unresolvedRefCount = 0`
+- `openclaw update status --json` keeps `root` under `~/.openclaw/lib/node_modules/openclaw`
+- a short post-restart warm-up gap is acceptable if a retry after a brief wait succeeds and the auth-surface log marker stays present
+- if `doctor` only shows a SecretRef read-only warning while the deeper checks above stay green, treat that as a command-path diagnostic instead of rewriting auth to plaintext
 
-### Git
-- [x] All changes committed
-- [x] Commit messages clear and descriptive
-- [x] No uncommitted changes
-- [x] Branch up to date
+## Mission Control Gate
 
-## Deployment on production server
+Run from `mission-control/`.
 
-### Steps
-1. [ ] SSH into production server
-2. [ ] Navigate to project directory
-3. [ ] Pull latest from git (`git pull origin main`)
-4. [ ] Install dependencies (`npm install`)
-5. [ ] Backup existing database (if any)
-6. [ ] Start dev server (`npm run dev`)
-7. [ ] Verify SSE connection in browser console
-8. [ ] Test real-time updates with two browser windows
-9. [ ] Create test task and verify activity log
-10. [ ] Add test deliverable via API
-11. [ ] Check agent counter updates
+```bash
+nvm use
+npm ci
+npm test
+npm run build
+```
 
-### Success Criteria
-- [ ] Server starts without errors
-- [ ] SSE connection established (browser console: "[SSE] Connected")
-- [ ] Tasks update in real-time across windows
-- [ ] Activity log displays correctly
-- [ ] Deliverables tab works
-- [ ] Sessions tab works
-- [ ] Agent counter shows live count
-- [ ] No memory leaks after 1 hour runtime
+Pass criteria:
 
-## Post-Deployment
+- the runtime preflight succeeds
+- the test suite passes
+- the production build completes successfully
 
-### Monitoring
-- [ ] Check server logs for SSE connection count
-- [ ] Monitor memory usage
-- [ ] Verify database file size reasonable
-- [ ] Check for error logs
-- [ ] Test under normal load
+## Runtime Sanity Check
 
-### User Feedback
-- [ ] User can see real-time updates
-- [ ] Task detail tabs are intuitive
-- [ ] Activity log provides useful information
-- [ ] Agent counter is accurate
-- [ ] Performance is acceptable
+Run from `mission-control/` after `.env.local` is configured.
 
-## Rollback Plan (if needed)
+```bash
+npm run dev
+```
 
-If issues arise:
-1. Stop the server
-2. Git revert to previous commit
-3. Restart server
-4. Report issues
+In a second terminal:
 
-Previous stable commit: (check `git log` before deployment)
+```bash
+TOKEN="$(python3 - <<'PY'
+from dotenv import dotenv_values
+vals = dotenv_values('.env.local')
+print(vals.get('MC_API_TOKEN', ''))
+PY
+)"
+curl -i -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/health
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/status | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/models | jq
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:4000/api/openclaw/background-tasks" | jq
+```
 
----
+Pass criteria:
 
-**Verified by:** _____________  
-**Date:** _____________  
-**Status:** _____________
+- `GET /api/health` returns HTTP `200`
+- when `MC_API_TOKEN` is set, direct `curl` checks include `Authorization: Bearer <token>`
+- the UI loads on `http://localhost:4000`
+- Mission Control can reach the configured OpenClaw gateway
+- `/api/openclaw/models` returns separate `agentTargets` and `providerModels`
+- `/api/openclaw/background-tasks` returns `tasks`, `status`, `sourceChannel`, and `warning`
+- `/api/openclaw/background-tasks` uses `status: "ok"` for true empty-success responses and `status: "degraded"` when the CLI timed out or only returned JSON on `stderr`
+- if you have a known session key or session ID, `/api/openclaw/sessions/{id}/history` returns a normalized transcript payload instead of `501`
+
+## Documentation Gate
+
+Run from the workspace root.
+
+```bash
+pytest tests/test_model_lanes_policy.py tests/test_docs_integrity.py
+```
+
+Pass criteria:
+
+- the active portable docs do not hardcode Jordan-specific absolute machine paths
+- local markdown links in the active portable docs resolve
+- the current model-lane policy does not reintroduce `qwen-portal`
+
+## Final Result
+
+The baseline is considered good when:
+
+- OpenClaw is healthy and free of the stale `qwen-portal-auth` warnings
+- Mission Control passes test and build
+- the portable docs and local docs agree on the current setup
+- a collaborator can follow the portable setup docs without relying on hidden machine-local knowledge

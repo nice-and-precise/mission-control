@@ -1,5 +1,8 @@
 # Real-Time Integration Specification
 
+> [!NOTE]
+> Historical design spec from the initial realtime pass. Some implementation details changed after this was written, including the transport choice and later runtime-evidence reconciliation behavior. Use [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md) and [../REALTIME_IMPLEMENTATION_SUMMARY.md](../REALTIME_IMPLEMENTATION_SUMMARY.md) for current behavior.
+
 ## Goal
 Full transparency and real-time updates for Mission Control task orchestration.
 

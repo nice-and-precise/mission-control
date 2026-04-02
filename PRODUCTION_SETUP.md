@@ -2,6 +2,9 @@
 
 This guide walks you through setting up Mission Control for production use with proper configuration management.
 
+> [!NOTE]
+> This guide uses generic setup examples. For the verified state of this local checkout, including the current machine-specific project-root override, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
+
 ## ⚠️ Security First
 
 **NEVER commit sensitive data to the repository!** This includes:
@@ -25,13 +28,17 @@ cd mission-control
 ### 2. Install Dependencies
 
 ```bash
-npm install
+nvm use
+npm ci
 ```
+
+For local development, `nvm use` defaults this repo to Node 24. Node 20 is also supported, and is the better choice when you want Docker/runtime parity.
 
 ### 3. Configure Environment Variables
 
 ```bash
 cp .env.example .env.local
+python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local
 ```
 
 Edit `.env.local` with your configuration:
@@ -45,12 +52,14 @@ OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 OPENCLAW_GATEWAY_TOKEN=your-token-here
 
 # Workspace Paths
-WORKSPACE_BASE_PATH=~/Documents/Shared
-PROJECTS_PATH=~/Documents/Shared/projects
+WORKSPACE_BASE_PATH=/var/lib/mission-control/workspace
+PROJECTS_PATH=/var/lib/mission-control/workspace/projects
 
 # API URL (auto-detected if not set)
 MISSION_CONTROL_URL=http://localhost:4000
 ```
+
+On the local workspace baseline, treat `python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local` as the supported way to source `OPENCLAW_GATEWAY_TOKEN` from OpenClaw's canonical SecretRef target.
 
 ### 4. Initialize Database
 
@@ -84,8 +93,8 @@ Best for:
 
 Variables in `.env.local`:
 ```bash
-WORKSPACE_BASE_PATH=~/Documents/Shared
-PROJECTS_PATH=~/Documents/Shared/projects
+WORKSPACE_BASE_PATH=/var/lib/mission-control/workspace
+PROJECTS_PATH=/var/lib/mission-control/workspace/projects
 MISSION_CONTROL_URL=http://your-server-ip:4000
 OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 ```
@@ -112,7 +121,7 @@ Settings stored in browser localStorage:
 Mission Control organizes files in a structured workspace:
 
 ```
-~/Documents/Shared/              # Base workspace
+/var/lib/mission-control/workspace/    # Base workspace
 ├── projects/                    # All projects
 │   ├── [PROJECT_NAME_1]/       # Individual project
 │   │   ├── deliverables/       # Task deliverables
@@ -127,8 +136,8 @@ Mission Control organizes files in a structured workspace:
 
 **Via Environment Variables:**
 ```bash
-WORKSPACE_BASE_PATH=~/Documents/Shared
-PROJECTS_PATH=~/Documents/Shared/projects
+WORKSPACE_BASE_PATH=/var/lib/mission-control/workspace
+PROJECTS_PATH=/var/lib/mission-control/workspace/projects
 ```
 
 **Via Settings UI:**
@@ -150,9 +159,10 @@ PROJECTS_PATH=~/Documents/Shared/projects
 ```bash
 # .env.local
 OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
+OPENCLAW_GATEWAY_TOKEN=your-local-token-if-gateway-auth-is-enabled
 ```
 
-No token required for local connections.
+Local connections may still require a token if your gateway is running with token auth enabled.
 
 ### Remote Connection (Tailscale)
 
@@ -162,14 +172,16 @@ OPENCLAW_GATEWAY_URL=wss://your-machine.tail12345.ts.net
 OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 32)
 ```
 
-**Generate a secure token:**
+**Generate a secure token when you control the gateway config directly:**
 ```bash
 openssl rand -hex 32
 ```
 
-Copy this token to both:
+Use the same token source on both sides:
 1. Mission Control's `.env.local`
-2. OpenClaw's gateway configuration
+2. OpenClaw's gateway auth configuration or secret source
+
+If your OpenClaw install uses SecretRef-backed gateway auth, resolve or rotate that external secret source instead of assuming a plaintext token lives in `~/.openclaw/openclaw.json`.
 
 ## 🚀 Production Deployment
 
@@ -177,8 +189,10 @@ Copy this token to both:
 
 ```bash
 npm run build
-npm start
+npm run start
 ```
+
+For containerized and production-like runtime parity, keep using Node 20 to match the existing Docker image baseline.
 
 ### Environment Variables for Production
 
@@ -218,7 +232,7 @@ ls -la mission-control.db
 
 ### 2. Test OpenClaw Connection
 
-1. Start OpenClaw Gateway: `openclaw gateway`
+1. Start or restart the OpenClaw Gateway service: `openclaw gateway start`
 2. Open Mission Control: `http://localhost:4000`
 3. Check status indicator (top-right): Should show **ONLINE** (green)
 
@@ -283,8 +297,8 @@ ls -la mission-control.db
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_PATH` | `./mission-control.db` | SQLite database file path |
-| `WORKSPACE_BASE_PATH` | `~/Documents/Shared` | Base directory for workspace |
-| `PROJECTS_PATH` | `~/Documents/Shared/projects` | Directory for project folders |
+| `WORKSPACE_BASE_PATH` | Example: `/var/lib/mission-control/workspace` | Base directory for workspace |
+| `PROJECTS_PATH` | Example: `/var/lib/mission-control/workspace/projects` | Directory for project folders |
 | `MISSION_CONTROL_URL` | Auto-detected | API URL for agent orchestration |
 | `OPENCLAW_GATEWAY_URL` | `ws://127.0.0.1:18789` | Gateway WebSocket URL |
 | `OPENCLAW_GATEWAY_TOKEN` | (empty) | Authentication token |
@@ -310,9 +324,9 @@ ls -la mission-control.db
 ## 📖 Further Reading
 
 - [Agent Protocol Documentation](docs/AGENT_PROTOCOL.md)
+- [Local Checkout Status](docs/CURRENT_LOCAL_STATUS.md)
 - [Real-Time Implementation](REALTIME_IMPLEMENTATION_SUMMARY.md)
 - [the orchestrator Orchestration Guide](src/lib/orchestration.ts)
-- [Verification Checklist](VERIFICATION_CHECKLIST.md)
 
 ---
 

@@ -1,17 +1,20 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, Plus } from 'lucide-react';
+import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, Plus, Users, Radio, ExternalLink, Boxes } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
-import { triggerAutoDispatch, shouldTriggerAutoDispatch } from '@/lib/auto-dispatch';
 import { ActivityLog } from './ActivityLog';
 import { DeliverablesList } from './DeliverablesList';
 import { SessionsList } from './SessionsList';
 import { PlanningTab } from './PlanningTab';
+import { TeamTab } from './TeamTab';
 import { AgentModal } from './AgentModal';
+import { AgentLiveTab } from './AgentLiveTab';
+import { BackgroundTasksList } from './BackgroundTasksList';
+import { shouldShowAgentLiveTab } from '@/lib/agent-live';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 
-type TabType = 'overview' | 'planning' | 'activity' | 'deliverables' | 'sessions';
+type TabType = 'overview' | 'planning' | 'team' | 'activity' | 'deliverables' | 'sessions' | 'background-tasks' | 'agent-live';
 
 interface TaskModalProps {
   task?: Task;
@@ -24,8 +27,10 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [usePlanningMode, setUsePlanningMode] = useState(false);
-  // Auto-switch to planning tab if task is in planning status
-  const [activeTab, setActiveTab] = useState<TabType>(task?.status === 'planning' ? 'planning' : 'overview');
+  // Auto-switch to relevant tab based on task status
+  const [activeTab, setActiveTab] = useState<TabType>(
+    task?.status === 'planning' ? 'planning' : 'overview'
+  );
 
   // Stable callback for when spec is locked - use window.location.reload() to refresh data
   const handleSpecLocked = useCallback(() => {
@@ -41,18 +46,35 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
     due_date: task?.due_date || '',
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const resolveStatus = (): TaskStatus => {
+    // Planning mode overrides everything
+    if (!task && usePlanningMode) return 'planning';
+    // Auto-determine based on agent assignment
+    const hasAgent = !!form.assigned_agent_id;
+    if (!task) {
+      // New task: agent → assigned, no agent → inbox
+      return hasAgent ? 'assigned' : 'inbox';
+    }
+    // Existing task: if in inbox and agent just assigned, promote to assigned
+    if (task.status === 'inbox' && hasAgent) return 'assigned';
+    return form.status;
+  };
+
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent, keepOpen = false) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setSaveError(null);
 
     try {
       const url = task ? `/api/tasks/${task.id}` : '/api/tasks';
       const method = task ? 'PATCH' : 'POST';
+      const resolvedStatus = resolveStatus();
 
       const payload = {
         ...form,
-        // If planning mode is enabled for new tasks, override status to 'planning'
-        status: (!task && usePlanningMode) ? 'planning' : form.status,
+        status: resolvedStatus,
         assigned_agent_id: form.assigned_agent_id || null,
         due_date: form.due_date || null,
         workspace_id: workspaceId || task?.workspace_id || 'default',
@@ -64,62 +86,58 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const savedTask = await res.json();
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Unknown error' }));
+        setSaveError(errData.error || `Save failed (${res.status})`);
+        return;
+      }
 
-        if (task) {
-          updateTask(savedTask);
+      const savedTask = await res.json();
 
-          // Check if auto-dispatch should be triggered and execute it
-          if (shouldTriggerAutoDispatch(task.status, savedTask.status, savedTask.assigned_agent_id)) {
-            const result = await triggerAutoDispatch({
-              taskId: savedTask.id,
-              taskTitle: savedTask.title,
-              agentId: savedTask.assigned_agent_id,
-              agentName: savedTask.assigned_agent?.name || 'Unknown Agent',
-              workspaceId: savedTask.workspace_id
-            });
+      if (task) {
+        // Editing existing task
+        updateTask(savedTask);
 
-            if (!result.success) {
-              console.error('Auto-dispatch failed:', result.error);
-            }
-          }
+        onClose();
+        return;
+      }
 
-          onClose();
-        } else {
-          addTask(savedTask);
-          addEvent({
-            id: crypto.randomUUID(),
-            type: 'task_created',
-            task_id: savedTask.id,
-            message: `New task: ${savedTask.title}`,
-            created_at: new Date().toISOString(),
-          });
+      // Creating new task
+      addTask(savedTask);
+      addEvent({
+        id: savedTask.id + '-created',
+        type: 'task_created',
+        task_id: savedTask.id,
+        message: `New task: ${savedTask.title}`,
+        created_at: new Date().toISOString(),
+      });
 
-          // If planning mode is enabled, auto-generate questions and keep modal open
-          if (usePlanningMode) {
-            // Trigger question generation in background
-            fetch(`/api/tasks/${savedTask.id}/planning`, { method: 'POST' })
-              .then((res) => {
-                if (res.ok) {
-                  // Update our local task reference and switch to planning tab
-                  updateTask({ ...savedTask, status: 'planning' });
-                  setActiveTab('planning');
-                } else {
-                  return res.json().then((data) => {
-                    console.error('Failed to start planning:', data.error);
-                  });
-                }
-              })
-              .catch((error) => {
-                console.error('Failed to start planning:', error);
-              });
-          }
-          onClose();
-        }
+      if (usePlanningMode) {
+        // Start planning session (fire-and-forget), then close modal.
+        // User reopens the task from the board to see the planning tab.
+        fetch(`/api/tasks/${savedTask.id}/planning`, { method: 'POST' })
+          .catch((error) => console.error('Failed to start planning:', error));
+        onClose();
+        return;
+      }
+
+      if (keepOpen) {
+        // "Save & New": clear form, stay open
+        setForm({
+          title: '',
+          description: '',
+          priority: 'normal' as TaskPriority,
+          status: 'inbox' as TaskStatus,
+          assigned_agent_id: '',
+          due_date: '',
+        });
+        setUsePlanningMode(false);
+      } else {
+        onClose();
       }
     } catch (error) {
       console.error('Failed to save task:', error);
+      setSaveError(error instanceof Error ? error.message : 'Network error — please try again');
     } finally {
       setIsSubmitting(false);
     }
@@ -141,20 +159,27 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
     }
   };
 
-  const statuses: TaskStatus[] = ['planning', 'inbox', 'assigned', 'in_progress', 'testing', 'review', 'done'];
   const priorities: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 
   const tabs = [
     { id: 'overview' as TabType, label: 'Overview', icon: null },
     { id: 'planning' as TabType, label: 'Planning', icon: <ClipboardList className="w-4 h-4" /> },
+    { id: 'team' as TabType, label: 'Team', icon: <Users className="w-4 h-4" /> },
     { id: 'activity' as TabType, label: 'Activity', icon: <Activity className="w-4 h-4" /> },
     { id: 'deliverables' as TabType, label: 'Deliverables', icon: <Package className="w-4 h-4" /> },
     { id: 'sessions' as TabType, label: 'Sessions', icon: <Bot className="w-4 h-4" /> },
+    { id: 'background-tasks' as TabType, label: 'Detached Work', icon: <Boxes className="w-4 h-4" /> },
+    // Agent Live stays available for assigned, active, or unreconciled-ended runs.
+    ...(shouldShowAgentLiveTab(task)
+      ? [
+          { id: 'agent-live' as TabType, label: 'Agent Live', icon: <Radio className="w-4 h-4" /> },
+        ]
+      : []),
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-mc-bg-secondary border border-mc-border rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-3 sm:p-4">
+      <div className="bg-mc-bg-secondary border border-mc-border rounded-t-xl sm:rounded-lg w-full max-w-2xl max-h-[92vh] sm:max-h-[90vh] flex flex-col pb-[env(safe-area-inset-bottom)] sm:pb-0">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-mc-border flex-shrink-0">
           <h2 className="text-lg font-semibold">
@@ -170,12 +195,12 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
 
         {/* Tabs - only show for existing tasks */}
         {task && (
-          <div className="flex border-b border-mc-border flex-shrink-0">
+          <div className="flex border-b border-mc-border flex-shrink-0 overflow-x-auto">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+                className={`flex items-center gap-2 px-4 min-h-11 py-2 text-sm font-medium transition-colors whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'text-mc-accent border-b-2 border-mc-accent'
                     : 'text-mc-text-secondary hover:text-mc-text'
@@ -201,7 +226,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               required
-              className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+              className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
               placeholder="What needs to be done?"
             />
           </div>
@@ -243,40 +268,6 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            {/* Status */}
-            <div>
-              <label className="block text-sm font-medium mb-1">Status</label>
-              <select
-                value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value as TaskStatus })}
-                className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
-              >
-                {statuses.map((s) => (
-                  <option key={s} value={s}>
-                    {s.replace('_', ' ').toUpperCase()}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Priority */}
-            <div>
-              <label className="block text-sm font-medium mb-1">Priority</label>
-              <select
-                value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: e.target.value as TaskPriority })}
-                className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
-              >
-                {priorities.map((p) => (
-                  <option key={p} value={p}>
-                    {p.toUpperCase()}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
           {/* Assigned Agent */}
           <div>
             <label className="block text-sm font-medium mb-1">Assign to</label>
@@ -289,7 +280,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
                   setForm({ ...form, assigned_agent_id: e.target.value });
                 }
               }}
-              className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+              className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
             >
               <option value="">Unassigned</option>
               {agents.map((agent) => (
@@ -303,16 +294,70 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
             </select>
           </div>
 
-          {/* Due Date */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Due Date</label>
-            <input
-              type="datetime-local"
-              value={form.due_date}
-              onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-              className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
-            />
+          <div className="grid grid-cols-2 gap-4">
+            {/* Priority */}
+            <div>
+              <label className="block text-sm font-medium mb-1">Priority</label>
+              <select
+                value={form.priority}
+                onChange={(e) => setForm({ ...form, priority: e.target.value as TaskPriority })}
+                className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+              >
+                {priorities.map((p) => (
+                  <option key={p} value={p}>
+                    {p.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Due Date */}
+            <div>
+              <label className="block text-sm font-medium mb-1">Due Date</label>
+              <input
+                type="datetime-local"
+                value={form.due_date}
+                onChange={(e) => setForm({ ...form, due_date: e.target.value })}
+                className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
+              />
+            </div>
           </div>
+
+          {/* Pull Request section */}
+          {task?.pr_url && (
+            <div className="p-3 bg-mc-bg rounded-lg border border-mc-border">
+              <h4 className="text-sm font-medium text-mc-text mb-2 flex items-center gap-2">
+                <ExternalLink className="w-4 h-4" />
+                Pull Request
+              </h4>
+              <div className="flex items-center gap-3">
+                <a
+                  href={task.pr_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-mc-accent hover:underline break-all"
+                >
+                  {task.pr_url}
+                </a>
+                {task.pr_status && (
+                  <span className={`shrink-0 text-xs px-2 py-1 rounded font-medium ${
+                    task.pr_status === 'open' ? 'bg-blue-500/20 text-blue-400' :
+                    task.pr_status === 'merged' ? 'bg-green-500/20 text-green-400' :
+                    task.pr_status === 'closed' ? 'bg-red-500/20 text-red-400' :
+                    'bg-gray-500/20 text-gray-400'
+                  }`}>
+                    {task.pr_status}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {saveError && (
+            <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-md">
+              <span className="text-sm text-red-400">{saveError}</span>
+            </div>
+          )}
             </form>
           )}
 
@@ -322,6 +367,11 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
               taskId={task.id}
               onSpecLocked={handleSpecLocked}
             />
+          )}
+
+          {/* Team Tab */}
+          {activeTab === 'team' && task && (
+            <TeamTab taskId={task.id} workspaceId={workspaceId || task.workspace_id || 'default'} />
           )}
 
           {/* Activity Tab */}
@@ -338,6 +388,17 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           {activeTab === 'sessions' && task && (
             <SessionsList taskId={task.id} />
           )}
+
+          {/* Detached Work Tab */}
+          {activeTab === 'background-tasks' && task && (
+            <BackgroundTasksList taskId={task.id} />
+          )}
+
+          {/* Agent Live Tab */}
+          {activeTab === 'agent-live' && task && (
+            <AgentLiveTab taskId={task.id} />
+          )}
+
         </div>
 
         {/* Footer - only show on overview tab */}
@@ -349,7 +410,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
                   <button
                     type="button"
                     onClick={handleDelete}
-                    className="flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm"
+                    className="min-h-11 flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm"
                   >
                     <Trash2 className="w-4 h-4" />
                     Delete
@@ -361,14 +422,24 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-sm text-mc-text-secondary hover:text-mc-text"
+                className="min-h-11 px-4 py-2 text-sm text-mc-text-secondary hover:text-mc-text"
               >
                 Cancel
               </button>
+              {!task && (
+                <button
+                  onClick={(e) => handleSubmit(e, true)}
+                  disabled={isSubmitting}
+                  className="min-h-11 flex items-center gap-2 px-4 py-2 border border-mc-accent text-mc-accent rounded text-sm font-medium hover:bg-mc-accent/10 disabled:opacity-50"
+                >
+                  <Plus className="w-4 h-4" />
+                  {isSubmitting ? 'Saving...' : 'Save & New'}
+                </button>
+              )}
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting}
-                className="flex items-center gap-2 px-4 py-2 bg-mc-accent text-mc-bg rounded text-sm font-medium hover:bg-mc-accent/90 disabled:opacity-50"
+                className="min-h-11 flex items-center gap-2 px-4 py-2 bg-mc-accent text-mc-bg rounded text-sm font-medium hover:bg-mc-accent/90 disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
                 {isSubmitting ? 'Saving...' : 'Save'}
