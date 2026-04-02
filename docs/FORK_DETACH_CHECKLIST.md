@@ -1,28 +1,28 @@
 # Fork Detach Checklist
 
-This checklist turns `nice-and-precise/mission-control` from a GitHub fork into a standalone product repository.
+This checklist records the admin sequence that turned `nice-and-precise/mission-control` from a GitHub fork into a standalone product repository.
 
 Use this only when you are ready to stop GitHub fork semantics entirely.
 
 ## Current State
 
-Verified on `2026-04-02`:
+Verified on `2026-04-02` after the detach:
 
 - Repository: `https://github.com/nice-and-precise/mission-control`
-- GitHub fork status: `isFork = true`
-- Parent repo: `crshdn/mission-control`
+- GitHub fork status: `isFork = false`
+- Parent repo: none
 - Default branch: `main`
 - Branch protection on `main`: none
-- Pull requests in `nice-and-precise/mission-control`: none found
+- Pull requests in `nice-and-precise/mission-control`: PR `#1` is the active reconciliation branch against `main`
 - Issues: disabled
 
-Local checkout facts that matter before detaching:
+Local checkout facts that matter after detaching:
 
-- Current branch: `work/from-pre-real-work-baseline-20260327`
-- Current branch is pushed to `origin/work/from-pre-real-work-baseline-20260327`
-- Current branch is source-based, not `origin/main`-based
-- Local-only branch: `retarget/work-from-pre-real-work-baseline-20260327-origin-main`
-- Current worktree is dirty, so uncommitted edits will not be preserved by any remote mirror operation unless you commit, stash, or archive them first
+- Current branch: `reconcile/current-worktree-sync-20260402`
+- Current branch is pushed to `origin/reconcile/current-worktree-sync-20260402`
+- `origin/main` is now the canonical product trunk
+- `source/main` is kept only as read-only comparison input
+- The destructive pre-detach safety steps below are historical reference now that the standalone repository state is already live
 
 ## Official GitHub Process
 
@@ -46,7 +46,7 @@ Follow this order for `nice-and-precise/mission-control`.
 ### 1. Freeze branch churn
 
 - Do not create new work branches until detachment is complete.
-- Do not rebase normal work onto `upstream/main`.
+- Do not rebase normal work onto `source/main`.
 
 ### 2. Preserve local-only work
 

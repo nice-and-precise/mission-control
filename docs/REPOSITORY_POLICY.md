@@ -18,8 +18,8 @@ This checkout is a product repo, not an upstream-contribution fork workflow.
 
 ## Allowed With Deliberate Intent
 
-- Fetching `upstream` to compare behavior or inspect changes
-- Cherry-picking or manually porting selected upstream commits into `origin/main`
+- Fetching `source` to compare behavior or inspect changes
+- Cherry-picking or manually porting selected source commits into `origin/main`
 - Running one-off source-import operations with an explicit local override
 
 ## Local Guardrails

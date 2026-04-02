@@ -63,13 +63,13 @@ npm run dev
 In a second terminal:
 
 ```bash
-curl -i http://localhost:4000/api/health
 TOKEN="$(python3 - <<'PY'
 from dotenv import dotenv_values
 vals = dotenv_values('.env.local')
 print(vals.get('MC_API_TOKEN', ''))
 PY
 )"
+curl -i -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/health
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/status | jq
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/models | jq
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:4000/api/openclaw/background-tasks" | jq
@@ -78,6 +78,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:4000/api/openclaw/ba
 Pass criteria:
 
 - `GET /api/health` returns HTTP `200`
+- when `MC_API_TOKEN` is set, direct `curl` checks include `Authorization: Bearer <token>`
 - the UI loads on `http://localhost:4000`
 - Mission Control can reach the configured OpenClaw gateway
 - `/api/openclaw/models` returns separate `agentTargets` and `providerModels`

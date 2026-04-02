@@ -8,11 +8,14 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Snapshot
 
-- Date verified: `2026-04-01`
+- Date verified: `2026-04-02`
 - Upstream base: `v2.4.0`
-- Local checkout state: `v2.4.0-local-baseline`
-- Git ref: `work/from-pre-real-work-baseline-20260327`
-- Baseline commit: `9956877`
+- Local checkout state: `reconciliation / stabilization branch awaiting merge to origin/main`
+- Git ref: `reconcile/current-worktree-sync-20260402`
+- Baseline commit: `d8ec461`
+- GitHub PR state:
+  - PR `#1` is the current reconciliation PR against `origin/main`
+  - local `HEAD` matches `origin/reconcile/current-worktree-sync-20260402`
 - Git remote model on this machine:
   - `origin` -> `nice-and-precise/mission-control`
   - `source` -> `crshdn/mission-control` (optional read-only comparison remote)
@@ -27,14 +30,14 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
   - `WORKSPACE_BASE_PATH=/Users/jordan/Projects`
 - Local auth behavior:
   - `MC_API_TOKEN` is set in `.env.local`
-  - direct API calls to protected task endpoints require `Authorization: Bearer <token>`
+  - direct API calls to protected `/api/*` routes require `Authorization: Bearer <token>`
 
 ## Verified Runtime Behavior
 
-The following facts were re-verified against the live local runtime on `2026-04-01`:
+The following facts were re-verified against the live local runtime on `2026-04-02`:
 
 - `npm run dev` is the default local operating mode on `localhost:4000`
-  - `GET /api/health` returned HTTP `200` with `{"status":"ok","uptime_seconds":433,"version":"2.4.0"}` during this cleanup pass
+  - authenticated `GET /api/health` now returns HTTP `200` with JSON like `{"status":"ok","uptime_seconds":...,"version":"2.4.0"}` during this stabilization pass
   - `next dev` uses `.next-dev` while `next build` and `next start` keep using `.next`, which prevents a build from clobbering the active dev runtime
 - The repo-backed strict workflow is behaving truthfully on this checkout
   - the clean-room smoke task completed end-to-end through build -> test -> verification without manual task-state repair
@@ -69,6 +72,7 @@ The following facts were re-verified against the live local runtime on `2026-04-
   - `GET /api/openclaw/models` now separates `agentTargets` from `providerModels`, and local Autopilot defaults to `openclaw`
   - `GET /api/openclaw/background-tasks` exposes the OpenClaw task ledger as read-only observability and correlates known session keys back to Mission Control task sessions when possible
   - the detached-work route now also surfaces `status`, `sourceChannel`, and `warning` so operators can see degraded ledger reads instead of treating them as a silent empty state
+  - a timed-out empty ledger is currently surfaced truthfully as `status: "degraded"` with a warning, which is acceptable operator behavior for this baseline
 - The session detail route no longer crashes on `sessions.list` payload shape differences
   - authenticated `GET /api/openclaw/sessions/{id}` now returns a normal `404` for a missing session instead of a `500`
 - Static error-page build regression is not reproducible on the current checkout
@@ -81,8 +85,8 @@ These are still real local limitations as of this verification pass:
 1. Public session history is available, but it is still bounded by OpenClaw's transcript limits.
    Oversized transcript entries can be omitted upstream, and Mission Control now surfaces that as a `transcriptIssue` rather than pretending the transcript is complete.
 
-2. This checkout historically carried upstream-based work, but that is no longer the intended operating model.
-   The current policy is documented in [REPOSITORY_POLICY.md](REPOSITORY_POLICY.md): `origin/main` is the product trunk, and upstream is reference input only.
+2. The detached OpenClaw task ledger can still time out and report a degraded empty response.
+   Mission Control now surfaces this truthfully through `status`, `sourceChannel`, and `warning`, so operators can distinguish a CLI/ledger problem from a real empty-success state.
 
 3. A local browser-extension conflict can still crash `next dev` in a normal Chrome profile even when Mission Control itself is healthy.
    Current evidence points to Next App Router's internal `use-reducer-with-devtools` path being activated by Redux DevTools-style extensions. A clean browser session loads Mission Control normally, so this should be triaged as a local dev-environment conflict unless it also reproduces in a clean browser.
@@ -99,7 +103,14 @@ git describe --tags --always --dirty
 git branch --show-current
 git symbolic-ref --short HEAD
 
-curl -s http://localhost:4000/api/health
+TOKEN="$(python3 - <<'PY'
+from dotenv import dotenv_values
+vals = dotenv_values('.env.local')
+print(vals.get('MC_API_TOKEN', ''))
+PY
+)"
+
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/health
 
 node -e 'const fs=require("fs"); const tokenLine=fs.readFileSync(".env.local","utf8").split("\\n").find(l=>l.startsWith("MC_API_TOKEN=")); const token=tokenLine ? tokenLine.slice("MC_API_TOKEN=".length) : ""; fetch("http://localhost:4000/api/openclaw/sessions/mission-control-reviewer-agent-58ace9f0",{headers:{Authorization:"Bearer "+token}}).then(async r=>{console.log(r.status); console.log(await r.text());});'
 
@@ -120,7 +131,7 @@ ls -ld .next .next-dev
 
 | Claim | Source doc | Verified status | Evidence source | Remediation |
 | --- | --- | --- | --- | --- |
-| Local runtime should use `npm run dev` on `localhost:4000` for day-to-day work | local operating convention | `verified` | fresh `2026-03-28` relaunch returned `GET /api/health = 200` with JSON on port `4000` | Keep `.next-dev` split in place and treat `dev` as the default local mode |
+| Local runtime should use `npm run dev` on `localhost:4000` for day-to-day work | local operating convention | `verified` | fresh `2026-04-02` relaunch returned authenticated `GET /api/health = 200` with JSON on port `4000` | Keep `.next-dev` split in place and treat `dev` as the default local mode |
 | Upstream defaults use `~/Documents/Shared` paths while this machine should run from `/Users/jordan/Projects` | [README.md](../README.md) | `verified with local deviation` | README config table plus local `.env.local` override | Keep README public-facing and point here for machine-specific runtime |
 | Synthetic null-product fixture noise was removed before real work | local runtime/DB | `verified` | fixture task count `0`, orphan learner session count `0`, smoke product task count `0`, real `LLI SaaS` planning tasks preserved | Keep this page as the canonical pre-real-work baseline |
 | Protected localhost callbacks need bearer auth when `MC_API_TOKEN` is set | [ORCHESTRATION.md](../ORCHESTRATION.md), [docs/AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) | `verified` | dispatch prompts and local protected routes require bearer auth on this machine | Keep callback examples aligned with the real auth requirement |
@@ -137,6 +148,7 @@ These files are preserved for context, but they are not the current-state source
 - [docs/archive/status/VERIFICATION_CHECKLIST.md](archive/status/VERIFICATION_CHECKLIST.md)
 - [docs/archive/status/HANDOVER-2026-03-03.md](archive/status/HANDOVER-2026-03-03.md)
 - [HANDOFF-2026-03-26-AUTOPILOT.md](../HANDOFF-2026-03-26-AUTOPILOT.md)
+- [OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-02.md](OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-02.md)
 
 ## Active Docs To Trust
 

@@ -63,10 +63,13 @@ npm run git:install-hooks
 ## Health Check
 
 ```bash
-curl -i http://localhost:4000/api/health
+TOKEN="${MC_API_TOKEN:-your-token}"
+curl -i -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/health
 ```
 
 Expected result: HTTP `200` with JSON like `{"status":"ok",...}`.
+
+If `MC_API_TOKEN` is set in `.env.local`, direct `curl` requests to `/api/*` must include the bearer token. The browser UI still works without manual headers because same-origin browser requests are allowed by the auth middleware.
 
 ## Runtime Owner Check
 
@@ -233,7 +236,8 @@ Use this when a task briefly shows:
 Verification:
 
 ```bash
-curl -s http://localhost:4000/api/openclaw/status | jq
+TOKEN="${MC_API_TOKEN:-your-token}"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/status | jq
 ```
 
 Expected result:

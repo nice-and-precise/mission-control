@@ -83,7 +83,7 @@ I highly recommend getting Hetzner VPS to run this. <a href="https://hetzner.clo
 <details>
 <summary>v2.2.1 — Health Check & Backup API</summary>
 
-- `/api/health` and `/api/health/metrics` for monitoring integration
+- `/api/health` for runtime and database monitoring integration
 - Database backup API with optional S3 upload
 </details>
 
@@ -538,6 +538,7 @@ When `MC_API_TOKEN` is set:
 - External API calls require `Authorization: Bearer <token>`
 - Browser UI works automatically (same-origin requests are allowed)
 - SSE streams accept token as query param
+- Direct operational checks such as `curl /api/health` must include the bearer token
 
 See [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) for the full production guide.
 

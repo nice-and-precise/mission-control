@@ -18,9 +18,9 @@ npm ci
 On Jordan's machine, this checkout uses the standard remote model:
 
 - `origin` = `nice-and-precise/mission-control`
-- `upstream` = `crshdn/mission-control`
+- `source` = `crshdn/mission-control`
 
-Use `git fetch upstream` when you need to compare this checkout against source Mission Control instead of blindly assuming `origin main` is the source of truth.
+Use `git fetch source` when you need to compare this checkout against source Mission Control instead of blindly assuming `origin/main` is the source of truth.
 
 `nvm use` defaults this repo to Node 24 for local work. Node 20 is also supported when you need Docker or CI parity, but switching between them requires another `npm ci`.
 
