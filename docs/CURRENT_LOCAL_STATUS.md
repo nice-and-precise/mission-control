@@ -10,9 +10,9 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 - Date verified: `2026-04-02`
 - Upstream base: `v2.4.0`
-- Local checkout state: `merged stabilization baseline on canonical origin/main`
+- Local checkout state: `canonical origin/main with repo-sync guardrails enabled`
 - Git ref: `main`
-- Baseline commit: `be9e32f`
+- Baseline commit: `1115f1b`
 - GitHub PR state:
   - PR `#1` merged into `origin/main` on `2026-04-02`
   - local `HEAD` matches `origin/main`
@@ -24,6 +24,7 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 - Repository policy:
   - day-to-day work branches must be based on `origin/main`
   - `source/main` is for comparison and selective import work only when the `source` remote is present
+  - `main` is protected on GitHub and now requires `Branch Policy`, `Docs`, `Test`, and `Build`
 - Local app URL: `http://localhost:4000`
 - Local runtime project root override:
   - `PROJECTS_PATH=/Users/jordan/Projects`
@@ -39,6 +40,10 @@ The following facts were re-verified against the live local runtime on `2026-04-
 - `npm run dev` is the default local operating mode on `localhost:4000`
   - authenticated `GET /api/health` now returns HTTP `200` with JSON like `{"status":"ok","uptime_seconds":...,"version":"2.4.0"}` during this stabilization pass
   - `next dev` uses `.next-dev` while `next build` and `next start` keep using `.next`, which prevents a build from clobbering the active dev runtime
+- Git and GitHub guardrails are now aligned with the standalone repository model
+  - the temporary reconciliation branch was merged and deleted
+  - `source` remains available for fetch/compare work, but its local push URL is disabled
+  - GitHub now auto-deletes merged branches, blocks force-pushes to `main`, enforces linear history, and requires the live CI checks on trunk
 - The repo-backed strict workflow is behaving truthfully on this checkout
   - the clean-room smoke task completed end-to-end through build -> test -> verification without manual task-state repair
   - both disposable smoke tasks were deleted successfully afterward, and their isolated workspaces were removed from the active projects tree
