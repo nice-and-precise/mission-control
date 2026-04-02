@@ -15,9 +15,9 @@ I highly recommend getting Hetzner VPS to run this. <a href="https://hetzner.clo
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/stars/crshdn/mission-control?style=flat-square" alt="GitHub Stars" />
-  <img src="https://img.shields.io/github/issues/crshdn/mission-control?style=flat-square" alt="GitHub Issues" />
-  <img src="https://img.shields.io/github/license/crshdn/mission-control?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/github/stars/nice-and-precise/mission-control?style=flat-square" alt="GitHub Stars" />
+  <img src="https://img.shields.io/github/issues/nice-and-precise/mission-control?style=flat-square" alt="GitHub Issues" />
+  <img src="https://img.shields.io/github/license/nice-and-precise/mission-control?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" />
   <img src="https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js" alt="Next.js" />
   <img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
@@ -347,7 +347,7 @@ Your task data, research results, ideas, swipe history, and product programs sta
 
 ```bash
 # Clone
-git clone https://github.com/crshdn/mission-control.git
+git clone https://github.com/nice-and-precise/mission-control.git
 cd mission-control
 
 # Install dependencies
@@ -667,7 +667,7 @@ set NO_PROXY=localhost,127.0.0.1
 docker run -e NO_PROXY=localhost,127.0.0.1 ...
 ```
 
-See [Issue #30](https://github.com/crshdn/mission-control/issues/30) for details.
+For historical context, see the upstream discussion in [crshdn/mission-control issue #30](https://github.com/crshdn/mission-control/issues/30).
 
 ---
 
@@ -902,11 +902,11 @@ Autensa is built by a growing community. Thank you to everyone who has contribut
 
 ## ⭐ Star History
 
-<a href="https://www.star-history.com/#crshdn/mission-control&Date">
+<a href="https://www.star-history.com/#nice-and-precise/mission-control&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=crshdn/mission-control&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=crshdn/mission-control&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=crshdn/mission-control&type=Date" width="600" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=nice-and-precise/mission-control&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=nice-and-precise/mission-control&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=nice-and-precise/mission-control&type=Date" width="600" />
   </picture>
 </a>
 
