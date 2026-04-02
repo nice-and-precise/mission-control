@@ -53,3 +53,7 @@ next-env.d.ts
 *.backup
 *.bak
 *.db.backup
+
+# local scratch/runtime output
+/.tmp/
+/db-backups/
