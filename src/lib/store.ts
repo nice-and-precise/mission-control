@@ -4,6 +4,24 @@ import { create } from 'zustand';
 import { debug } from './debug';
 import type { Agent, Task, Conversation, Message, Event, TaskStatus, OpenClawSession } from './types';
 
+const ACTIVE_TASK_STATUSES = new Set<TaskStatus>(['assigned', 'in_progress', 'convoy_active', 'testing', 'verification']);
+
+function reconcileAgentStatuses(agents: Agent[], tasks: Task[]): Agent[] {
+  const activeAgentIds = new Set(
+    tasks
+      .filter((task) => task.assigned_agent_id && ACTIVE_TASK_STATUSES.has(task.status as TaskStatus))
+      .map((task) => task.assigned_agent_id as string)
+  );
+
+  return agents.map((agent) => {
+    if (agent.status === 'offline') return agent;
+    return {
+      ...agent,
+      status: activeAgentIds.has(agent.id) ? 'working' : 'standby',
+    };
+  });
+}
+
 interface MissionControlState {
   // Data
   agents: Agent[];
@@ -43,6 +61,7 @@ interface MissionControlState {
   updateTaskStatus: (taskId: string, status: TaskStatus) => void;
   updateTask: (task: Task) => void;
   addTask: (task: Task) => void;
+  removeTask: (taskId: string) => void;
 
   // Agent mutations
   updateAgent: (agent: Agent) => void;
@@ -71,10 +90,14 @@ export const useMissionControl = create<MissionControlState>((set) => ({
   selectedBusiness: 'all',
 
   // Setters
-  setAgents: (agents) => set({ agents }),
+  setAgents: (agents) =>
+    set((state) => ({ agents: reconcileAgentStatuses(agents, state.tasks) })),
   setTasks: (tasks) => {
     debug.store('setTasks called', { count: tasks.length });
-    set({ tasks });
+    set((state) => ({
+      tasks,
+      agents: reconcileAgentStatuses(state.agents, tasks),
+    }));
   },
   setConversations: (conversations) => set({ conversations }),
   setEvents: (events) => set({ events }),
@@ -99,11 +122,15 @@ export const useMissionControl = create<MissionControlState>((set) => ({
   // Task mutations
   updateTaskStatus: (taskId, status) => {
     debug.store('updateTaskStatus called', { taskId, status });
-    set((state) => ({
-      tasks: state.tasks.map((task) =>
+    set((state) => {
+      const tasks = state.tasks.map((task) =>
         task.id === taskId ? { ...task, status } : task
-      ),
-    }));
+      );
+      return {
+        tasks,
+        agents: reconcileAgentStatuses(state.agents, tasks),
+      };
+    });
   },
   updateTask: (updatedTask) => {
     debug.store('updateTask called', { id: updatedTask.id, status: updatedTask.status });
@@ -118,10 +145,12 @@ export const useMissionControl = create<MissionControlState>((set) => ({
       } else {
         debug.store('Task not found in store, adding', { id: updatedTask.id });
       }
+      const tasks = state.tasks.map((task) =>
+        task.id === updatedTask.id ? updatedTask : task
+      );
       return {
-        tasks: state.tasks.map((task) =>
-          task.id === updatedTask.id ? updatedTask : task
-        ),
+        tasks,
+        agents: reconcileAgentStatuses(state.agents, tasks),
       };
     });
   },
@@ -133,7 +162,21 @@ export const useMissionControl = create<MissionControlState>((set) => ({
         debug.store('Task already exists, skipping add', { id: task.id });
         return state;
       }
-      return { tasks: [task, ...state.tasks] };
+      const tasks = [task, ...state.tasks];
+      return {
+        tasks,
+        agents: reconcileAgentStatuses(state.agents, tasks),
+      };
+    });
+  },
+  removeTask: (taskId) => {
+    debug.store('removeTask called', { taskId });
+    set((state) => {
+      const tasks = state.tasks.filter((task) => task.id !== taskId);
+      return {
+        tasks,
+        agents: reconcileAgentStatuses(state.agents, tasks),
+      };
     });
   },
 

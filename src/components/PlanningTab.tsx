@@ -198,7 +198,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
     } finally {
       isPollingRef.current = false;
     }
-  }, [taskId, onSpecLocked, stopPolling, setState, setError, setIsSubmittingAnswer, setSelectedOption, setOtherText]);
+  }, [taskId, stopPolling, setState, setError, setIsSubmittingAnswer, setSelectedOption, setOtherText, isWaitingForResponse]);
 
   // Start polling when waiting for response
   const startPolling = useCallback(() => {

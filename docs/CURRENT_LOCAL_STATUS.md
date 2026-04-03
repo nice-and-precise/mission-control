@@ -8,14 +8,14 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Snapshot
 
-- Date verified: `2026-04-02`
+- Date verified: `2026-04-03`
 - Upstream base: `v2.4.0`
-- Local checkout state: `canonical origin/main with repo-sync guardrails enabled`
-- Git ref: `main`
-- Baseline commit: `1115f1b`
+- Local checkout state: `feature branch restoring the Product Autopilot surface on top of canonical origin/main`
+- Git ref: `work/research-budget-routing`
+- Baseline commit: `983b6ba`
 - GitHub PR state:
-  - PR `#1` merged into `origin/main` on `2026-04-02`
-  - local `HEAD` matches `origin/main`
+  - PR `#1` remains the earlier repo-reconciliation merge into `origin/main`
+  - this restore work is local branch state on top of `origin/main`; local `HEAD` does not currently equal `origin/main`
 - Git remote model on this machine:
   - `origin` -> `nice-and-precise/mission-control`
   - `source` -> `crshdn/mission-control` (optional read-only comparison remote, with push disabled locally)
@@ -35,11 +35,15 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Verified Runtime Behavior
 
-The following facts were re-verified against the live local runtime on `2026-04-02`:
+The following facts were re-verified against the live local runtime on `2026-04-03`:
 
 - `npm run dev` is the default local operating mode on `localhost:4000`
   - authenticated `GET /api/health` now returns HTTP `200` with JSON like `{"status":"ok","uptime_seconds":...,"version":"2.4.0"}` during this stabilization pass
   - `next dev` uses `.next-dev` while `next build` and `next start` keep using `.next`, which prevents a build from clobbering the active dev runtime
+- The Product Autopilot surface is present again on this worktree
+  - a fresh `next dev` relaunch served `/autopilot` and `/activity` with HTTP `200`
+  - authenticated `POST /api/products` plus `GET /api/products/{id}`, `/swipe/deck`, `/health`, `/costs`, and `DELETE /api/products/{id}` all returned HTTP `200` during the restore smoke test
+  - an older already-running `next dev` process continued serving the pre-restore route graph until it was restarted, so route-level `404`s after adding new `src/app/**` entries should be treated as a dev-server refresh issue first
 - Git and GitHub guardrails are now aligned with the standalone repository model
   - the temporary reconciliation branch was merged and deleted
   - `source` remains available for fetch/compare work, but its local push URL is disabled

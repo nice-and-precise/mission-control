@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, ArrowRight, Folder, Users, CheckSquare, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, ArrowRight, Folder, Users, CheckSquare, Trash2, AlertTriangle, Activity, Rocket } from 'lucide-react';
 import Link from 'next/link';
 import type { WorkspaceStats } from '@/lib/types';
 
@@ -44,18 +44,34 @@ export function WorkspaceDashboard() {
       {/* Header */}
       <header className="border-b border-mc-border bg-mc-bg-secondary">
         <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <span className="text-2xl">🦞</span>
               <h1 className="text-xl font-bold">Mission Control</h1>
             </div>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-mc-accent text-mc-bg rounded-lg font-medium hover:bg-mc-accent/90"
-            >
-              <Plus className="w-4 h-4" />
-              New Workspace
-            </button>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/autopilot"
+                className="flex items-center gap-2 px-4 py-2 border border-mc-border bg-mc-bg text-mc-text-secondary rounded-lg text-sm hover:bg-mc-bg-tertiary hover:text-mc-text"
+              >
+                <Rocket className="w-4 h-4" />
+                Autopilot
+              </Link>
+              <Link
+                href="/activity"
+                className="flex items-center gap-2 px-4 py-2 border border-mc-border bg-mc-bg text-mc-text-secondary rounded-lg text-sm hover:bg-mc-bg-tertiary hover:text-mc-text"
+              >
+                <Activity className="w-4 h-4" />
+                Activity
+              </Link>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-mc-accent text-mc-bg rounded-lg font-medium hover:bg-mc-accent/90"
+              >
+                <Plus className="w-4 h-4" />
+                New Workspace
+              </button>
+            </div>
           </div>
         </div>
       </header>
