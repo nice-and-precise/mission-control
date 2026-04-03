@@ -145,6 +145,10 @@ The headline feature. Point Autensa at any product (repo + live URL) and it runs
 
 **Your only job is the swipe.** Everything else is automated.
 
+### Product Workspace Routing & Reset
+
+New products now default to a dedicated Mission Control workspace so Autopilot build cards do not spill into `default` unless you explicitly choose a shared workspace. If you create a product with the wrong workspace destination, delete it from the Autopilot card menu or the product settings `Danger Zone` and recreate it. Product delete is a hard reset for mistaken setups: it removes the product, its Autopilot data, and any product-owned tasks, and it removes the dedicated workspace too when Mission Control created that workspace for the product.
+
 ### 📄 Product Program (Karpathy AutoResearch Pattern)
 
 Inspired by Andrej Karpathy's [AutoResearch](https://github.com/karpathy/autoresearch) architecture. Each product has a **Product Program** — a living document that instructs research and ideation agents on what to look for, what matters, and what to ignore. The program evolves as swipe data accumulates: the system learns your taste, not just patterns.
@@ -172,10 +176,10 @@ Full chat history preserved per task — every message, note, and response.
 
 Granular spend visibility across every dimension:
 
-- **Per-task cost tracking** — See exactly what each feature costs to build
+- **Per-task accounting** — Track recorded spend plus reserved estimated dispatch cost per task
 - **Per-product aggregation** — Total spend across all tasks for a product
-- **Daily and monthly caps** — Set budget limits that auto-pause dispatch when exceeded
-- **Cost breakdown API** — Detailed reports by agent, model, and time period
+- **Workspace + product caps** — Daily, monthly, and per-task policy caps can hard-block new spend-producing work
+- **Cost breakdown API** — Detailed reports split across actual recorded spend, reserved estimated spend, and blocked/unpriced runs
 
 ### 🧠 Knowledge Base & Learner Agent
 
@@ -282,7 +286,7 @@ Configure autonomous cycles per product:
 - 📋 Multi-agent planning specs
 - 🖼️ Task image attachments (UI mockups, screenshots)
 - 📡 Live real-time activity feed (SSE)
-- 💰 Per-task, per-product, daily/monthly cost tracking & caps
+- 💰 Actual spend, reserved dispatch cost, and hard budget caps
 
 **Infrastructure**
 - 🔌 OpenClaw Gateway integration (WebSocket)
