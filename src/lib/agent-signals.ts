@@ -3,6 +3,7 @@ import { broadcast } from '@/lib/events';
 import { triggerWorkspaceMerge } from '@/lib/workspace-isolation';
 import { drainQueue, handleStageFailure, handleStageTransition } from '@/lib/workflow-engine';
 import { buildAgentSessionKey } from '@/lib/openclaw/routing';
+import { syncOpenClawBuildUsage } from '@/lib/openclaw/session-runtime';
 import { sanitizeAgentSignalSummary, stripAgentResponseWrappers } from '@/lib/agent-signal-text';
 import type { Agent, OpenClawSession, Task } from '@/lib/types';
 
@@ -78,10 +79,12 @@ function findSessionByContext(input: ProcessAgentSignalInput): SessionWithAgent 
 
   if (input.sessionKey) {
     const bySessionKey = sessions.find((session) =>
+      session.session_key === input.sessionKey || (
       buildAgentSessionKey(session.openclaw_session_id, {
         role: session.role || undefined,
         session_key_prefix: session.session_key_prefix || undefined,
       }) === input.sessionKey
+      )
     );
     if (bySessionKey) return bySessionKey;
   }
@@ -198,6 +201,12 @@ function shouldIgnoreSignal(task: Task, targetStatus: Task['status'] | null): bo
   return false;
 }
 
+function triggerBuildUsageSync(taskId: string): void {
+  syncOpenClawBuildUsage({ taskId }).catch((error) => {
+    console.error('[AgentSignals] build usage sync failed:', error);
+  });
+}
+
 export async function processAgentSignal(
   input: ProcessAgentSignalInput,
 ): Promise<ProcessAgentSignalResult> {
@@ -255,6 +264,7 @@ export async function processAgentSignal(
     }
 
     setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    triggerBuildUsageSync(task.id);
     return { handled: true, taskId: task.id, signal: parsed.kind };
   }
 
@@ -265,6 +275,7 @@ export async function processAgentSignal(
 
   if (shouldIgnoreSignal(task, targetStatus)) {
     setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    triggerBuildUsageSync(task.id);
     return { handled: true, taskId: task.id, signal: parsed.kind };
   }
 
@@ -294,6 +305,7 @@ export async function processAgentSignal(
 
   if (targetStatus === 'done') {
     setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    triggerBuildUsageSync(task.id);
     drainQueue(task.id, task.workspace_id).catch((err) => {
       console.error('[AgentSignals] drainQueue after done failed:', err);
     });
@@ -306,6 +318,7 @@ export async function processAgentSignal(
   }
 
   if (!targetStatus) {
+    triggerBuildUsageSync(task.id);
     return {
       handled: true,
       taskId: task.id,
@@ -319,6 +332,7 @@ export async function processAgentSignal(
   });
 
   if (!handoff.success && handoff.error) {
+    triggerBuildUsageSync(task.id);
     return {
       handled: true,
       taskId: task.id,
@@ -327,5 +341,6 @@ export async function processAgentSignal(
     };
   }
 
+  triggerBuildUsageSync(task.id);
   return { handled: true, taskId: task.id, signal: parsed.kind };
 }

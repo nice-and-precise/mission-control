@@ -1,4 +1,5 @@
 import { isOpenClawAgentTarget, validateProviderModelOverride } from '@/lib/openclaw/model-catalog';
+import { getAutopilotDefaultModel } from '@/lib/openclaw/model-policy';
 
 /**
  * Lightweight LLM completion via OpenClaw Gateway's OpenAI-compatible endpoint.
@@ -8,7 +9,7 @@ import { isOpenClawAgentTarget, validateProviderModelOverride } from '@/lib/open
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL?.replace('ws://', 'http://').replace('wss://', 'https://') || 'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
 const GATEWAY_SCOPES = 'operator.read,operator.write';
-const DEFAULT_MODEL = process.env.AUTOPILOT_MODEL || 'openclaw';
+const DEFAULT_MODEL = getAutopilotDefaultModel();
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 5_000; // 5s, 10s, 20s exponential backoff
@@ -115,7 +116,7 @@ export async function complete(prompt: string, options: CompletionOptions = {}):
 
       return {
         content,
-        model: data.model || model,
+        model: isOpenClawAgentTarget(model) ? (data.model || model) : model,
         usage: {
           promptTokens: data.usage?.prompt_tokens || 0,
           completionTokens: data.usage?.completion_tokens || 0,

@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS workspaces (
   slug TEXT NOT NULL UNIQUE,
   description TEXT,
   icon TEXT DEFAULT '📁',
+  cost_cap_daily REAL DEFAULT 20,
+  cost_cap_monthly REAL DEFAULT 100,
+  reserved_cost_usd REAL DEFAULT 0,
+  budget_status TEXT DEFAULT 'clear' CHECK (budget_status IN ('clear', 'blocked')),
+  budget_block_reason TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -73,6 +78,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   idea_id TEXT REFERENCES ideas(id),
   estimated_cost_usd REAL,
   actual_cost_usd REAL DEFAULT 0,
+  reserved_cost_usd REAL DEFAULT 0,
+  budget_status TEXT DEFAULT 'clear' CHECK (budget_status IN ('clear', 'blocked')),
+  budget_block_reason TEXT,
   repo_url TEXT,
   repo_branch TEXT,
   pr_url TEXT,
@@ -191,10 +199,24 @@ CREATE TABLE IF NOT EXISTS openclaw_sessions (
   id TEXT PRIMARY KEY,
   agent_id TEXT REFERENCES agents(id),
   openclaw_session_id TEXT NOT NULL,
+  session_key TEXT,
   channel TEXT,
   status TEXT DEFAULT 'active',
   session_type TEXT DEFAULT 'persistent',
   task_id TEXT REFERENCES tasks(id),
+  requested_model TEXT,
+  bound_model TEXT,
+  binding_status TEXT DEFAULT 'unbound',
+  binding_error TEXT,
+  last_run_id TEXT,
+  usage_external_id TEXT,
+  usage_sync_status TEXT DEFAULT 'pending',
+  usage_sync_reason TEXT,
+  usage_synced_at TEXT,
+  usage_start_input_tokens INTEGER DEFAULT 0,
+  usage_start_output_tokens INTEGER DEFAULT 0,
+  usage_start_cache_read_tokens INTEGER DEFAULT 0,
+  usage_start_cache_write_tokens INTEGER DEFAULT 0,
   ended_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
@@ -333,6 +355,8 @@ CREATE TABLE IF NOT EXISTS agent_mailbox (
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  workspace_mode TEXT DEFAULT 'existing' CHECK (workspace_mode IN ('dedicated', 'existing')),
+  manages_workspace INTEGER DEFAULT 0,
   name TEXT NOT NULL,
   description TEXT,
   repo_url TEXT,
@@ -345,6 +369,9 @@ CREATE TABLE IF NOT EXISTS products (
   default_branch TEXT DEFAULT 'main',
   cost_cap_per_task REAL,
   cost_cap_monthly REAL,
+  reserved_cost_usd REAL DEFAULT 0,
+  budget_status TEXT DEFAULT 'clear' CHECK (budget_status IN ('clear', 'blocked')),
+  budget_block_reason TEXT,
   health_weight_config TEXT,
   batch_review_threshold INTEGER DEFAULT 10,
   created_at TEXT DEFAULT (datetime('now')),
@@ -755,6 +782,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE INDEX IF NOT EXISTS idx_activities_task ON task_activities(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deliverables_task ON task_deliverables(task_id);
 CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_task ON openclaw_sessions(task_id);
+CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_session_key ON openclaw_sessions(session_key);
 CREATE INDEX IF NOT EXISTS idx_planning_questions_task ON planning_questions(task_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_workflow_templates_workspace ON workflow_templates(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_task_roles_task ON task_roles(task_id);

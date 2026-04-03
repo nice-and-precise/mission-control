@@ -300,23 +300,6 @@ function createTaskFromIdea(idea: Idea, opts?: { urgent?: boolean; notes?: strin
     status = opts?.urgent ? 'inbox' : 'planning';
   }
 
-  // Check cost cap before auto-dispatch
-  if (status === 'assigned' && product?.cost_cap_monthly) {
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    const monthlySpend = queryOne<{ total: number }>(
-      `SELECT COALESCE(SUM(cost_usd), 0) as total FROM cost_events
-       WHERE product_id = ? AND created_at >= ?`,
-      [idea.product_id, monthStart.toISOString()]
-    );
-    if (monthlySpend && monthlySpend.total >= product.cost_cap_monthly) {
-      // Cap exceeded — queue to inbox instead of auto-dispatching
-      status = 'inbox';
-      console.warn(`[AutoBuild] Monthly cap exceeded for product ${product.name}: $${monthlySpend.total}/$${product.cost_cap_monthly} — queuing to inbox`);
-    }
-  }
-
   // Get default workflow template
   const template = queryOne<{ id: string }>(`SELECT id FROM workflow_templates WHERE workspace_id = ? AND is_default = 1`, [workspaceId]);
 
