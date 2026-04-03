@@ -181,6 +181,16 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/health | jq
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/models | jq
 ```
 
+## If VS Code Opens Blank
+
+If VS Code reopens to a blank or half-loaded window while Mission Control is running:
+
+- restart the VS Code window first
+- verify Mission Control separately in a normal browser tab before assuming the dev server failed
+- check VS Code logs for an extension-host crash before blaming the app
+- if the logs mention missing MCP `manifest.json` files, clear stale user-level MCP cache or sync state and reopen VS Code
+- if chat extensions keep crashing the extension host, disable or update them before continuing
+
 ## Sharing Checklist Before John Starts
 
 - John has his own OpenClaw install and credentials

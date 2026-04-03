@@ -203,6 +203,7 @@ export function TeamTab({ taskId, workspaceId }: TeamTabProps) {
     new Set(roles.map(r => normalizeRole(r.role)).filter(Boolean))
   );
 
+  const primaryRoleNames = uniqueRoles.length > 0 ? uniqueRoles : assignedRoleNames;
   const addableRoles = roleCatalog.filter(role => !assignedRoleNames.includes(role));
   const executionAssignments = roles.filter((role) => role.agent_id);
 
@@ -290,7 +291,7 @@ export function TeamTab({ taskId, workspaceId }: TeamTabProps) {
           Workspace-scoped core agents appear here. Saving this table defines who actually handles each workflow stage for this task.
         </p>
         <div className="space-y-3">
-          {(uniqueRoles.length > 0 ? uniqueRoles : roles.map(r => r.role).filter(Boolean)).map(role => {
+          {primaryRoleNames.map(role => {
             if (!role) return null;
             const assignment = roles.find(r => normalizeRole(r.role) === normalizeRole(role));
             return (
@@ -315,7 +316,7 @@ export function TeamTab({ taskId, workspaceId }: TeamTabProps) {
           })}
 
           {/* Custom role slots (not from workflow) - role names are catalog-driven (not editable text) */}
-          {roles.filter(r => !uniqueRoles.includes(normalizeRole(r.role)) && r.role).map((r, i) => (
+          {roles.filter(r => !primaryRoleNames.includes(normalizeRole(r.role)) && r.role).map((r, i) => (
             <div key={`custom-${i}`} className="flex items-center gap-3">
               <div className="w-24 text-xs font-medium text-mc-text-secondary capitalize flex-shrink-0">
                 {normalizeRole(r.role)}
