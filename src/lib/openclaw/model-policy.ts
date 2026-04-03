@@ -119,6 +119,20 @@ export function listMissionControlPolicyModels(): MissionControlModelPolicy[] {
   return [...DOCS_BACKED_MODEL_POLICIES];
 }
 
+export function getDispatchDefaultModelForRole(role?: string | null): string {
+  switch ((role || '').trim().toLowerCase()) {
+    case 'reviewer':
+    case 'builder':
+      return 'openai-codex/gpt-5.4';
+    case 'tester':
+      return 'opencode-go/minimax-m2.5';
+    case 'learner':
+      return 'opencode-go/kimi-k2.5';
+    default:
+      return 'opencode-go/kimi-k2.5';
+  }
+}
+
 export function getAutopilotDefaultModel(): string {
   return process.env.AUTOPILOT_MODEL || 'opencode-go/kimi-k2.5';
 }
