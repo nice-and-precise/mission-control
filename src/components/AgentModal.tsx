@@ -64,13 +64,19 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
         const res = await fetch('/api/openclaw/models');
         if (res.ok) {
           const data = await res.json();
+          const allowedDefaultProviderModel = (data.providerModels || []).find(
+            (model: OpenClawProviderModel) => model.id === data.defaultProviderModel && model.policy_allowed,
+          )?.id;
           setAgentTargets(data.agentTargets || []);
           setProviderModels(data.providerModels || []);
           setDefaultAgentTarget(data.defaultAgentTarget || '');
           setDefaultProviderModel(data.defaultProviderModel || '');
           // If agent has no model set, use default
-          if (!agent?.model && data.defaultAgentTarget) {
-            setForm(prev => ({ ...prev, model: data.defaultAgentTarget }));
+          if (!agent?.model) {
+            setForm(prev => ({
+              ...prev,
+              model: allowedDefaultProviderModel || data.defaultAgentTarget || '',
+            }));
           }
         }
       } catch (error) {
@@ -147,6 +153,8 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
     { id: 'user', label: 'USER.md' },
     { id: 'agents', label: 'AGENTS.md' },
   ] as const;
+  const allowedProviderModels = providerModels.filter((model) => model.policy_allowed);
+  const currentBlockedProviderModel = providerModels.find((model) => model.id === form.model && !model.policy_allowed);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-3 sm:p-4">
@@ -294,17 +302,29 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
                         {model.label}{defaultAgentTarget === model.id ? ' (Default)' : ''}
                       </option>
                     ))}
-                    {providerModels.length > 0 && <option disabled>──────── Provider Overrides ────────</option>}
-                    {providerModels.map((model) => (
+                    {allowedProviderModels.length > 0 && <option disabled>──────── Policy Provider Models ────────</option>}
+                    {allowedProviderModels.map((model) => (
                       <option key={model.id} value={model.id}>
-                        {model.label}{defaultProviderModel === model.id ? ' (Gateway Default Provider)' : ''}
+                        {model.label}
+                        {defaultProviderModel === model.id ? ' (Gateway Default Provider)' : ''}
+                        {!model.discovered ? ' (Docs-backed policy)' : ''}
                       </option>
                     ))}
+                    {currentBlockedProviderModel && (
+                      <option value={currentBlockedProviderModel.id}>
+                        {currentBlockedProviderModel.label} (Blocked by policy)
+                      </option>
+                    )}
                   </select>
                 )}
                 <p className="text-xs text-mc-text-secondary mt-1">
-                  Agent targets use the official `openclaw/*` routing contract. Provider overrides are advanced and only work when the current OpenClaw agent policy allows them.
+                  Agent targets use the official `openclaw/*` routing contract. Provider overrides are limited to Mission Control&apos;s docs-backed, priced policy allowlist.
                 </p>
+                {currentBlockedProviderModel && (
+                  <p className="text-xs text-amber-300 mt-1">
+                    The current provider override is no longer allowed by policy and will block future dispatches until it is changed.
+                  </p>
+                )}
               </div>
 
               {/* Session Key Prefix */}

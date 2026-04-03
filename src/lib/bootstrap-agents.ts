@@ -9,6 +9,7 @@
 import Database from 'better-sqlite3';
 import { getDb } from '@/lib/db';
 import { getMissionControlUrl } from '@/lib/config';
+import { getDispatchDefaultModelForRole } from '@/lib/openclaw/model-policy';
 
 // ── Agent Definitions ──────────────────────────────────────────────
 
@@ -208,8 +209,8 @@ export function bootstrapCoreAgentsRaw(
   const now = new Date().toISOString();
 
   const insert = db.prepare(`
-    INSERT INTO agents (id, name, role, description, avatar_emoji, status, is_master, workspace_id, soul_md, user_md, agents_md, source, session_key_prefix, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 'standby', 0, ?, ?, ?, ?, 'local', ?, ?, ?)
+    INSERT INTO agents (id, name, role, description, avatar_emoji, status, is_master, workspace_id, soul_md, user_md, agents_md, model, source, session_key_prefix, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'standby', 0, ?, ?, ?, ?, ?, 'local', ?, ?, ?)
   `);
 
   for (const agent of CORE_AGENTS) {
@@ -224,6 +225,7 @@ export function bootstrapCoreAgentsRaw(
       agent.soulMd,
       userMd,
       SHARED_AGENTS_MD,
+      getDispatchDefaultModelForRole(agent.role),
       agent.sessionKeyPrefix || null,
       now,
       now,
