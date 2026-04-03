@@ -388,10 +388,11 @@ openclaw gateway status --require-rpc --deep
 npm run dev
 ```
 
-On Jordan's Mac, the supported OpenClaw operator path is `../scripts/update_openclaw_local_runtime.sh`, not `openclaw update`, so the runtime stays owned by the local prefix under `~/.openclaw`. Machine-local runtime details live in [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md).
+On this baseline, the supported OpenClaw operator path is `../scripts/update_openclaw_local_runtime.sh`, not `openclaw update`, so the runtime stays owned by the local prefix under `~/.openclaw`. Local runtime details live in [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md).
 
 OpenClaw compatibility notes on this baseline:
 - Mission Control treats `openclaw` as the default agent target for Autopilot HTTP completions.
+- Mission Control resolves Autopilot budget and policy accounting against the OpenClaw catalog's `defaultProviderModel` when `AUTOPILOT_MODEL=openclaw`, so the OpenClaw default provider model must be both allowed by Mission Control policy and priced for accounting.
 - `/api/openclaw/models` separates agent targets from provider overrides so operators do not confuse the two contracts.
 - `/api/openclaw/sessions/{id}/history` is available as a read-only transcript surface, but oversized entries may still be omitted by OpenClaw's bounded history contract.
 - Detached OpenClaw work is visible through Mission Control's read-only background-task surface and the task modal's `Detached Work` tab, including degraded-ledger metadata when the CLI only returns JSON on `stderr` or times out.

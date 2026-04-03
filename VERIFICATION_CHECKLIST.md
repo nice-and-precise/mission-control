@@ -2,8 +2,6 @@
 
 Use this as the shareable verification contract for a fresh clone, handoff, or local baseline refresh.
 
-For Jordan's current machine-specific deviations, use [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
-
 ## OpenClaw Gate
 
 Run from the workspace root unless noted otherwise.
@@ -97,6 +95,8 @@ Pass criteria:
 - `/autopilot` and `/activity` both return HTTP `200`
 - Mission Control can reach the configured OpenClaw gateway
 - `/api/openclaw/models` returns separate `agentTargets` and `providerModels`
+- `/api/openclaw/models` reports `defaultAgentTarget: "openclaw"` for the local Autopilot baseline unless you intentionally changed the contract
+- `/api/openclaw/models.defaultProviderModel` is present and maps to a Mission Control policy-allowed, priced provider model
 - `/api/openclaw/background-tasks` returns `tasks`, `status`, `sourceChannel`, and `warning`
 - `/api/openclaw/background-tasks` uses `status: "ok"` for true empty-success responses and `status: "degraded"` when the CLI timed out or only returned JSON on `stderr`
 - if you have a known session key or session ID, `/api/openclaw/sessions/{id}/history` returns a normalized transcript payload instead of `501`
@@ -114,7 +114,7 @@ npm run docs:check
 
 Pass criteria:
 
-- the active portable docs do not hardcode Jordan-specific absolute machine paths
+- the active portable docs do not hardcode operator-specific absolute machine paths
 - local markdown links in the active portable docs resolve
 - the docs sanity gate exits `0`
 

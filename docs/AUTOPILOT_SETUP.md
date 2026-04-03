@@ -57,6 +57,21 @@ After creating a product:
 - the product dashboard header should show the same workspace
 - approving an idea should create the build task in that workspace, not in `default`
 
+## Local OpenClaw Preflight
+
+For local Autopilot on this baseline:
+
+- keep `AUTOPILOT_MODEL=openclaw`
+- treat `openclaw` as the execution target, not a provider override
+- verify `GET /api/openclaw/models` reports both `defaultAgentTarget` and `defaultProviderModel`
+- ensure the reported `defaultProviderModel` is in Mission Control's docs-backed allowlist and has pricing metadata
+
+Why this matters:
+
+- research and ideation execute through the `openclaw` agent target
+- Mission Control still needs a priced, policy-allowed provider model for budget and cost accounting
+- if the OpenClaw default provider model is not allowed or unpriced, Autopilot can fail before research or ideation completes
+
 After deleting a mistaken product:
 
 - the product should disappear from `/autopilot`

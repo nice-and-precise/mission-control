@@ -5,6 +5,12 @@ Short local commands for this checkout.
 For the machine-local OpenClaw runtime owner contract, use [../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md](../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md).
 For Product Autopilot workspace setup and reset behavior, use [AUTOPILOT_SETUP.md](AUTOPILOT_SETUP.md).
 
+Set a workspace root once per shell before running the examples below:
+
+```bash
+export WORKSPACE_ROOT="${WORKSPACE_ROOT:-$HOME/.openclaw/workspace}"
+```
+
 For updates on this Mac's local-prefix install, use `../scripts/update_openclaw_local_runtime.sh` from the workspace root instead of `openclaw update`. The helper reruns the official `install-cli.sh` flow against `~/.openclaw`.
 
 After `openclaw gateway restart`, allow a short warm-up window before treating a failed RPC probe as a real outage. The LaunchAgent can report running a few seconds before the gateway has rebound `127.0.0.1:18789`.
@@ -12,7 +18,7 @@ After `openclaw gateway restart`, allow a short warm-up window before treating a
 Recommended local check:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace
+cd "$WORKSPACE_ROOT"
 ./scripts/update_openclaw_local_runtime.sh
 ~/.openclaw/bin/openclaw doctor
 ~/.openclaw/bin/openclaw gateway restart
@@ -23,7 +29,7 @@ sleep 8
 ## Start / Restart
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 npm run dev
 ```
 
@@ -37,7 +43,7 @@ lsof -nP -iTCP:4000 -sTCP:LISTEN
 
 ## Git Remote Model
 
-For this checkout on Jordan's machine:
+For this checkout:
 
 - `origin` = `nice-and-precise/mission-control`
 - `source` = `crshdn/mission-control` (optional read-only comparison remote)
@@ -81,7 +87,7 @@ If `MC_API_TOKEN` is set in `.env.local`, direct `curl` requests to `/api/*` mus
 Use this after restoring or changing Product Autopilot routes:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 
 TOKEN="$(python3 - <<'PY'
 from dotenv import dotenv_values
@@ -171,7 +177,7 @@ Use this when Mission Control starts logging fresh zombie or unreconciled-run ac
 Run:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 python3 scripts/runtime-owner-diagnostics.py
 ```
 
@@ -190,7 +196,7 @@ pkill -f 'src/lib/runtime-leases.test.ts'
 Then restart the real app runtime:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 npm run dev
 ```
 
@@ -204,7 +210,7 @@ Use this when `openclaw dashboard` opens `http://127.0.0.1:18789/` but prints:
 Run:
 
 ```bash
-python3 /Users/jordan/.openclaw/workspace/scripts/openclaw-dashboard-auth.py
+python3 "$WORKSPACE_ROOT/scripts/openclaw-dashboard-auth.py"
 ```
 
 What it does:
@@ -218,14 +224,14 @@ Important:
 
 - `AUTH_TOKEN_MISSING` here usually means the Control UI connected without the bootstrap token.
 - It does not automatically mean the gateway token drifted or the SecretRef is broken.
-- Use `python3 /Users/jordan/.openclaw/workspace/scripts/openclaw-gateway-health.py` if you need to distinguish real gateway drift from UI bootstrap noise.
+- Use `python3 "$WORKSPACE_ROOT/scripts/openclaw-gateway-health.py"` if you need to distinguish real gateway drift from UI bootstrap noise.
 
 ## Mission Control Gateway Token Sync
 
 Refresh `mission-control/.env.local` from the canonical OpenClaw SecretRef target:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace
+cd "$WORKSPACE_ROOT"
 python3 scripts/sync_mission_control_gateway_token.py
 ```
 
@@ -248,11 +254,12 @@ x-openclaw-scopes: operator.read,operator.write
 Mission Control now sends that header from its shared autopilot LLM helper. If the 403 returns again, verify the route directly before touching the gateway token:
 
 ```bash
+cd "$WORKSPACE_ROOT/mission-control"
 python3 - <<'PY'
 from dotenv import dotenv_values
 import urllib.request, json
-
-vals = dotenv_values('/Users/jordan/.openclaw/workspace/mission-control/.env.local')
+from pathlib import Path
+vals = dotenv_values(Path.cwd() / '.env.local')
 base = vals['OPENCLAW_GATEWAY_URL'].replace('ws://', 'http://').replace('wss://', 'https://')
 token = vals['OPENCLAW_GATEWAY_TOKEN']
 
@@ -280,6 +287,13 @@ If that direct call succeeds but Mission Control still fails, restart `npm run d
 
 Keep `AUTOPILOT_MODEL=openclaw` in `mission-control/.env.local` on this machine. Do not hardcode provider model IDs like `anthropic/claude-sonnet-4-6` in local Autopilot routes unless the current OpenClaw agent policy explicitly allows that override.
 
+Important accounting note:
+
+- Autopilot research and ideation execute through `openclaw`
+- Mission Control resolves budget and cost accounting from `/api/openclaw/models` using the catalog's `defaultProviderModel`
+- if `defaultProviderModel` is missing, disallowed, or unpriced, research or ideation can fail before the gateway call finishes
+- on this machine, `defaultProviderModel` should resolve to an allowed priced model such as `opencode-go/kimi-k2.5`
+
 ## OpenClaw Operator Surfaces
 
 Mission Control now separates the main OpenClaw operator surfaces:
@@ -306,6 +320,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 What to expect:
 
 - models response includes `agentTargets`, `providerModels`, `defaultAgentTarget`, and `defaultProviderModel`
+- `defaultAgentTarget` should remain `openclaw` for local Autopilot on this baseline
+- `defaultProviderModel` should be a Mission Control policy-allowed, priced provider model
 - history response includes `sessionRef`, `resolvedSessionKey`, `resolvedSessionId`, `items`, `hasMore`, and `source`
 - background-task response includes top-level `status`, `sourceChannel`, and `warning` plus detached task `id`, `runId`, `sessionKey`, `runtimeKind`, `status`, and any correlated Mission Control session metadata
 - use `status: "degraded"` to distinguish OpenClaw CLI contract issues from a true empty detached-work ledger
@@ -387,7 +403,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 Use this when you want to throw away the current plan and restart planning cleanly for the same task.
 
 1. Cancel planning in Mission Control.
-   Source: [planning/route.ts](/Users/jordan/.openclaw/workspace/mission-control/src/app/api/tasks/[id]/planning/route.ts)
+   Source: [`src/app/api/tasks/[id]/planning/route.ts`](../src/app/api/tasks/[id]/planning/route.ts)
 2. Reset the corresponding OpenClaw planning conversation before starting again.
    OpenClaw’s official docs say `/new` or `/reset` starts a fresh conversation for the same chat key:
    <https://docs.openclaw.ai/help/faq>
@@ -420,7 +436,7 @@ Recovery steps:
 ## Database Backup
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 npm run db:backup
 ```
 
