@@ -111,7 +111,21 @@ export function ActivityPanel({ productId }: ActivityPanelProps) {
   }, [entries]);
 
   const grouped = groupByCycle(entries);
-  const cycleKeys = Array.from(grouped.keys());
+  const cycleKeys = Array.from(grouped.keys()).sort((a, b) => {
+    const aEntries = grouped.get(a) || [];
+    const bEntries = grouped.get(b) || [];
+    const aLatest = aEntries[aEntries.length - 1]?.created_at || '';
+    const bLatest = bEntries[bEntries.length - 1]?.created_at || '';
+    return bLatest.localeCompare(aLatest);
+  });
+
+  const cycleTypeCounts = new Map<string, number>();
+  for (const key of cycleKeys) {
+    const cycleType = key.split('-')[0];
+    cycleTypeCounts.set(cycleType, (cycleTypeCounts.get(cycleType) || 0) + 1);
+  }
+
+  const cycleTypeSeen = new Map<string, number>();
 
   // Mobile drawer state
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -148,11 +162,14 @@ export function ActivityPanel({ productId }: ActivityPanelProps) {
         {cycleKeys.map((key, idx) => {
           const group = grouped.get(key)!;
           const cycleType = key.split('-')[0];
+          const seen = (cycleTypeSeen.get(cycleType) || 0) + 1;
+          cycleTypeSeen.set(cycleType, seen);
+          const cycleIndex = (cycleTypeCounts.get(cycleType) || 0) - seen + 1;
 
           return (
             <div key={key}>
               <div className="text-[10px] font-semibold text-mc-text-secondary uppercase tracking-wider mb-1">
-                {cycleLabel(cycleType, cycleKeys.length - idx)}
+                {cycleLabel(cycleType, cycleIndex)}
               </div>
               <div className="space-y-1">
                 {group.map(entry => (
