@@ -213,6 +213,46 @@ export async function validateProviderModelOverride(model: string): Promise<void
   }
 }
 
+export function resolvePolicyAccountingModelFromCatalog(
+  model: string,
+  catalog: Pick<OpenClawModelCatalog, 'defaultProviderModel' | 'providerModels'>,
+): string {
+  if (!isOpenClawAgentTarget(model)) {
+    return model;
+  }
+
+  const candidates = [
+    catalog.defaultProviderModel,
+    ...catalog.providerModels
+      .filter((providerModel) => providerModel.policy_allowed && providerModel.priced)
+      .map((providerModel) => providerModel.id),
+  ].filter((candidate): candidate is string => Boolean(candidate && candidate.trim()));
+
+  for (const candidate of candidates) {
+    const policy = getMissionControlModelPolicy(candidate);
+    if (policy.policy_allowed && policy.priced) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `Mission Control could not resolve a priced provider model for agent target "${model}". ` +
+    'Set an allowed default provider model in OpenClaw or choose a priced provider override.',
+  );
+}
+
+export async function resolvePolicyAccountingModel(
+  model: string,
+  discoveryMode = (process.env.MODEL_DISCOVERY || 'auto').toLowerCase(),
+): Promise<string> {
+  if (!isOpenClawAgentTarget(model)) {
+    return model;
+  }
+
+  const catalog = await loadOpenClawModelCatalog(discoveryMode);
+  return resolvePolicyAccountingModelFromCatalog(model, catalog);
+}
+
 export function toOpenClawModelsResponse(catalog: OpenClawModelCatalog): OpenClawModelsResponse {
   return {
     defaultAgentTarget: catalog.defaultAgentTarget,

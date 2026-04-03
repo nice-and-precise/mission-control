@@ -4,6 +4,7 @@ import { broadcast } from '@/lib/events';
 import { enforceBudgetPolicy, recordAutopilotEstimatedCost } from '@/lib/costs/budget-policy';
 import { recordCostEvent } from '@/lib/costs/tracker';
 import { getAutopilotDefaultModel } from '@/lib/openclaw/model-policy';
+import { resolvePolicyAccountingModel } from '@/lib/openclaw/model-catalog';
 import { emitAutopilotActivity } from './activity';
 import { runIdeationCycle } from './ideation';
 import { recalculateAndBroadcast } from './health-score';
@@ -95,13 +96,14 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
       // For each program variant, run a research prompt
       const allReports: Array<{ report: unknown; variantId: string | null; variantName: string | null }> = [];
       let totalTokens = 0;
+      const budgetModel = await resolvePolicyAccountingModel(model);
 
       for (const programEntry of programs) {
         const budget = enforceBudgetPolicy({
           action: 'research',
           workspaceId: product.workspace_id,
           productId,
-          model,
+          model: budgetModel,
         });
         if (!budget.ok) {
           throw new Error(budget.message || 'Research blocked by Mission Control budget policy.');
@@ -163,7 +165,8 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
           cost_usd: estimatedCostUsd || 0,
           metadata: JSON.stringify({
             accounting_state: estimatedCostUsd == null ? 'blocked_unpriced' : 'estimated',
-            policy_model: model,
+            policy_model: budgetModel,
+            execution_model: model,
           }),
         });
       }
