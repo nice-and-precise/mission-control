@@ -4,6 +4,7 @@ import { broadcast } from '@/lib/events';
 import { enforceBudgetPolicy, recordAutopilotEstimatedCost } from '@/lib/costs/budget-policy';
 import { recordCostEvent } from '@/lib/costs/tracker';
 import { getAutopilotDefaultModel } from '@/lib/openclaw/model-policy';
+import { resolvePolicyAccountingModel } from '@/lib/openclaw/model-catalog';
 import { emitAutopilotActivity } from './activity';
 import { completeJSON } from './llm';
 import { batchCheckSimilarity, storeEmbedding, checkSimilarity } from './similarity';
@@ -125,13 +126,14 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
     try {
       let totalIdeasCount = 0;
       let totalTokensUsed = 0;
+      const budgetModel = await resolvePolicyAccountingModel(model);
 
       for (const programEntry of programs) {
         const budget = enforceBudgetPolicy({
           action: 'ideation',
           workspaceId: product.workspace_id,
           productId,
-          model,
+          model: budgetModel,
         });
         if (!budget.ok) {
           throw new Error(budget.message || 'Ideation blocked by Mission Control budget policy.');
