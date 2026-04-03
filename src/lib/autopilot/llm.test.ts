@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('gateway HTTP completions send the required OpenClaw scopes header', async () => {
+test('gateway HTTP completions default to the Mission Control policy model and send the required OpenClaw scopes header', async () => {
   process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
 
   const originalFetch = globalThis.fetch;
@@ -24,10 +24,12 @@ test('gateway HTTP completions send the required OpenClaw scopes header', async 
     const result = await mod.complete('hello');
 
     assert.equal(result.content, 'ok');
+    assert.equal(result.model, 'opencode-go/kimi-k2.5');
     assert.deepEqual(capturedInit?.headers, {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer test-token',
       'x-openclaw-scopes': 'operator.read,operator.write',
+      'x-openclaw-model': 'opencode-go/kimi-k2.5',
     });
 
     const body = JSON.parse(String(capturedInit?.body));
@@ -58,13 +60,15 @@ test('gateway HTTP completions route provider model overrides through x-openclaw
 
   try {
     const mod = await import(`./llm?test-override=${Date.now()}`);
-    await mod.complete('hello', { model: 'anthropic/claude-sonnet-4-5' });
+    const result = await mod.complete('hello', { model: 'openai-codex/gpt-5.4' });
+
+    assert.equal(result.model, 'openai-codex/gpt-5.4');
 
     assert.deepEqual(capturedInit?.headers, {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer test-token',
       'x-openclaw-scopes': 'operator.read,operator.write',
-      'x-openclaw-model': 'anthropic/claude-sonnet-4-5',
+      'x-openclaw-model': 'openai-codex/gpt-5.4',
     });
 
     const body = JSON.parse(String(capturedInit?.body));

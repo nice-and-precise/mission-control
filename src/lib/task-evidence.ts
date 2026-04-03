@@ -735,6 +735,11 @@ function logReconciliationActivity(
 }
 
 function buildStoredSessionKey(session: StoredTaskSession): string {
+  const persistedKey = (session.session_key || '').trim();
+  if (persistedKey) {
+    return persistedKey;
+  }
+
   const storedSessionId = session.openclaw_session_id;
   if (storedSessionId.startsWith('agent:')) {
     return storedSessionId;

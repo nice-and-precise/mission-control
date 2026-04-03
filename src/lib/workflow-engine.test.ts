@@ -1,5 +1,7 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { closeDb, queryOne, run } from './db';
 import { getOpenClawClient } from './openclaw/client';
 import { handleStageTransition } from './workflow-engine';
@@ -7,7 +9,24 @@ import { POST as dispatchTaskRoute } from '../app/api/tasks/[id]/dispatch/route'
 import { NextRequest } from 'next/server';
 import { buildPersistentAgentSessionId } from './openclaw/routing';
 
+const TEST_DB_PATH = process.env.DATABASE_PATH || join(tmpdir(), `mission-control-tests-${process.pid}.sqlite`);
+process.env.DATABASE_PATH = TEST_DB_PATH;
+
 afterEach(() => {
+  const client = getOpenClawClient() as unknown as {
+    isConnected?: () => boolean;
+    connect?: () => Promise<void>;
+    listAgents?: () => Promise<unknown[]>;
+    patchSessionModel?: (sessionKey: string, model: string) => Promise<unknown>;
+    getSessionByKey?: (sessionKey: string) => Promise<unknown>;
+    call?: (...args: unknown[]) => Promise<unknown>;
+  };
+  delete client.isConnected;
+  delete client.connect;
+  delete client.listAgents;
+  delete client.patchSessionModel;
+  delete client.getSessionByKey;
+  delete client.call;
   getOpenClawClient().disconnect();
   const cleanupTimer = (globalThis as Record<string, unknown>).__openclaw_cache_cleanup_timer__;
   if (cleanupTimer) {
@@ -104,11 +123,35 @@ function stubGatewayClient(options?: { allowDispatch?: boolean }) {
     isConnected: () => boolean;
     connect: () => Promise<void>;
     listAgents: () => Promise<unknown[]>;
+    patchSessionModel: (sessionKey: string, model: string) => Promise<unknown>;
+    getSessionByKey: (sessionKey: string) => Promise<unknown>;
     call: (...args: unknown[]) => Promise<unknown>;
   };
+  let boundModel = 'openai-codex/gpt-5.4';
   client.isConnected = () => true;
   client.connect = async () => undefined;
   client.listAgents = async () => [];
+  client.patchSessionModel = async (sessionKey: string, model: string) => {
+    boundModel = model;
+    const [provider, ...rest] = model.split('/');
+    return {
+      key: sessionKey,
+      resolved: { modelProvider: provider, model: rest.join('/') },
+    };
+  };
+  client.getSessionByKey = async (sessionKey: string) => {
+    const [provider, ...rest] = boundModel.split('/');
+    return {
+      key: sessionKey,
+      sessionId: `runtime-${sessionKey}`,
+      modelProvider: provider,
+      model: rest.join('/'),
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    };
+  };
   client.call = async (...args: unknown[]) => {
     if (options?.allowDispatch && args[0] === 'chat.send') {
       return {};

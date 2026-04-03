@@ -1,7 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import { queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { enforceBudgetPolicy, recordAutopilotEstimatedCost } from '@/lib/costs/budget-policy';
 import { recordCostEvent } from '@/lib/costs/tracker';
+import { getAutopilotDefaultModel } from '@/lib/openclaw/model-policy';
 import { emitAutopilotActivity } from './activity';
 import { runIdeationCycle } from './ideation';
 import { recalculateAndBroadcast } from './health-score';
@@ -54,6 +56,7 @@ ${learnedPreferences ? `## Learned Preferences\n${learnedPreferences}` : ''}`;
 export async function runResearchCycle(productId: string, existingCycleId?: string, chainIdeation = false): Promise<string> {
   const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
   if (!product) throw new Error(`Product ${productId} not found`);
+  const model = getAutopilotDefaultModel();
 
   const prefModel = queryOne<{ learned_preferences_md: string }>(
     'SELECT learned_preferences_md FROM preference_models WHERE product_id = ? ORDER BY last_updated DESC LIMIT 1',
@@ -92,9 +95,18 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
       // For each program variant, run a research prompt
       const allReports: Array<{ report: unknown; variantId: string | null; variantName: string | null }> = [];
       let totalTokens = 0;
-      let lastModel = '';
 
       for (const programEntry of programs) {
+        const budget = enforceBudgetPolicy({
+          action: 'research',
+          workspaceId: product.workspace_id,
+          productId,
+          model,
+        });
+        if (!budget.ok) {
+          throw new Error(budget.message || 'Research blocked by Mission Control budget policy.');
+        }
+
         // Override the product's program with the variant content for this run
         const effectiveProduct = { ...product, product_program: programEntry.program };
         const prompt = buildResearchPrompt(effectiveProduct, prefModel?.learned_preferences_md);
@@ -126,13 +138,19 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
         broadcast({ type: 'research_phase', payload: { productId, cycleId, phase: 'llm_polling' } });
 
         const { data: report, model: responseModel, usage } = await completeJSON(prompt, {
+          model,
           systemPrompt: 'You are a product research agent. Analyze the product and respond with a JSON research report only.',
           timeoutMs: 300_000,
         });
 
         allReports.push({ report, variantId: programEntry.variantId, variantName: programEntry.variantName });
         totalTokens += usage.totalTokens;
-        lastModel = responseModel;
+        const estimatedCostUsd = recordAutopilotEstimatedCost({
+          model: responseModel,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          requestCount: 1,
+        });
 
         recordCostEvent({
           product_id: productId,
@@ -142,7 +160,11 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
           model: responseModel,
           tokens_input: usage.promptTokens,
           tokens_output: usage.completionTokens,
-          cost_usd: 0,
+          cost_usd: estimatedCostUsd || 0,
+          metadata: JSON.stringify({
+            accounting_state: estimatedCostUsd == null ? 'blocked_unpriced' : 'estimated',
+            policy_model: model,
+          }),
         });
       }
 

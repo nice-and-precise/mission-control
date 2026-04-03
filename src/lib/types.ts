@@ -105,6 +105,9 @@ export interface Task {
   idea_id?: string;
   estimated_cost_usd?: number;
   actual_cost_usd?: number;
+  reserved_cost_usd?: number;
+  budget_status?: BudgetStatus;
+  budget_block_reason?: string;
   repo_url?: string;
   repo_branch?: string;
   pr_url?: string;
@@ -179,6 +182,11 @@ export interface Workspace {
   slug: string;
   description?: string;
   icon: string;
+  cost_cap_daily?: number;
+  cost_cap_monthly?: number;
+  reserved_cost_usd?: number;
+  budget_status?: BudgetStatus;
+  budget_block_reason?: string;
   created_at: string;
   updated_at: string;
 }
@@ -251,10 +259,24 @@ export interface OpenClawSession {
   id: string;
   agent_id: string;
   openclaw_session_id: string;
+  session_key?: string;
   channel?: string;
   status: string;
   session_type: 'persistent' | 'subagent';
   task_id?: string;
+  requested_model?: string;
+  bound_model?: string;
+  binding_status?: 'pending' | 'bound' | 'failed' | 'unbound';
+  binding_error?: string;
+  last_run_id?: string;
+  usage_external_id?: string;
+  usage_sync_status?: 'pending' | 'priced' | 'unpriced' | 'sync_error';
+  usage_sync_reason?: string;
+  usage_synced_at?: string;
+  usage_start_input_tokens?: number;
+  usage_start_output_tokens?: number;
+  usage_start_cache_read_tokens?: number;
+  usage_start_cache_write_tokens?: number;
   ended_at?: string;
   created_at: string;
   updated_at: string;
@@ -416,6 +438,12 @@ export interface OpenClawAgentTarget {
 export interface OpenClawProviderModel {
   id: string;
   label: string;
+  policy_allowed: boolean;
+  policy_reason?: string;
+  priced: boolean;
+  provider_family: string;
+  discovery_source: 'policy' | 'remote' | 'local' | 'fallback' | 'policy+remote' | 'policy+local' | 'policy+fallback';
+  discovered: boolean;
 }
 
 export interface OpenClawModelsResponse {
@@ -471,6 +499,7 @@ export type CheckpointType = 'auto' | 'manual' | 'crash_recovery';
 
 // Product Autopilot types
 export type ProductStatus = 'active' | 'paused' | 'archived';
+export type ProductWorkspaceMode = 'dedicated' | 'existing';
 
 export type IdeaCategory =
   | 'feature' | 'improvement' | 'ux' | 'performance' | 'integration'
@@ -491,6 +520,7 @@ export type CostEventType =
 export type CostCapType = 'per_cycle' | 'per_task' | 'daily' | 'monthly' | 'per_product_monthly';
 
 export type CostCapStatus = 'active' | 'paused' | 'exceeded';
+export type BudgetStatus = 'clear' | 'blocked';
 
 export type ScheduleType =
   | 'research' | 'ideation' | 'maybe_reevaluation' | 'seo_audit'
@@ -519,6 +549,8 @@ export type PRStatus = 'pending' | 'open' | 'merged' | 'closed';
 export interface Product {
   id: string;
   workspace_id: string;
+  workspace_mode?: ProductWorkspaceMode;
+  manages_workspace?: boolean | number;
   name: string;
   description?: string;
   repo_url?: string;
@@ -531,10 +563,16 @@ export interface Product {
   default_branch?: string;
   cost_cap_per_task?: number;
   cost_cap_monthly?: number;
+  reserved_cost_usd?: number;
+  budget_status?: BudgetStatus;
+  budget_block_reason?: string;
   health_weight_config?: string; // JSON: HealthWeightConfig
   batch_review_threshold?: number;
   created_at: string;
   updated_at: string;
+  workspace_name?: string;
+  workspace_slug?: string;
+  workspace_icon?: string;
 }
 
 // Health Score types
@@ -779,6 +817,28 @@ export interface CostEvent {
   cost_usd: number;
   metadata?: string; // JSON
   created_at: string;
+}
+
+export interface CostOverview {
+  today: number;
+  this_week: number;
+  this_month: number;
+  total: number;
+  reserved_total: number;
+  blocked_unknown_cost_count: number;
+  unpriced_build_runs_count: number;
+}
+
+export interface CostBreakdown {
+  by_event_type: Array<{ event_type: string; total: number; count: number }>;
+  by_product: Array<{ product_id: string; product_name: string; total: number; count: number }>;
+  by_agent: Array<{ agent_id: string; agent_name: string; total: number; count: number }>;
+  summary: {
+    actual_recorded_usd: number;
+    reserved_estimated_usd: number;
+    blocked_unknown_cost_count: number;
+    unpriced_build_runs_count: number;
+  };
 }
 
 export interface CostCap {
