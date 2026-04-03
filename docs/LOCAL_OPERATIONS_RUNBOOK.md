@@ -3,6 +3,7 @@
 Short local commands for this checkout.
 
 For the machine-local OpenClaw runtime owner contract, use [../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md](../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md).
+For Product Autopilot workspace setup and reset behavior, use [AUTOPILOT_SETUP.md](AUTOPILOT_SETUP.md).
 
 For updates on this Mac's local-prefix install, use `../scripts/update_openclaw_local_runtime.sh` from the workspace root instead of `openclaw update`. The helper reruns the official `install-cli.sh` flow against `~/.openclaw`.
 
@@ -25,6 +26,8 @@ sleep 8
 cd /Users/jordan/.openclaw/workspace/mission-control
 npm run dev
 ```
+
+If you add or restore `src/app/**` routes while `next dev` is already running and a page or API still returns `404`, fully restart `npm run dev` before treating it as a code bug. A long-lived dev process can keep serving an older route graph.
 
 If `localhost:4000` is already occupied, identify the listener first:
 
@@ -72,6 +75,94 @@ curl -i -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/health
 Expected result: HTTP `200` with JSON like `{"status":"ok",...}`.
 
 If `MC_API_TOKEN` is set in `.env.local`, direct `curl` requests to `/api/*` must include the bearer token. The browser UI still works without manual headers because same-origin browser requests are allowed by the auth middleware.
+
+## Autopilot Surface Check
+
+Use this after restoring or changing Product Autopilot routes:
+
+```bash
+cd /Users/jordan/.openclaw/workspace/mission-control
+
+TOKEN="$(python3 - <<'PY'
+from dotenv import dotenv_values
+vals = dotenv_values('.env.local')
+print(vals.get('MC_API_TOKEN', ''))
+PY
+)"
+
+curl -I http://localhost:4000/autopilot
+curl -I http://localhost:4000/activity
+
+PRODUCT_ID="$(curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Autopilot Smoke Product","description":"temporary smoke product","icon":"🧪"}' \
+  http://localhost:4000/api/products | jq -r '.id')"
+
+PRODUCT_JSON="$(curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/products/"$PRODUCT_ID")"
+
+WORKSPACE_ID="$(printf '%s' "$PRODUCT_JSON" | jq -r '.workspace_id')"
+
+printf '%s\n' "$PRODUCT_JSON" | jq '{id,name,workspace_id,workspace_mode,manages_workspace,workspace_name,workspace_slug}'
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/swipe/deck | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/health | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/costs | jq
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID" | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/workspaces | jq --arg wid "$WORKSPACE_ID" '[.[] | select(.id == $wid)] | length'
+```
+
+Expected result:
+
+- `/autopilot` and `/activity` return HTTP `200`
+- product create/read/health/cost/delete all succeed without `404`
+- new products default to `workspace_mode: "dedicated"` and a non-`default` workspace
+- the delete call hard-deletes the temp product instead of archiving it
+- the final workspace query returns `0` because the dedicated workspace was also removed
+
+## Product Workspace Modes
+
+Use these API shapes if you want to verify product creation behavior directly.
+
+Dedicated workspace, which is now the default:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Dedicated Smoke Product","icon":"🧪"}' \
+  http://localhost:4000/api/products | jq
+```
+
+Existing shared workspace:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Shared Smoke Product","icon":"🧪","workspace_mode":"existing","workspace_id":"default"}' \
+  http://localhost:4000/api/products | jq
+```
+
+Expected result:
+
+- dedicated mode returns a non-`default` `workspace_id` and `manages_workspace: 1`
+- existing mode keeps `workspace_id: "default"` and returns `manages_workspace: 0`
+
+## Reset a Mistaken Product
+
+UI path:
+
+1. Open `/autopilot`.
+2. Use the product card overflow menu if you know immediately that the product is wrong.
+3. Or open the product dashboard, click the gear icon, and use the `Danger Zone` delete action.
+4. Recreate the product with `Dedicated workspace` if you do not want build cards landing in `default`.
+
+Direct API reset:
+
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/products/<PRODUCT_ID> | jq
+```
+
+This now performs a hard delete for mistaken products and removes any product-owned tasks. Dedicated product workspaces are deleted with the product; shared workspaces are preserved.
 
 ## Runtime Owner Check
 

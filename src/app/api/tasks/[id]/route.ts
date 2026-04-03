@@ -17,8 +17,8 @@ import { syncGatewayAgentsToCatalog } from '@/lib/agent-catalog-sync';
 import { triggerWorkspaceMerge } from '@/lib/workspace-isolation';
 import { syncTaskPrDeliverable } from '@/lib/repo-task-handoff';
 import { evaluateAgentApprovalPolicy } from '@/lib/task-approval';
-import { movePathToTrash } from '@/lib/file-trash';
 import { endActiveTaskSessions } from '@/lib/task-session-cleanup';
+import { deleteTaskById } from '@/lib/tasks/delete-task';
 import { UpdateTaskSchema } from '@/lib/validation';
 import type { Task, UpdateTaskRequest, Agent, TaskDeliverable } from '@/lib/types';
 
@@ -684,86 +684,9 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const existing = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
-
-    if (!existing) {
+    const deleted = deleteTaskById(id);
+    if (!deleted) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-    }
-
-    const shouldDrainWorkflowQueue = ['review', 'verification'].includes(existing.status);
-    const workflow = shouldDrainWorkflowQueue ? getTaskWorkflow(id) : null;
-
-    // Reset agent status if this was their only active task
-    if (existing.assigned_agent_id) {
-      const otherActive = queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM tasks
-         WHERE assigned_agent_id = ?
-           AND status IN ('assigned', 'in_progress', 'testing', 'verification')
-           AND id != ?`,
-        [existing.assigned_agent_id, id]
-      );
-      if (!otherActive || otherActive.count === 0) {
-        run(
-          'UPDATE agents SET status = ?, updated_at = ? WHERE id = ? AND status = ?',
-          ['standby', new Date().toISOString(), existing.assigned_agent_id, 'working']
-        );
-      }
-    }
-
-    // Delete convoy and its sub-tasks if this is a convoy parent
-    const convoy = queryOne<{ id: string }>('SELECT id FROM convoys WHERE parent_task_id = ?', [id]);
-    if (convoy) {
-      // Delete sub-tasks first (CASCADE handles convoy_subtasks)
-      const subtaskIds = queryAll<{ task_id: string }>('SELECT task_id FROM convoy_subtasks WHERE convoy_id = ?', [convoy.id]);
-      for (const { task_id } of subtaskIds) {
-        run('DELETE FROM work_checkpoints WHERE task_id = ?', [task_id]);
-        run('DELETE FROM openclaw_sessions WHERE task_id = ?', [task_id]);
-        run('DELETE FROM events WHERE task_id = ?', [task_id]);
-        run('DELETE FROM tasks WHERE id = ?', [task_id]);
-      }
-      run('DELETE FROM agent_mailbox WHERE convoy_id = ?', [convoy.id]);
-      run('DELETE FROM convoys WHERE id = ?', [convoy.id]);
-    }
-
-    // Delete or nullify related records first (foreign key constraints)
-    // Note: task_activities and task_deliverables have ON DELETE CASCADE
-    run('DELETE FROM work_checkpoints WHERE task_id = ?', [id]);
-    run('DELETE FROM workspace_merges WHERE task_id = ?', [id]);
-    run('DELETE FROM workspace_ports WHERE task_id = ?', [id]);
-    run('DELETE FROM openclaw_sessions WHERE task_id = ?', [id]);
-    run('DELETE FROM events WHERE task_id = ?', [id]);
-    run('DELETE FROM skill_reports WHERE task_id = ?', [id]);
-    run('UPDATE agent_health SET task_id = NULL WHERE task_id = ?', [id]);
-    run('UPDATE cost_events SET task_id = NULL WHERE task_id = ?', [id]);
-    run('UPDATE content_inventory SET task_id = NULL WHERE task_id = ?', [id]);
-    run('UPDATE ideas SET task_id = NULL WHERE task_id = ?', [id]);
-    run('UPDATE product_skills SET created_by_task_id = NULL WHERE created_by_task_id = ?', [id]);
-    run('UPDATE rollback_history SET task_id = NULL WHERE task_id = ?', [id]);
-    // Conversations and Knowledge reference tasks - nullify or delete
-    run('UPDATE conversations SET task_id = NULL WHERE task_id = ?', [id]);
-    run('UPDATE knowledge_entries SET task_id = NULL WHERE task_id = ?', [id]);
-
-    // Now delete the task (cascades to task_activities and task_deliverables)
-    run('DELETE FROM tasks WHERE id = ?', [id]);
-
-    if (existing.workspace_path) {
-      try {
-        movePathToTrash(existing.workspace_path);
-      } catch (err) {
-        console.error('[Tasks] Failed to trash workspace after delete:', err);
-      }
-    }
-
-    // Broadcast deletion via SSE
-    broadcast({
-      type: 'task_deleted',
-      payload: { id },
-    });
-
-    if (shouldDrainWorkflowQueue && workflow) {
-      drainQueue(id, existing.workspace_id, workflow).catch(err =>
-        console.error('[Workflow] drainQueue after delete failed:', err)
-      );
     }
 
     return NextResponse.json({ success: true });
