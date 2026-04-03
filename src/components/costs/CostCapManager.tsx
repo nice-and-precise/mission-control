@@ -28,9 +28,7 @@ export function CostCapManager({ workspaceId, productId }: CostCapManagerProps) 
     }
   }, [workspaceId, productId]);
 
-  useEffect(() => {
-    loadCaps();
-  }, [loadCaps]);
+  useEffect(() => { loadCaps(); }, [loadCaps]);
 
   const handleCreate = async () => {
     try {
@@ -81,13 +79,11 @@ export function CostCapManager({ workspaceId, productId }: CostCapManagerProps) 
             <label className="block text-xs text-mc-text-secondary mb-1">Type</label>
             <select
               value={newCap.cap_type}
-              onChange={(e) => setNewCap((n) => ({ ...n, cap_type: e.target.value }))}
+              onChange={e => setNewCap(n => ({ ...n, cap_type: e.target.value }))}
               className="w-full bg-mc-bg-tertiary border border-mc-border rounded px-3 py-2 text-sm text-mc-text"
             >
               {Object.entries(capTypeLabels).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
+                <option key={k} value={k}>{v}</option>
               ))}
             </select>
           </div>
@@ -96,9 +92,7 @@ export function CostCapManager({ workspaceId, productId }: CostCapManagerProps) 
             <input
               type="number"
               value={newCap.limit_usd}
-              onChange={(e) =>
-                setNewCap((n) => ({ ...n, limit_usd: parseFloat(e.target.value) || 0 }))
-              }
+              onChange={e => setNewCap(n => ({ ...n, limit_usd: parseFloat(e.target.value) || 0 }))}
               className="w-full bg-mc-bg-tertiary border border-mc-border rounded px-3 py-2 text-sm text-mc-text"
               min="0"
               step="1"
@@ -119,27 +113,20 @@ export function CostCapManager({ workspaceId, productId }: CostCapManagerProps) 
         <div className="text-sm text-mc-text-secondary">No cost caps configured</div>
       ) : (
         <div className="space-y-2">
-          {caps.map((cap) => {
-            const pct =
-              cap.limit_usd > 0 ? Math.min((cap.current_spend_usd / cap.limit_usd) * 100, 100) : 0;
+          {caps.map(cap => {
+            const pct = cap.limit_usd > 0 ? Math.min((cap.current_spend_usd / cap.limit_usd) * 100, 100) : 0;
             const isWarning = pct >= 80;
             const isExceeded = pct >= 100;
             return (
               <div key={cap.id} className="flex items-center gap-3 p-3 bg-mc-bg rounded-lg">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium text-mc-text">
-                      {capTypeLabels[cap.cap_type] || cap.cap_type}
-                    </span>
-                    <span
-                      className={`text-xs px-1.5 py-0.5 rounded ${
-                        isExceeded
-                          ? 'bg-red-500/20 text-red-400'
-                          : isWarning
-                            ? 'bg-amber-500/20 text-amber-400'
-                            : 'bg-green-500/20 text-green-400'
-                      }`}
-                    >
+                    <span className="text-sm font-medium text-mc-text">{capTypeLabels[cap.cap_type] || cap.cap_type}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                      isExceeded ? 'bg-red-500/20 text-red-400' :
+                      isWarning ? 'bg-amber-500/20 text-amber-400' :
+                      'bg-green-500/20 text-green-400'
+                    }`}>
                       {isExceeded ? 'exceeded' : isWarning ? 'warning' : cap.status}
                     </span>
                   </div>

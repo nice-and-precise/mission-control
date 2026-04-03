@@ -109,24 +109,6 @@ export function ProductSettings({ product, onSave }: Props) {
         </div>
       )}
 
-      {(product.budget_status === 'blocked' || product.reserved_cost_usd) && (
-        <div className={`rounded-lg border px-4 py-3 text-sm ${
-          product.budget_status === 'blocked'
-            ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
-            : 'border-mc-border bg-mc-bg-secondary text-mc-text-secondary'
-        }`}>
-          <div className="font-medium text-mc-text">Budget Policy State</div>
-          <div className="mt-1">
-            Reserved estimated spend: ${Number(product.reserved_cost_usd || 0).toFixed(2)}
-          </div>
-          {product.budget_block_reason && (
-            <div className="mt-1">
-              Current block: {product.budget_block_reason}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Basic Info */}
       <div className="bg-mc-bg-secondary border border-mc-border rounded-lg p-4 space-y-4">
         <h3 className="text-sm font-medium text-mc-text-secondary uppercase tracking-wider">Basic Info</h3>
@@ -246,25 +228,25 @@ export function ProductSettings({ product, onSave }: Props) {
 
         <div className="grid grid-cols-3 gap-3">
           <div>
-            <label className={labelClass}>Task Reserve Cap ($)</label>
+            <label className={labelClass}>Cost Cap / Task ($)</label>
             <input
               type="number"
               value={form.cost_cap_per_task}
               onChange={e => setForm(f => ({ ...f, cost_cap_per_task: e.target.value }))}
               className={inputClass}
-              placeholder="15"
+              placeholder="No limit"
               min={0}
               step={0.5}
             />
           </div>
           <div>
-            <label className={labelClass}>Monthly Cap ($)</label>
+            <label className={labelClass}>Cost Cap / Month ($)</label>
             <input
               type="number"
               value={form.cost_cap_monthly}
               onChange={e => setForm(f => ({ ...f, cost_cap_monthly: e.target.value }))}
               className={inputClass}
-              placeholder="40"
+              placeholder="No limit"
               min={0}
               step={1}
             />
@@ -283,10 +265,6 @@ export function ProductSettings({ product, onSave }: Props) {
             />
           </div>
         </div>
-
-        <p className="text-xs text-mc-text-secondary">
-          Build dispatch now hard-blocks when task or monthly caps are missing or exceeded. These values are policy defaults, not provider-sourced facts.
-        </p>
       </div>
 
       {/* Health Score Weights */}
