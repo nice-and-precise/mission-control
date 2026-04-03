@@ -471,6 +471,7 @@ export type CheckpointType = 'auto' | 'manual' | 'crash_recovery';
 
 // Product Autopilot types
 export type ProductStatus = 'active' | 'paused' | 'archived';
+export type ProductWorkspaceMode = 'dedicated' | 'existing';
 
 export type IdeaCategory =
   | 'feature' | 'improvement' | 'ux' | 'performance' | 'integration'
@@ -519,6 +520,8 @@ export type PRStatus = 'pending' | 'open' | 'merged' | 'closed';
 export interface Product {
   id: string;
   workspace_id: string;
+  workspace_mode?: ProductWorkspaceMode;
+  manages_workspace?: boolean | number;
   name: string;
   description?: string;
   repo_url?: string;
@@ -535,6 +538,9 @@ export interface Product {
   batch_review_threshold?: number;
   created_at: string;
   updated_at: string;
+  workspace_name?: string;
+  workspace_slug?: string;
+  workspace_icon?: string;
 }
 
 // Health Score types

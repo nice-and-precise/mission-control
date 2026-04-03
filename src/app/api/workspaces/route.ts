@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { createWorkspaceRecord } from '@/lib/workspaces';
 import type { Workspace, WorkspaceStats, TaskStatus } from '@/lib/types';
-
-// Helper to generate slug from name
-function generateSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
 
 // GET /api/workspaces - List all workspaces with stats
 export async function GET(request: NextRequest) {
@@ -89,21 +82,12 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
-    const id = crypto.randomUUID();
-    const slug = generateSlug(name);
-    
-    // Check if slug already exists
-    const existing = db.prepare('SELECT id FROM workspaces WHERE slug = ?').get(slug);
-    if (existing) {
-      return NextResponse.json({ error: 'A workspace with this name already exists' }, { status: 400 });
-    }
-
-    db.prepare(`
-      INSERT INTO workspaces (id, name, slug, description, icon)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, name.trim(), slug, description || null, icon || '📁');
-
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id);
+    const workspace = createWorkspaceRecord({
+      name,
+      description: description || null,
+      icon: icon || '📁',
+      bootstrap: true,
+    }, db);
     return NextResponse.json(workspace, { status: 201 });
   } catch (error) {
     console.error('Failed to create workspace:', error);

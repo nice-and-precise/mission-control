@@ -1700,6 +1700,35 @@ const migrations: Migration[] = [
       `);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_runtime_leases_expires ON runtime_leases(expires_at)`);
     }
+  },
+  {
+    id: '033',
+    name: 'add_product_workspace_ownership',
+    up: (db) => {
+      console.log('[Migration 033] Adding product workspace ownership metadata...');
+
+      const productsInfo = db.prepare("PRAGMA table_info(products)").all() as { name: string }[];
+
+      if (!productsInfo.some(col => col.name === 'workspace_mode')) {
+        db.exec(`ALTER TABLE products ADD COLUMN workspace_mode TEXT DEFAULT 'existing'`);
+        console.log('[Migration 033] Added workspace_mode to products');
+      }
+
+      if (!productsInfo.some(col => col.name === 'manages_workspace')) {
+        db.exec(`ALTER TABLE products ADD COLUMN manages_workspace INTEGER DEFAULT 0`);
+        console.log('[Migration 033] Added manages_workspace to products');
+      }
+
+      db.exec(`
+        UPDATE products
+        SET workspace_mode = CASE
+          WHEN workspace_mode IS NULL OR trim(workspace_mode) = '' THEN 'existing'
+          ELSE workspace_mode
+        END
+      `);
+      db.exec(`UPDATE products SET manages_workspace = COALESCE(manages_workspace, 0)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_products_workspace_mode ON products(workspace_mode, manages_workspace)`);
+    }
   }
 ];
 

@@ -333,6 +333,8 @@ CREATE TABLE IF NOT EXISTS agent_mailbox (
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  workspace_mode TEXT DEFAULT 'existing' CHECK (workspace_mode IN ('dedicated', 'existing')),
+  manages_workspace INTEGER DEFAULT 0,
   name TEXT NOT NULL,
   description TEXT,
   repo_url TEXT,

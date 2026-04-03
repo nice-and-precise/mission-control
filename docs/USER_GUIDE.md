@@ -18,3 +18,8 @@ Start here if you want the shortest path to the right Mission Control doc.
 - [HOW-THE-PIPELINE-WORKS.md](HOW-THE-PIPELINE-WORKS.md) for the plain-language build pod workflow
 - [../ORCHESTRATION.md](../ORCHESTRATION.md) for the implementation-level workflow contract
 - [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) for the agent callback and completion-marker contract
+
+## Product Autopilot
+
+- [AUTOPILOT_SETUP.md](AUTOPILOT_SETUP.md) for creating a product correctly, choosing a dedicated workspace, and resetting a mistaken product
+- [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md) for the local create/delete validation commands
