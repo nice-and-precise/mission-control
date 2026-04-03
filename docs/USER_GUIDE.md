@@ -5,6 +5,7 @@ Start here if you want the shortest path to the right Mission Control doc.
 ## Fresh Clone or Handoff
 
 - [../README.md](../README.md) for the public quick-start
+- [FIRST_TIME_SETUP.md](FIRST_TIME_SETUP.md) for first-machine setup and model-choice guidance
 - [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md) for the reproducible verification gate
 - [../../docs/CLONE_TO_WORKING.md](../../docs/CLONE_TO_WORKING.md) for the full workspace-level setup path
 

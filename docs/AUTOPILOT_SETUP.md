@@ -65,12 +65,20 @@ For local Autopilot on this baseline:
 - treat `openclaw` as the execution target, not a provider override
 - verify `GET /api/openclaw/models` reports both `defaultAgentTarget` and `defaultProviderModel`
 - ensure the reported `defaultProviderModel` is in Mission Control's docs-backed allowlist and has pricing metadata
+- for first-time machine setup, use [FIRST_TIME_SETUP.md](FIRST_TIME_SETUP.md) before editing Mission Control env vars by hand
 
 Why this matters:
 
 - research and ideation execute through the `openclaw` agent target
 - Mission Control still needs a priced, policy-allowed provider model for budget and cost accounting
 - if the OpenClaw default provider model is not allowed or unpriced, Autopilot can fail before research or ideation completes
+
+Current Autopilot-compatible default provider models on this branch:
+
+- `openai-codex/gpt-5.4`
+- `opencode-go/kimi-k2.5`
+- `opencode-go/glm-5`
+- `opencode-go/minimax-m2.5`
 
 After deleting a mistaken product:
 

@@ -363,6 +363,11 @@ cp .env.example .env.local
 python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local
 ```
 
+New machine or first-time operator:
+
+- Start with [docs/FIRST_TIME_SETUP.md](docs/FIRST_TIME_SETUP.md) before reusing anyone else's OpenClaw config or Mission Control env file.
+- Choose your own provider auth and default models in OpenClaw with `openclaw onboard`, `openclaw configure`, and `openclaw models set ...`.
+
 Edit `.env.local`:
 
 ```env
@@ -396,6 +401,12 @@ OpenClaw compatibility notes on this baseline:
 - `/api/openclaw/models` separates agent targets from provider overrides so operators do not confuse the two contracts.
 - `/api/openclaw/sessions/{id}/history` is available as a read-only transcript surface, but oversized entries may still be omitted by OpenClaw's bounded history contract.
 - Detached OpenClaw work is visible through Mission Control's read-only background-task surface and the task modal's `Detached Work` tab, including degraded-ledger metadata when the CLI only returns JSON on `stderr` or times out.
+
+For first-time setup on a different machine:
+
+- OpenClaw's onboarding wizard is the recommended official setup path: <https://docs.openclaw.ai/cli/onboard>
+- OpenClaw model choice lives in the OpenClaw config and model catalog, not in Mission Control env vars: <https://docs.openclaw.ai/cli/models>
+- Mission Control Product Autopilot on this branch currently expects the OpenClaw `defaultProviderModel` to be one of the accounted models documented in [docs/FIRST_TIME_SETUP.md](docs/FIRST_TIME_SETUP.md)
 
 Open **http://localhost:4000** — you're in! 🎉
 
