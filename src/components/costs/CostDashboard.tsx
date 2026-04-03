@@ -28,6 +28,15 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
   const [productCaps, setProductCaps] = useState<Product | null>(null);
   const [savingCaps, setSavingCaps] = useState(false);
   const [capExceeded, setCapExceeded] = useState(false);
+  const monthlySpendWithReservations = overview ? overview.this_month + overview.reserved_total : 0;
+  const monthlyCap = productCaps?.cost_cap_monthly;
+  const hasMonthlyCap = monthlyCap != null;
+  const monthlyCapProgressPct =
+    !hasMonthlyCap
+      ? 0
+      : monthlyCap === 0
+        ? 100
+        : Math.min((monthlySpendWithReservations / monthlyCap) * 100, 100);
 
   const loadProductCaps = useCallback(async () => {
     if (!productId) return;
@@ -36,8 +45,10 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
       if (res.ok) {
         const product = await res.json() as Product;
         setProductCaps(product);
-        if (product.cost_cap_monthly && overview) {
+        if (product.cost_cap_monthly != null && overview) {
           setCapExceeded((overview.this_month + overview.reserved_total) >= product.cost_cap_monthly);
+        } else {
+          setCapExceeded(false);
         }
       }
     } catch (error) {
@@ -70,8 +81,10 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
 
   // Re-check cap exceeded when overview changes
   useEffect(() => {
-    if (productCaps?.cost_cap_monthly && overview) {
+    if (productCaps?.cost_cap_monthly != null && overview) {
       setCapExceeded((overview.this_month + overview.reserved_total) >= productCaps.cost_cap_monthly);
+    } else {
+      setCapExceeded(false);
     }
   }, [overview, productCaps]);
 
@@ -204,16 +217,16 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
           )}
 
           {/* Monthly spend vs cap progress bar */}
-          {productCaps.cost_cap_monthly && overview && (
+          {hasMonthlyCap && overview && (
             <div>
               <div className="flex justify-between text-xs text-mc-text-secondary mb-1">
                 <span>Monthly spend + reservations</span>
-                <span>{formatUsd(overview.this_month + overview.reserved_total)} / {formatUsd(productCaps.cost_cap_monthly)}</span>
+                <span>{formatUsd(monthlySpendWithReservations)} / {formatUsd(monthlyCap)}</span>
               </div>
               <div className="h-2 bg-mc-bg-tertiary rounded overflow-hidden">
                 <div
                   className={`h-full rounded ${capExceeded ? 'bg-amber-500' : 'bg-mc-accent-cyan/60'}`}
-                  style={{ width: `${Math.min((((overview.this_month + overview.reserved_total) / productCaps.cost_cap_monthly) * 100), 100)}%` }}
+                  style={{ width: `${monthlyCapProgressPct}%` }}
                 />
               </div>
             </div>
