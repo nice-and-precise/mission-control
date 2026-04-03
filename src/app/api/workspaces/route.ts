@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { createWorkspaceRecord } from '@/lib/workspaces';
 import type { Workspace, WorkspaceStats, TaskStatus } from '@/lib/types';
-
-// Helper to generate slug from name
-function generateSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
 
 // GET /api/workspaces - List all workspaces with stats
 export async function GET(request: NextRequest) {
@@ -83,27 +76,28 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { name, description, icon } = body;
+    const dailyCap = body.cost_cap_daily;
+    const monthlyCap = body.cost_cap_monthly;
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
     }
-
-    const db = getDb();
-    const id = crypto.randomUUID();
-    const slug = generateSlug(name);
-    
-    // Check if slug already exists
-    const existing = db.prepare('SELECT id FROM workspaces WHERE slug = ?').get(slug);
-    if (existing) {
-      return NextResponse.json({ error: 'A workspace with this name already exists' }, { status: 400 });
+    if (dailyCap !== undefined && dailyCap !== null && (typeof dailyCap !== 'number' || Number.isNaN(dailyCap) || dailyCap < 0)) {
+      return NextResponse.json({ error: 'cost_cap_daily must be a non-negative number' }, { status: 400 });
+    }
+    if (monthlyCap !== undefined && monthlyCap !== null && (typeof monthlyCap !== 'number' || Number.isNaN(monthlyCap) || monthlyCap < 0)) {
+      return NextResponse.json({ error: 'cost_cap_monthly must be a non-negative number' }, { status: 400 });
     }
 
-    db.prepare(`
-      INSERT INTO workspaces (id, name, slug, description, icon)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, name.trim(), slug, description || null, icon || '📁');
-
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id);
+    const db = getDb();
+    const workspace = createWorkspaceRecord({
+      name,
+      description: description || null,
+      icon: icon || '📁',
+      cost_cap_daily: dailyCap ?? undefined,
+      cost_cap_monthly: monthlyCap ?? undefined,
+      bootstrap: true,
+    }, db);
     return NextResponse.json(workspace, { status: 201 });
   } catch (error) {
     console.error('Failed to create workspace:', error);

@@ -91,6 +91,7 @@ const CostEventType = z.enum([
 ]);
 
 const ProductStatus = z.enum(['active', 'paused', 'archived']);
+const ProductWorkspaceMode = z.enum(['dedicated', 'existing']);
 
 export const CreateProductSchema = z.object({
   name: z.string().min(1, 'Name is required').max(200),
@@ -99,10 +100,13 @@ export const CreateProductSchema = z.object({
   live_url: z.string().url().optional().or(z.literal('')),
   product_program: z.string().max(50000).optional(),
   icon: z.string().max(10).optional(),
+  workspace_mode: ProductWorkspaceMode.optional(),
   workspace_id: z.string().optional(),
   settings: z.string().optional(),
   build_mode: z.enum(['auto_build', 'plan_first']).optional(),
   default_branch: z.string().max(200).optional(),
+  cost_cap_per_task: z.number().min(0).optional().nullable(),
+  cost_cap_monthly: z.number().min(0).optional().nullable(),
 });
 
 export const UpdateProductSchema = z.object({

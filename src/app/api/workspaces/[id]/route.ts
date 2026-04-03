@@ -37,6 +37,8 @@ export async function PATCH(
   try {
     const body = await request.json();
     const { name, description, icon } = body;
+    const dailyCap = body.cost_cap_daily;
+    const monthlyCap = body.cost_cap_monthly;
     
     const db = getDb();
     
@@ -44,6 +46,12 @@ export async function PATCH(
     const existing = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id);
     if (!existing) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+    }
+    if (dailyCap !== undefined && dailyCap !== null && (typeof dailyCap !== 'number' || Number.isNaN(dailyCap) || dailyCap < 0)) {
+      return NextResponse.json({ error: 'cost_cap_daily must be a non-negative number' }, { status: 400 });
+    }
+    if (monthlyCap !== undefined && monthlyCap !== null && (typeof monthlyCap !== 'number' || Number.isNaN(monthlyCap) || monthlyCap < 0)) {
+      return NextResponse.json({ error: 'cost_cap_monthly must be a non-negative number' }, { status: 400 });
     }
     
     // Build update query dynamically
@@ -61,6 +69,14 @@ export async function PATCH(
     if (icon !== undefined) {
       updates.push('icon = ?');
       values.push(icon);
+    }
+    if (dailyCap !== undefined) {
+      updates.push('cost_cap_daily = ?');
+      values.push(dailyCap);
+    }
+    if (monthlyCap !== undefined) {
+      updates.push('cost_cap_monthly = ?');
+      values.push(monthlyCap);
     }
     
     if (updates.length === 0) {
