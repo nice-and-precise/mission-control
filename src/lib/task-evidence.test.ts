@@ -23,11 +23,27 @@ import { DELETE as deleteTaskRoute } from '../app/api/tasks/[id]/route';
 import { POST as dispatchTaskRoute } from '../app/api/tasks/[id]/dispatch/route';
 
 const originalFetch = global.fetch;
+const TEST_DB_PATH = process.env.DATABASE_PATH || path.join(os.tmpdir(), `mission-control-tests-${process.pid}.sqlite`);
+process.env.DATABASE_PATH = TEST_DB_PATH;
 
 afterEach(() => {
   global.fetch = originalFetch;
   setGatewaySessionsResolverForTests(null);
   setGatewaySessionHistoryResolverForTests(null);
+  const client = getOpenClawClient() as unknown as {
+    isConnected?: () => boolean;
+    connect?: () => Promise<void>;
+    listAgents?: () => Promise<unknown[]>;
+    patchSessionModel?: (sessionKey: string, model: string) => Promise<unknown>;
+    getSessionByKey?: (sessionKey: string) => Promise<unknown>;
+    call?: (...args: unknown[]) => Promise<unknown>;
+  };
+  delete client.isConnected;
+  delete client.connect;
+  delete client.listAgents;
+  delete client.patchSessionModel;
+  delete client.getSessionByKey;
+  delete client.call;
   getOpenClawClient().disconnect();
   const cleanupTimer = (globalThis as Record<string, unknown>).__openclaw_cache_cleanup_timer__;
   if (cleanupTimer) {
@@ -1313,11 +1329,35 @@ test('runHealthCheckCycle auto-dispatches stale assigned tasks without logging z
     isConnected: () => boolean;
     connect: () => Promise<void>;
     listAgents: () => Promise<unknown[]>;
+    patchSessionModel: (sessionKey: string, model: string) => Promise<unknown>;
+    getSessionByKey: (sessionKey: string) => Promise<unknown>;
     call: (...args: unknown[]) => Promise<unknown>;
   };
+  let boundModel = 'openai-codex/gpt-5.4';
   client.isConnected = () => true;
   client.connect = async () => undefined;
   client.listAgents = async () => [];
+  client.patchSessionModel = async (sessionKey: string, model: string) => {
+    boundModel = model;
+    const [provider, ...rest] = model.split('/');
+    return {
+      key: sessionKey,
+      resolved: { modelProvider: provider, model: rest.join('/') },
+    };
+  };
+  client.getSessionByKey = async (sessionKey: string) => {
+    const [provider, ...rest] = boundModel.split('/');
+    return {
+      key: sessionKey,
+      sessionId: `runtime-${sessionKey}`,
+      modelProvider: provider,
+      model: rest.join('/'),
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    };
+  };
   client.call = async (...args: unknown[]) => {
     if (args[0] === 'chat.send') return {};
     throw new Error(`Unexpected gateway call: ${JSON.stringify(args)}`);

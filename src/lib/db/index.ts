@@ -8,8 +8,11 @@ import { ensureHealthCheckScheduled } from '@/lib/agent-health-scheduler';
 import { attachChatListener } from '@/lib/chat-listener';
 import { isRuntimeBootEnabled, RUNTIME_BOOT_ENV_FLAG } from '@/lib/runtime-boot';
 
-const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'mission-control.db');
 let runtimeSideEffectsInitializerForTests: (() => void | Promise<void>) | null = null;
+
+function getConfiguredDbPath(): string {
+  return process.env.DATABASE_PATH || path.join(process.cwd(), 'mission-control.db');
+}
 
 export function shouldBootRuntimeSideEffects(env: NodeJS.ProcessEnv = process.env): boolean {
   return isRuntimeBootEnabled(env);
@@ -33,6 +36,7 @@ let db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
   if (!db) {
+    const DB_PATH = getConfiguredDbPath();
     const isNewDb = !fs.existsSync(DB_PATH);
     
     db = new Database(DB_PATH);

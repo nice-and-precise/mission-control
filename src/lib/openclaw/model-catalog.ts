@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { getOpenClawClient } from './client';
+import { getMissionControlModelPolicy, listMissionControlPolicyModels, toPolicyOnlyProviderModel } from './model-policy';
 import type { OpenClawAgentTarget, OpenClawModelsResponse, OpenClawProviderModel } from '@/lib/types';
 
 const MAX_CONFIG_SIZE_BYTES = 1024 * 1024;
@@ -40,13 +41,9 @@ export interface OpenClawModelCatalog {
   source: 'remote' | 'local' | 'fallback';
 }
 
-const FALLBACK_PROVIDER_MODELS: OpenClawProviderModel[] = [
-  { id: 'anthropic/claude-sonnet-4-5', label: 'anthropic/claude-sonnet-4-5' },
-  { id: 'anthropic/claude-opus-4-5', label: 'anthropic/claude-opus-4-5' },
-  { id: 'anthropic/claude-haiku-4-5', label: 'anthropic/claude-haiku-4-5' },
-  { id: 'openai/gpt-4o', label: 'openai/gpt-4o' },
-  { id: 'openai/o1', label: 'openai/o1' },
-];
+const FALLBACK_PROVIDER_MODELS: OpenClawProviderModel[] = listMissionControlPolicyModels().map((policy) =>
+  toPolicyOnlyProviderModel(policy.id),
+);
 
 function uniqueSortedAgentTargets(targets: OpenClawAgentTarget[]): OpenClawAgentTarget[] {
   const seen = new Map<string, OpenClawAgentTarget>();
@@ -88,14 +85,14 @@ export function extractProviderModelsFromConfig(config: LocalOpenClawConfig | un
     for (const [providerName, provider] of Object.entries(config.models.providers)) {
       for (const model of provider.models || []) {
         const id = `${providerName}/${model.id}`;
-        models.push({ id, label: model.name?.trim() || id });
+        models.push(buildDiscoveredProviderModel(id, model.name?.trim() || id, 'local'));
       }
     }
   }
 
   if (config?.agents?.defaults?.models) {
     for (const [id, modelConfig] of Object.entries(config.agents.defaults.models)) {
-      models.push({ id, label: modelConfig.alias?.trim() || id });
+      models.push(buildDiscoveredProviderModel(id, modelConfig.alias?.trim() || id, 'local'));
     }
   }
 
@@ -139,7 +136,7 @@ export async function discoverRemoteModelCatalog(): Promise<OpenClawModelCatalog
       defaultAgentTarget: 'openclaw',
       defaultProviderModel: extractDefaultProviderModel(gatewayConfig?.config),
       agentTargets: normalizeAgentTargets(agentIds),
-      providerModels: extractProviderModelsFromConfig(gatewayConfig?.config),
+      providerModels: mergeProviderModels(extractProviderModelsFromConfig(gatewayConfig?.config), 'remote'),
       source: 'remote',
     };
   } catch (error) {
@@ -169,7 +166,7 @@ export function discoverLocalModelCatalog(): OpenClawModelCatalog | null {
       defaultAgentTarget: 'openclaw',
       defaultProviderModel: extractDefaultProviderModel(config),
       agentTargets: normalizeAgentTargets([]),
-      providerModels: extractProviderModelsFromConfig(config),
+      providerModels: mergeProviderModels(extractProviderModelsFromConfig(config), 'local'),
       source: 'local',
     };
   } catch (error) {
@@ -194,7 +191,7 @@ export async function loadOpenClawModelCatalog(mode: string): Promise<OpenClawMo
       defaultAgentTarget: 'openclaw',
       defaultProviderModel: undefined,
       agentTargets: normalizeAgentTargets([]),
-      providerModels: FALLBACK_PROVIDER_MODELS,
+      providerModels: mergeProviderModels(FALLBACK_PROVIDER_MODELS, 'fallback'),
       source: 'fallback',
     };
   }
@@ -207,9 +204,8 @@ export async function validateProviderModelOverride(model: string): Promise<void
     return;
   }
 
-  const catalog = await loadOpenClawModelCatalog('auto');
-  const allowed = new Set(catalog.providerModels.map((entry) => entry.id));
-  if (!allowed.has(model)) {
+  const policy = getMissionControlModelPolicy(model);
+  if (!policy.policy_allowed) {
     throw new Error(
       `Provider model override "${model}" is not allowed by the current OpenClaw agent policy. ` +
       `Use an agent target like "openclaw" or pick one of the configured provider models.`,
@@ -225,4 +221,63 @@ export function toOpenClawModelsResponse(catalog: OpenClawModelCatalog): OpenCla
     providerModels: catalog.providerModels,
     source: catalog.source,
   };
+}
+
+function buildDiscoveredProviderModel(
+  id: string,
+  label: string,
+  discoverySource: 'remote' | 'local' | 'fallback',
+): OpenClawProviderModel {
+  const policy = getMissionControlModelPolicy(id);
+  return {
+    id,
+    label,
+    policy_allowed: policy.policy_allowed,
+    policy_reason: policy.policy_reason,
+    priced: policy.priced,
+    provider_family: policy.provider_family,
+    discovery_source: discoverySource,
+    discovered: true,
+  };
+}
+
+function mergeProviderModels(
+  discoveredModels: OpenClawProviderModel[],
+  discoverySource: 'remote' | 'local' | 'fallback',
+): OpenClawProviderModel[] {
+  const merged = new Map<string, OpenClawProviderModel>();
+
+  for (const discovered of discoveredModels) {
+    const policy = getMissionControlModelPolicy(discovered.id);
+    merged.set(discovered.id, {
+      ...discovered,
+      policy_allowed: policy.policy_allowed,
+      policy_reason: policy.policy_reason,
+      priced: policy.priced,
+      provider_family: policy.provider_family,
+      discovery_source: policy.policy_allowed ? (`policy+${discoverySource}` as OpenClawProviderModel['discovery_source']) : discoverySource,
+      discovered: true,
+    });
+  }
+
+  for (const policyModel of listMissionControlPolicyModels()) {
+    if (policyModel.id === 'openai-codex/gpt-5.3-codex-spark') {
+      continue;
+    }
+    if (!merged.has(policyModel.id)) {
+      merged.set(policyModel.id, toPolicyOnlyProviderModel(policyModel.id));
+    }
+  }
+
+  const sparkDiscovered = merged.has('openai-codex/gpt-5.3-codex-spark');
+  if (sparkDiscovered) {
+    const sparkPolicy = getMissionControlModelPolicy('openai-codex/gpt-5.3-codex-spark');
+    merged.set('openai-codex/gpt-5.3-codex-spark', {
+      ...(merged.get('openai-codex/gpt-5.3-codex-spark') as OpenClawProviderModel),
+      policy_allowed: true,
+      policy_reason: sparkPolicy.policy_reason || 'Entitlement-dependent Codex Spark model discovered at runtime.',
+    });
+  }
+
+  return uniqueSortedProviderModels(Array.from(merged.values()));
 }

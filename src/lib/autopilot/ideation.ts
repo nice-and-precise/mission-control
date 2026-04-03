@@ -1,7 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import { queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { enforceBudgetPolicy, recordAutopilotEstimatedCost } from '@/lib/costs/budget-policy';
 import { recordCostEvent } from '@/lib/costs/tracker';
+import { getAutopilotDefaultModel } from '@/lib/openclaw/model-policy';
 import { emitAutopilotActivity } from './activity';
 import { completeJSON } from './llm';
 import { batchCheckSimilarity, storeEmbedding, checkSimilarity } from './similarity';
@@ -68,6 +70,7 @@ Respond with ONLY a JSON array of idea objects. No markdown, no code blocks, no 
 export async function runIdeationCycle(productId: string, cycleId?: string, existingIdeationId?: string): Promise<string> {
   const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
   if (!product) throw new Error(`Product ${productId} not found`);
+  const model = getAutopilotDefaultModel();
 
   // Get latest research report
   let researchReport: string | null = null;
@@ -124,6 +127,16 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
       let totalTokensUsed = 0;
 
       for (const programEntry of programs) {
+        const budget = enforceBudgetPolicy({
+          action: 'ideation',
+          workspaceId: product.workspace_id,
+          productId,
+          model,
+        });
+        if (!budget.ok) {
+          throw new Error(budget.message || 'Ideation blocked by Mission Control budget policy.');
+        }
+
         const effectiveProduct = { ...product, product_program: programEntry.program };
         const variantLabel = programEntry.variantName ? ` [${programEntry.variantName}]` : '';
 
@@ -170,6 +183,7 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
         broadcast({ type: 'ideation_phase', payload: { productId, ideationId, phase: 'llm_polling' } });
 
         const { data: rawIdeas, model: responseModel, usage } = await completeJSON<unknown[]>(prompt, {
+          model,
           systemPrompt: 'You are a product ideation agent. Respond with a JSON array of idea objects only.',
           timeoutMs: 300_000,
         });
@@ -383,6 +397,12 @@ export async function storeIdeasFromPhaseData(
   }
 
   if (product) {
+    const estimatedCostUsd = llmUsage ? recordAutopilotEstimatedCost({
+      model: llmUsage.model,
+      promptTokens: llmUsage.promptTokens,
+      completionTokens: llmUsage.completionTokens,
+      requestCount: 1,
+    }) : null;
     recordCostEvent({
       product_id: productId,
       workspace_id: product.workspace_id,
@@ -391,7 +411,10 @@ export async function storeIdeasFromPhaseData(
       model: llmUsage?.model,
       tokens_input: llmUsage?.promptTokens || 0,
       tokens_output: llmUsage?.completionTokens || 0,
-      cost_usd: 0,
+      cost_usd: estimatedCostUsd || 0,
+      metadata: JSON.stringify({
+        accounting_state: estimatedCostUsd == null ? 'blocked_unpriced' : 'estimated',
+      }),
     });
   }
 

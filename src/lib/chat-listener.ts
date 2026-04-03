@@ -9,6 +9,7 @@ import { getOpenClawClient } from '@/lib/openclaw/client';
 import { createNote } from '@/lib/task-notes';
 import { broadcast } from '@/lib/events';
 import { parseAgentSignal, processAgentSignal } from '@/lib/agent-signals';
+import { rememberOpenClawRunId } from '@/lib/openclaw/session-runtime';
 import { isRuntimeBootEnabled } from '@/lib/runtime-boot';
 
 const GLOBAL_LISTENER_KEY = '__chat_listener_attached__';
@@ -66,6 +67,10 @@ export function attachChatListener(): void {
 
   client.on('chat_event', (payload: ChatEventPayload) => {
     if (!payload.sessionKey) return;
+
+    if (payload.runId) {
+      rememberOpenClawRunId(payload.sessionKey, payload.runId);
+    }
 
     // Only process final (complete) messages
     if (payload.state !== 'final') return;

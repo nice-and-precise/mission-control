@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryOne, queryAll, run } from '@/lib/db';
+import { enforceBudgetPolicy, syncReservedSpendTotals } from '@/lib/costs/budget-policy';
 import { getOpenClawClient } from '@/lib/openclaw/client';
+import { bindOpenClawSessionModel } from '@/lib/openclaw/session-runtime';
 import { broadcast } from '@/lib/events';
 import { getProjectsPath, getMissionControlUrl } from '@/lib/config';
+import { isOpenClawAgentTarget } from '@/lib/openclaw/model-catalog';
+import { getDispatchDefaultModelForRole } from '@/lib/openclaw/model-policy';
 import { getRelevantKnowledge, formatKnowledgeForDispatch } from '@/lib/learner';
 import { getTaskWorkflow, getWorkflowOwnerRoleForStatus } from '@/lib/workflow-engine';
 import { syncGatewayAgentsToCatalog } from '@/lib/agent-catalog-sync';
@@ -25,7 +29,7 @@ import {
   isRepoBackedTask,
   supportsPullRequestWorkflow,
 } from '@/lib/repo-task-handoff';
-import type { Task, Agent, Product, OpenClawSession, WorkflowStage, TaskImage } from '@/lib/types';
+import type { Task, Agent, OpenClawSession, WorkflowStage, TaskImage } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 interface RouteParams {
@@ -148,6 +152,37 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const now = new Date().toISOString();
+    const configuredModel = (agent.model || '').trim();
+    const effectiveDispatchModel = !configuredModel || isOpenClawAgentTarget(configuredModel)
+      ? getDispatchDefaultModelForRole(agent.role)
+      : configuredModel;
+    const budget = enforceBudgetPolicy({
+      action: 'dispatch',
+      workspaceId: task.workspace_id,
+      productId: task.product_id || undefined,
+      taskId: task.id,
+      model: effectiveDispatchModel,
+      reserveCostUsd: task.estimated_cost_usd || 0,
+    });
+    if (!budget.ok) {
+      const error = budget.message || 'Dispatch blocked by Mission Control budget policy.';
+      run(
+        `UPDATE tasks
+         SET planning_dispatch_error = ?,
+             status_reason = ?,
+             updated_at = ?
+         WHERE id = ?`,
+        [error, error, now, id]
+      );
+      const blockedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+      if (blockedTask) {
+        broadcast({ type: 'task_updated', payload: blockedTask });
+      }
+      return NextResponse.json(
+        { error, reason_code: budget.reasonCode, model: effectiveDispatchModel },
+        { status: 409 }
+      );
+    }
 
     // Check if dispatching to the master agent while there are other orchestrators available
     if (agent.is_master) {
@@ -248,26 +283,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
        WHERE id = ?`,
       [task.id, now, session.id]
     );
-
-    // Cost cap warning check
-    let costCapWarning: string | undefined;
-    if (task.product_id) {
-      const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [task.product_id]);
-      if (product?.cost_cap_monthly) {
-        const monthStart = new Date();
-        monthStart.setDate(1);
-        monthStart.setHours(0, 0, 0, 0);
-        const monthlySpend = queryOne<{ total: number }>(
-          `SELECT COALESCE(SUM(cost_usd), 0) as total FROM cost_events
-           WHERE product_id = ? AND created_at >= ?`,
-          [task.product_id, monthStart.toISOString()]
-        );
-        if (monthlySpend && monthlySpend.total >= product.cost_cap_monthly) {
-          costCapWarning = `Monthly cost cap reached: $${monthlySpend.total.toFixed(2)}/$${product.cost_cap_monthly.toFixed(2)}`;
-          console.warn(`[Dispatch] ${costCapWarning} for product ${product.name}`);
-        }
-      }
-    }
 
     // Build task message for agent
     const priorityEmoji = {
@@ -673,17 +688,155 @@ If you need help or clarification, ask the orchestrator.`;
     // Inject any pending operator notes (queued via /btw chat)
     const { formatted: pendingNotes } = getPendingNotesForDispatch(id);
     const finalMessage = pendingNotes ? taskMessage + pendingNotes : taskMessage;
+    const dispatchEnvelope = buildTaskDispatchEnvelope(session.openclaw_session_id, finalMessage);
+
+    let boundSessionKey: string;
+    let boundModel: string;
+    try {
+      const binding = await bindOpenClawSessionModel({
+        session: {
+          ...session,
+          role: agent.role,
+          session_key_prefix: agent.session_key_prefix || null,
+        },
+        requestedModel: effectiveDispatchModel,
+        client,
+      });
+
+      if (binding.bindingStatus !== 'bound' || !binding.boundModel) {
+        const error = binding.bindingError || `OpenClaw could not confirm model binding for ${effectiveDispatchModel}.`;
+        run(`UPDATE tasks SET reserved_cost_usd = 0 WHERE id = ?`, [id]);
+        syncReservedSpendTotals(task.workspace_id, task.product_id || undefined);
+        run(
+          `UPDATE openclaw_sessions
+           SET session_key = ?,
+               requested_model = ?,
+               bound_model = ?,
+               binding_status = 'failed',
+               binding_error = ?,
+               usage_sync_status = 'pending',
+               usage_sync_reason = 'binding_failed',
+               updated_at = ?
+           WHERE id = ?`,
+          [
+            binding.sessionKey,
+            binding.requestedModel,
+            binding.boundModel || null,
+            error,
+            now,
+            session.id,
+          ],
+        );
+        run(
+          `UPDATE tasks
+           SET planning_dispatch_error = ?,
+               status_reason = ?,
+               updated_at = ?
+           WHERE id = ?`,
+          [error, error, now, id],
+        );
+        const blockedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+        if (blockedTask) {
+          broadcast({ type: 'task_updated', payload: blockedTask });
+        }
+        return NextResponse.json(
+          {
+            error,
+            requested_model: binding.requestedModel,
+            bound_model: binding.boundModel || null,
+            binding_status: 'failed',
+          },
+          { status: 409 },
+        );
+      }
+
+      run(
+        `UPDATE openclaw_sessions
+         SET session_key = ?,
+             requested_model = ?,
+             bound_model = ?,
+             binding_status = 'bound',
+             binding_error = NULL,
+             last_run_id = NULL,
+             usage_external_id = NULL,
+             usage_sync_status = 'pending',
+             usage_sync_reason = NULL,
+             usage_synced_at = NULL,
+             usage_start_input_tokens = ?,
+             usage_start_output_tokens = ?,
+             usage_start_cache_read_tokens = ?,
+             usage_start_cache_write_tokens = ?,
+             updated_at = ?
+         WHERE id = ?`,
+        [
+          binding.sessionKey,
+          binding.requestedModel,
+          binding.boundModel,
+          binding.usageStart.inputTokens,
+          binding.usageStart.outputTokens,
+          binding.usageStart.cacheReadTokens,
+          binding.usageStart.cacheWriteTokens,
+          now,
+          session.id,
+        ],
+      );
+
+      boundSessionKey = binding.sessionKey;
+      boundModel = binding.boundModel;
+    } catch (err) {
+      const error = `OpenClaw model binding failed: ${(err as Error).message}`;
+      run(`UPDATE tasks SET reserved_cost_usd = 0 WHERE id = ?`, [id]);
+      syncReservedSpendTotals(task.workspace_id, task.product_id || undefined);
+      run(
+        `UPDATE openclaw_sessions
+         SET session_key = ?,
+             requested_model = ?,
+             bound_model = NULL,
+             binding_status = 'failed',
+             binding_error = ?,
+             usage_sync_status = 'pending',
+             usage_sync_reason = 'binding_failed',
+             updated_at = ?
+         WHERE id = ?`,
+        [
+          buildAgentSessionKey(dispatchEnvelope.openclawSessionId, agent),
+          effectiveDispatchModel,
+          error,
+          now,
+          session.id,
+        ],
+      );
+      run(
+        `UPDATE tasks
+         SET planning_dispatch_error = ?,
+             status_reason = ?,
+             updated_at = ?
+         WHERE id = ?`,
+        [error, error, now, id],
+      );
+      const failedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+      if (failedTask) {
+        broadcast({ type: 'task_updated', payload: failedTask });
+      }
+      return NextResponse.json(
+        {
+          error,
+          requested_model: effectiveDispatchModel,
+          bound_model: null,
+          binding_status: 'failed',
+        },
+        { status: 409 },
+      );
+    }
 
     // Send message to agent's session using chat.send
     try {
-      const dispatchEnvelope = buildTaskDispatchEnvelope(session.openclaw_session_id, finalMessage);
-      const sessionKey = buildAgentSessionKey(dispatchEnvelope.openclawSessionId, agent);
       await client.call('chat.send', {
-        sessionKey,
+        sessionKey: boundSessionKey,
         message: dispatchEnvelope.message,
         idempotencyKey: `dispatch-${task.id}-${Date.now()}`
       });
-      expectReply(sessionKey, task.id);
+      expectReply(boundSessionKey, task.id);
 
       run(
         `UPDATE tasks
@@ -739,14 +892,22 @@ If you need help or clarification, ask the orchestrator.`;
         task_id: task.id,
         agent_id: agent.id,
         session_id: session.openclaw_session_id,
+        session_key: boundSessionKey,
         message: 'Task dispatched to agent',
-        ...(costCapWarning ? { cost_cap_warning: costCapWarning } : {}),
+        model: boundModel,
+        requested_model: effectiveDispatchModel,
+        bound_model: boundModel,
+        binding_status: 'bound',
+        reserved_estimated_usd: budget.reserveCostUsd,
+        budget_status: 'clear',
       });
     } catch (err) {
       console.error('Failed to send message to agent:', err);
       // Force-reconnect so the next dispatch attempt gets a fresh WebSocket
       const client2 = getOpenClawClient();
       client2.forceReconnect();
+      run(`UPDATE tasks SET reserved_cost_usd = 0 WHERE id = ?`, [id]);
+      syncReservedSpendTotals(task.workspace_id, task.product_id || undefined);
       // Reset task to 'assigned' so dispatch can be retried
       run(
         `UPDATE tasks SET status = 'assigned', planning_dispatch_error = ?, updated_at = datetime('now') WHERE id = ? AND status != 'done'`,

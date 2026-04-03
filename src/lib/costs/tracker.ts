@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { recalculateAndBroadcast } from '@/lib/autopilot/health-score';
+import { syncReservedSpendTotals } from './budget-policy';
 import type { CostEvent } from '@/lib/types';
 
 export function recordCostEvent(input: {
@@ -20,6 +21,12 @@ export function recordCostEvent(input: {
 }): CostEvent {
   const id = uuidv4();
   const workspaceId = input.workspace_id || 'default';
+  const taskContext = input.task_id
+    ? queryOne<{ workspace_id: string; product_id: string | null }>(
+      'SELECT workspace_id, product_id FROM tasks WHERE id = ?',
+      [input.task_id],
+    )
+    : null;
 
   run(
     `INSERT INTO cost_events (id, product_id, workspace_id, task_id, cycle_id, agent_id, event_type, provider, model, tokens_input, tokens_output, cost_usd, metadata)
@@ -35,10 +42,22 @@ export function recordCostEvent(input: {
 
   // Update task actual_cost_usd if task_id provided
   if (input.task_id) {
-    run(
-      `UPDATE tasks SET actual_cost_usd = COALESCE(actual_cost_usd, 0) + ? WHERE id = ?`,
-      [input.cost_usd, input.task_id]
-    );
+    if (input.event_type === 'build_task') {
+      run(
+        `UPDATE tasks
+         SET actual_cost_usd = COALESCE(actual_cost_usd, 0) + ?,
+             reserved_cost_usd = 0,
+             budget_status = 'clear',
+             budget_block_reason = NULL
+         WHERE id = ?`,
+        [input.cost_usd, input.task_id]
+      );
+    } else {
+      run(
+        `UPDATE tasks SET actual_cost_usd = COALESCE(actual_cost_usd, 0) + ? WHERE id = ?`,
+        [input.cost_usd, input.task_id]
+      );
+    }
   }
 
   // Update agent total_cost_usd if agent_id provided
@@ -56,6 +75,10 @@ export function recordCostEvent(input: {
     try { recalculateAndBroadcast(input.product_id); } catch (err) {
       console.error('[CostTracker] Health score recalc failed:', err);
     }
+  }
+
+  if (taskContext) {
+    syncReservedSpendTotals(taskContext.workspace_id, taskContext.product_id || undefined);
   }
 
   return event;

@@ -5,6 +5,7 @@ import { getMissionControlUrl } from '@/lib/config';
 import { buildCheckpointContext } from '@/lib/checkpoint';
 import { processAgentSignal } from '@/lib/agent-signals';
 import { resolveTaskRunOutcomeFromGatewayHistory } from '@/lib/openclaw/session-history';
+import { syncOpenClawBuildUsage } from '@/lib/openclaw/session-runtime';
 import { buildAgentSessionKey } from '@/lib/openclaw/routing';
 import { reconcileTaskRuntimeEvidence, shouldSuppressHealthEvidenceActivity } from '@/lib/task-evidence';
 import type { Agent, AgentHealth, AgentHealthState, Task } from '@/lib/types';
@@ -224,6 +225,10 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
   for (const { id } of activeTaskIds) {
     await reconcileTaskRuntimeEvidence(id);
   }
+
+  await syncOpenClawBuildUsage().catch((error) => {
+    console.error('[Health] build usage sync failed:', error);
+  });
 
   await recoverUnreconciledTaskRuns(now);
 

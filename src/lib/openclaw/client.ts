@@ -516,6 +516,22 @@ export class OpenClawClient extends EventEmitter {
     return this.call<unknown>('chat.history', { sessionKey });
   }
 
+  async getSessionByKey(sessionKey: string): Promise<OpenClawSessionInfo | undefined> {
+    const normalizedKey = sessionKey.trim();
+    if (!normalizedKey) return undefined;
+    return (await this.listSessions()).find((session) =>
+      session.key === normalizedKey || session.sessionId === normalizedKey || session.id === normalizedKey
+    );
+  }
+
+  async patchSessionModel(sessionKey: string, model: string): Promise<Record<string, unknown>> {
+    const result = await this.call<unknown>('sessions.patch', {
+      key: sessionKey,
+      model,
+    });
+    return result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  }
+
   async sendMessage(sessionId: string, content: string): Promise<void> {
     await this.call('sessions.send', { session_id: sessionId, content });
   }

@@ -1700,6 +1700,175 @@ const migrations: Migration[] = [
       `);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_runtime_leases_expires ON runtime_leases(expires_at)`);
     }
+  },
+  {
+    id: '033',
+    name: 'add_product_workspace_ownership',
+    up: (db) => {
+      console.log('[Migration 033] Adding product workspace ownership metadata...');
+
+      const productsInfo = db.prepare("PRAGMA table_info(products)").all() as { name: string }[];
+
+      if (!productsInfo.some(col => col.name === 'workspace_mode')) {
+        db.exec(`ALTER TABLE products ADD COLUMN workspace_mode TEXT DEFAULT 'existing'`);
+        console.log('[Migration 033] Added workspace_mode to products');
+      }
+
+      if (!productsInfo.some(col => col.name === 'manages_workspace')) {
+        db.exec(`ALTER TABLE products ADD COLUMN manages_workspace INTEGER DEFAULT 0`);
+        console.log('[Migration 033] Added manages_workspace to products');
+      }
+
+      db.exec(`
+        UPDATE products
+        SET workspace_mode = CASE
+          WHEN workspace_mode IS NULL OR trim(workspace_mode) = '' THEN 'existing'
+          ELSE workspace_mode
+        END
+      `);
+      db.exec(`UPDATE products SET manages_workspace = COALESCE(manages_workspace, 0)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_products_workspace_mode ON products(workspace_mode, manages_workspace)`);
+    }
+  },
+  {
+    id: '034',
+    name: 'add_budget_policy_state',
+    up: (db) => {
+      console.log('[Migration 034] Adding budget policy columns and defaults...');
+
+      const workspacesInfo = db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[];
+      if (!workspacesInfo.some(col => col.name === 'cost_cap_daily')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN cost_cap_daily REAL DEFAULT 20`);
+        console.log('[Migration 034] Added cost_cap_daily to workspaces');
+      }
+      if (!workspacesInfo.some(col => col.name === 'cost_cap_monthly')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN cost_cap_monthly REAL DEFAULT 100`);
+        console.log('[Migration 034] Added cost_cap_monthly to workspaces');
+      }
+      if (!workspacesInfo.some(col => col.name === 'reserved_cost_usd')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN reserved_cost_usd REAL DEFAULT 0`);
+        console.log('[Migration 034] Added reserved_cost_usd to workspaces');
+      }
+      if (!workspacesInfo.some(col => col.name === 'budget_status')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN budget_status TEXT DEFAULT 'clear'`);
+        console.log('[Migration 034] Added budget_status to workspaces');
+      }
+      if (!workspacesInfo.some(col => col.name === 'budget_block_reason')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN budget_block_reason TEXT`);
+        console.log('[Migration 034] Added budget_block_reason to workspaces');
+      }
+
+      const productsInfo = db.prepare("PRAGMA table_info(products)").all() as { name: string }[];
+      if (!productsInfo.some(col => col.name === 'reserved_cost_usd')) {
+        db.exec(`ALTER TABLE products ADD COLUMN reserved_cost_usd REAL DEFAULT 0`);
+        console.log('[Migration 034] Added reserved_cost_usd to products');
+      }
+      if (!productsInfo.some(col => col.name === 'budget_status')) {
+        db.exec(`ALTER TABLE products ADD COLUMN budget_status TEXT DEFAULT 'clear'`);
+        console.log('[Migration 034] Added budget_status to products');
+      }
+      if (!productsInfo.some(col => col.name === 'budget_block_reason')) {
+        db.exec(`ALTER TABLE products ADD COLUMN budget_block_reason TEXT`);
+        console.log('[Migration 034] Added budget_block_reason to products');
+      }
+
+      const tasksInfo = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+      if (!tasksInfo.some(col => col.name === 'reserved_cost_usd')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN reserved_cost_usd REAL DEFAULT 0`);
+        console.log('[Migration 034] Added reserved_cost_usd to tasks');
+      }
+      if (!tasksInfo.some(col => col.name === 'budget_status')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN budget_status TEXT DEFAULT 'clear'`);
+        console.log('[Migration 034] Added budget_status to tasks');
+      }
+      if (!tasksInfo.some(col => col.name === 'budget_block_reason')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN budget_block_reason TEXT`);
+        console.log('[Migration 034] Added budget_block_reason to tasks');
+      }
+
+      db.exec(`UPDATE workspaces SET cost_cap_daily = COALESCE(cost_cap_daily, 20)`);
+      db.exec(`UPDATE workspaces SET cost_cap_monthly = COALESCE(cost_cap_monthly, 100)`);
+      db.exec(`UPDATE workspaces SET reserved_cost_usd = COALESCE(reserved_cost_usd, 0)`);
+      db.exec(`UPDATE workspaces SET budget_status = COALESCE(NULLIF(trim(budget_status), ''), 'clear')`);
+      db.exec(`UPDATE products SET reserved_cost_usd = COALESCE(reserved_cost_usd, 0)`);
+      db.exec(`UPDATE products SET budget_status = COALESCE(NULLIF(trim(budget_status), ''), 'clear')`);
+      db.exec(`UPDATE tasks SET reserved_cost_usd = COALESCE(reserved_cost_usd, 0)`);
+      db.exec(`UPDATE tasks SET budget_status = COALESCE(NULLIF(trim(budget_status), ''), 'clear')`);
+    }
+  },
+  {
+    id: '035',
+    name: 'add_openclaw_binding_and_usage_state',
+    up: (db) => {
+      console.log('[Migration 035] Adding OpenClaw binding and usage state...');
+
+      const sessionsInfo = db.prepare("PRAGMA table_info(openclaw_sessions)").all() as { name: string }[];
+
+      if (!sessionsInfo.some(col => col.name === 'session_key')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN session_key TEXT`);
+        console.log('[Migration 035] Added session_key to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'requested_model')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN requested_model TEXT`);
+        console.log('[Migration 035] Added requested_model to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'bound_model')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN bound_model TEXT`);
+        console.log('[Migration 035] Added bound_model to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'binding_status')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN binding_status TEXT DEFAULT 'unbound'`);
+        console.log('[Migration 035] Added binding_status to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'binding_error')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN binding_error TEXT`);
+        console.log('[Migration 035] Added binding_error to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'last_run_id')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN last_run_id TEXT`);
+        console.log('[Migration 035] Added last_run_id to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'usage_external_id')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN usage_external_id TEXT`);
+        console.log('[Migration 035] Added usage_external_id to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'usage_sync_status')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN usage_sync_status TEXT DEFAULT 'pending'`);
+        console.log('[Migration 035] Added usage_sync_status to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'usage_sync_reason')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN usage_sync_reason TEXT`);
+        console.log('[Migration 035] Added usage_sync_reason to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'usage_synced_at')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN usage_synced_at TEXT`);
+        console.log('[Migration 035] Added usage_synced_at to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'usage_start_input_tokens')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN usage_start_input_tokens INTEGER DEFAULT 0`);
+        console.log('[Migration 035] Added usage_start_input_tokens to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'usage_start_output_tokens')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN usage_start_output_tokens INTEGER DEFAULT 0`);
+        console.log('[Migration 035] Added usage_start_output_tokens to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'usage_start_cache_read_tokens')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN usage_start_cache_read_tokens INTEGER DEFAULT 0`);
+        console.log('[Migration 035] Added usage_start_cache_read_tokens to openclaw_sessions');
+      }
+      if (!sessionsInfo.some(col => col.name === 'usage_start_cache_write_tokens')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN usage_start_cache_write_tokens INTEGER DEFAULT 0`);
+        console.log('[Migration 035] Added usage_start_cache_write_tokens to openclaw_sessions');
+      }
+
+      db.exec(`UPDATE openclaw_sessions SET binding_status = COALESCE(NULLIF(trim(binding_status), ''), 'unbound')`);
+      db.exec(`UPDATE openclaw_sessions SET usage_sync_status = COALESCE(NULLIF(trim(usage_sync_status), ''), 'pending')`);
+      db.exec(`UPDATE openclaw_sessions SET usage_start_input_tokens = COALESCE(usage_start_input_tokens, 0)`);
+      db.exec(`UPDATE openclaw_sessions SET usage_start_output_tokens = COALESCE(usage_start_output_tokens, 0)`);
+      db.exec(`UPDATE openclaw_sessions SET usage_start_cache_read_tokens = COALESCE(usage_start_cache_read_tokens, 0)`);
+      db.exec(`UPDATE openclaw_sessions SET usage_start_cache_write_tokens = COALESCE(usage_start_cache_write_tokens, 0)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_session_key ON openclaw_sessions(session_key)`);
+    }
   }
 ];
 
