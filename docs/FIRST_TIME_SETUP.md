@@ -73,6 +73,8 @@ Important OpenClaw behavior from the official docs:
 
 That means John can use whichever providers and models he wants in OpenClaw, as long as he authenticates them and includes them in his OpenClaw model catalog.
 
+For Mission Control specifically, that catalog is not abstract. Bootstrapped workspace agents need a provider model that is actually present in `openclaw models list`, not just theoretically allowed by Mission Control policy.
+
 ## Provider Auth Best Practice
 
 For a long-lived local Gateway, OpenClaw's official auth docs recommend API keys as the predictable default:
@@ -130,6 +132,27 @@ Why:
 - Mission Control should call the OpenClaw agent target, not a provider model directly
 - John should change provider/model defaults in OpenClaw with `openclaw models set ...`, not by editing Mission Control to point at `openai/...`, `anthropic/...`, or similar refs
 
+## Bootstrapped Agent Models
+
+Mission Control now seeds workspace agents from the local OpenClaw catalog instead of assuming one fixed builder model on every machine.
+
+What that means:
+
+- a bootstrapped Builder or Reviewer can prefer `openai-codex/gpt-5.4`, but only if that model is actually present in `openclaw models list`
+- if a preferred model is not discovered locally, Mission Control falls back to another policy-allowed, priced model from the local catalog
+- John should verify his intended working models are both:
+  - present in `openclaw models list`
+  - allowed and priced in `GET /api/openclaw/models`
+
+Recommended check:
+
+```bash
+openclaw models status
+openclaw models list
+TOKEN="${MC_API_TOKEN:-your-token}"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/models | jq
+```
+
 ## Important Autopilot Limitation Right Now
 
 Mission Control Product Autopilot currently separates:
@@ -158,6 +181,7 @@ What to verify:
 - `defaultAgentTarget` is `openclaw`
 - `defaultProviderModel` is present
 - the chosen `defaultProviderModel` is one of the current Autopilot-compatible models above
+- if John expects a specific builder model, that same model also appears as a discovered entry in `openclaw models list`
 
 ## Recommended First-Time Verification
 
@@ -191,10 +215,21 @@ If VS Code reopens to a blank or half-loaded window while Mission Control is run
 - if the logs mention missing MCP `manifest.json` files, clear stale user-level MCP cache or sync state and reopen VS Code
 - if chat extensions keep crashing the extension host, disable or update them before continuing
 
+## If a Task Shows "Assigned, But Blocked"
+
+If a Mission Control task is assigned but blocked with an OpenClaw model-binding error:
+
+- check the task's assigned workspace agent model in Mission Control
+- check `openclaw models list` on that machine
+- if the agent model is not present in the local OpenClaw catalog, update the agent to a locally discovered, policy-allowed model and retry dispatch
+
+This is a machine-local model/catalog mismatch, not usually a product-data problem.
+
 ## Sharing Checklist Before John Starts
 
 - John has his own OpenClaw install and credentials
 - John chose his own default model in OpenClaw
+- John's intended builder/reviewer model is present in `openclaw models list`
 - Mission Control still uses `AUTOPILOT_MODEL=openclaw`
 - `GET /api/openclaw/models` returns a compatible `defaultProviderModel`
 - John can pass the verification gate in [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md)

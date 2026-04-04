@@ -97,12 +97,14 @@ Pass criteria:
 - `/api/openclaw/models` returns separate `agentTargets` and `providerModels`
 - `/api/openclaw/models` reports `defaultAgentTarget: "openclaw"` for the local Autopilot baseline unless you intentionally changed the contract
 - `/api/openclaw/models.defaultProviderModel` is present and maps to a Mission Control policy-allowed, priced provider model
+- any builder or reviewer model you expect to dispatch with is also present in `openclaw models list`
 - `/api/openclaw/background-tasks` returns `tasks`, `status`, `sourceChannel`, and `warning`
 - `/api/openclaw/background-tasks` uses `status: "ok"` for true empty-success responses and `status: "degraded"` when the CLI timed out or only returned JSON on `stderr`
 - if you have a known session key or session ID, `/api/openclaw/sessions/{id}/history` returns a normalized transcript payload instead of `501`
 - the product smoke flow can create a temporary product, fetch its detail/deck/health/cost routes, and archive it again without `404`
 - after the delete call, the temporary product no longer appears in `GET /api/products`
 - if new `src/app/**` routes were added during an already-running `next dev` session, restart `npm run dev` before treating route-level `404`s as code regressions
+- if a task reaches `assigned` but shows a model-binding error, the fix path is to compare the task agent's configured model against `openclaw models list` and switch the agent to a locally discovered, policy-allowed model
 
 ## Documentation Gate
 
