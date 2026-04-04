@@ -45,6 +45,15 @@ function isWorkspaceReason(reason?: string | null): boolean {
   return !!reason && (reason.startsWith('workspace_') || reason.startsWith('missing_workspace_'));
 }
 
+function isProductReason(reason?: string | null): boolean {
+  return !!reason && (
+    reason === 'product_monthly_cap_exceeded'
+    || reason === 'task_cap_exceeded'
+    || reason === 'missing_product_monthly_cap'
+    || reason === 'missing_task_cap'
+  );
+}
+
 function buildBudgetBanner(args: {
   overview: CostOverview | null;
   workspaceCaps: Workspace | null;
@@ -208,6 +217,10 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
   }
 
   const budgetBanner = buildBudgetBanner({ overview, workspaceCaps, productCaps });
+  const productSectionReason = isProductReason(productCaps?.budget_block_reason)
+    ? productCaps?.budget_block_reason
+    : null;
+  const showProductSectionWarning = productCapExceeded || !!productSectionReason;
 
   return (
     <div className="space-y-6">
@@ -377,9 +390,9 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
         <div className="bg-mc-bg-secondary border border-mc-border rounded-lg p-5 space-y-4">
           <h3 className="font-semibold text-mc-text">Product Cost Caps</h3>
 
-          {(productCapExceeded || productCaps.budget_status === 'blocked') && (
+          {showProductSectionWarning && (
             <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-300">
-              {prettifyReason(productCaps.budget_block_reason) || 'Budget policy is blocking new spend-producing work for this product.'}
+              {prettifyReason(productSectionReason) || 'Product cap policy is blocking new spend-producing work for this product.'}
             </div>
           )}
 
