@@ -19,6 +19,20 @@ let healthCheckCycleInFlight: Promise<AgentHealth[]> | null = null;
 let healthCheckImplementationForTests: (() => Promise<AgentHealth[]>) | null = null;
 let unreconciledTaskRunRecoveryInFlight: Promise<number> | null = null;
 
+function parseObservedAt(value?: string | null): number | null {
+  if (!value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function latestObservedAt(...values: Array<string | null | undefined>): number | null {
+  const observed = values
+    .map((value) => parseObservedAt(value))
+    .filter((value): value is number => value !== null);
+  if (observed.length === 0) return null;
+  return Math.max(...observed);
+}
+
 /**
  * Check health state for a single agent.
  */
@@ -49,39 +63,48 @@ export function checkAgentHealth(agentId: string): AgentHealthState {
   if (!activeTask) return 'idle';
 
   // Check if OpenClaw session is still alive
-  const session = queryOne<{ status: string }>(
+  const session = queryOne<{ status: string; updated_at: string | null }>(
     `SELECT status
+            , updated_at
      FROM openclaw_sessions
      WHERE agent_id = ?
-       AND task_id = ?
+       AND active_task_id = ?
        AND status = 'active'
        AND session_type != 'subagent'
      LIMIT 1`,
     [agentId, activeTask.id]
   );
 
+  let runtimeActivityAt = session?.updated_at || null;
   if (!session) {
     // Check for any active session (task might not be linked yet)
-    const anySession = queryOne<{ status: string }>(
+    const anySession = queryOne<{ status: string; updated_at: string | null }>(
       `SELECT status
+              , updated_at
        FROM openclaw_sessions
        WHERE agent_id = ?
          AND status = 'active'
          AND session_type != 'subagent'
+       ORDER BY updated_at DESC
        LIMIT 1`,
       [agentId]
     );
     if (!anySession) return 'zombie';
+    runtimeActivityAt = anySession.updated_at || null;
   }
 
-  // Check last REAL activity (exclude health check logs — they reset the clock and prevent stuck detection)
+  // Treat live session freshness as real activity too. OpenClaw's Sessions API exposes
+  // per-session updatedAt, and the local session mirror updates updated_at whenever fresh
+  // run traffic arrives. Long-running tasks with sparse task_activities should stay
+  // healthy while the runtime session is still moving.
   const lastActivity = queryOne<{ created_at: string }>(
     `SELECT created_at FROM task_activities WHERE task_id = ? AND message NOT LIKE 'Agent health:%' ORDER BY created_at DESC LIMIT 1`,
     [activeTask.id]
   );
 
-  if (lastActivity) {
-    const minutesSince = (Date.now() - new Date(lastActivity.created_at).getTime()) / 60000;
+  const lastObservedAt = latestObservedAt(lastActivity?.created_at, runtimeActivityAt);
+  if (lastObservedAt !== null) {
+    const minutesSince = (Date.now() - lastObservedAt) / 60000;
     if (minutesSince > STUCK_THRESHOLD_MINUTES) return 'stuck';
     if (minutesSince > STALL_THRESHOLD_MINUTES) return 'stalled';
   } else {
@@ -218,7 +241,12 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
   const activeTaskIds = queryAll<{ id: string }>(
     `SELECT DISTINCT t.id
      FROM tasks t
-     JOIN openclaw_sessions os ON os.task_id = t.id AND os.status = 'active'
+     JOIN openclaw_sessions os
+       ON (
+         (COALESCE(os.session_type, 'persistent') = 'subagent' AND os.task_id = t.id)
+         OR (COALESCE(os.session_type, 'persistent') != 'subagent' AND os.active_task_id = t.id)
+       )
+      AND os.status = 'active'
      WHERE t.status IN ('assigned', 'in_progress', 'testing', 'review', 'verification')`
   );
 
@@ -257,7 +285,11 @@ async function sweepOrphanedAssignedTasks(now: string): Promise<void> {
      WHERE status = 'assigned' 
        AND planning_complete = 1 
        AND NOT EXISTS (
-         SELECT 1 FROM openclaw_sessions os WHERE os.task_id = tasks.id
+         SELECT 1
+         FROM openclaw_sessions os
+         WHERE os.active_task_id = tasks.id
+           AND os.status = 'active'
+           AND COALESCE(os.session_type, 'persistent') != 'subagent'
        )
        AND (julianday('now') - julianday(updated_at)) * 1440 > ?`,
     [ASSIGNED_STALE_MINUTES]
@@ -316,7 +348,7 @@ function shouldSuppressPendingDispatchHealthNoise(
   const activeRootSessionCount = queryOne<{ count: number }>(
     `SELECT COUNT(*) AS count
      FROM openclaw_sessions
-     WHERE task_id = ?
+     WHERE active_task_id = ?
        AND session_type != 'subagent'
        AND status = 'active'`,
     [task.id],
@@ -570,7 +602,14 @@ export async function nudgeAgent(agentId: string): Promise<{ success: boolean; e
 
   // Kill current session
   run(
-    `UPDATE openclaw_sessions SET status = 'ended', ended_at = ?, updated_at = ? WHERE agent_id = ? AND status = 'active'`,
+    `UPDATE openclaw_sessions
+     SET status = 'ended',
+         active_task_id = NULL,
+         ended_at = ?,
+         updated_at = ?
+     WHERE agent_id = ?
+       AND status = 'active'
+       AND COALESCE(session_type, 'persistent') != 'subagent'`,
     [now, now, agentId]
   );
 

@@ -1869,6 +1869,30 @@ const migrations: Migration[] = [
       db.exec(`UPDATE openclaw_sessions SET usage_start_cache_write_tokens = COALESCE(usage_start_cache_write_tokens, 0)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_session_key ON openclaw_sessions(session_key)`);
     }
+  },
+  {
+    id: '036',
+    name: 'add_openclaw_active_task_pointer',
+    up: (db) => {
+      console.log('[Migration 036] Adding active_task_id to openclaw_sessions...');
+
+      const sessionsInfo = db.prepare("PRAGMA table_info(openclaw_sessions)").all() as { name: string }[];
+      if (!sessionsInfo.some(col => col.name === 'active_task_id')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN active_task_id TEXT REFERENCES tasks(id)`);
+        console.log('[Migration 036] Added active_task_id to openclaw_sessions');
+      }
+
+      db.exec(`
+        UPDATE openclaw_sessions
+        SET active_task_id = task_id
+        WHERE status = 'active'
+          AND COALESCE(session_type, 'persistent') != 'subagent'
+          AND task_id IS NOT NULL
+          AND active_task_id IS NULL
+      `);
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_active_task ON openclaw_sessions(active_task_id)`);
+    }
   }
 ];
 

@@ -144,7 +144,7 @@ async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: st
        AND NOT EXISTS (
          SELECT 1
          FROM openclaw_sessions os
-         WHERE os.task_id = t.id
+         WHERE os.active_task_id = t.id
            AND os.status = 'active'
            AND os.session_type != 'subagent'
        )

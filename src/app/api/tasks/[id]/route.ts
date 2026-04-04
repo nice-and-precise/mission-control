@@ -24,6 +24,35 @@ import type { Task, UpdateTaskRequest, Agent, TaskDeliverable } from '@/lib/type
 
 export const dynamic = 'force-dynamic';
 
+function shouldDetachRootSessionsForTaskUpdate(args: {
+  existingStatus: string;
+  nextStatus?: string;
+  currentWorkflowOwnerRole: string | null;
+  nextWorkflowOwnerRole: string | null;
+  updatedByAgentId?: string;
+  requestedAssignmentChange: boolean;
+}): boolean {
+  const { existingStatus, nextStatus, currentWorkflowOwnerRole, nextWorkflowOwnerRole, updatedByAgentId, requestedAssignmentChange } = args;
+
+  if (requestedAssignmentChange) {
+    return true;
+  }
+
+  if (!nextStatus || nextStatus === existingStatus) {
+    return false;
+  }
+
+  if (updatedByAgentId || nextStatus === 'done' || nextStatus === 'inbox') {
+    return true;
+  }
+
+  if (!currentWorkflowOwnerRole) {
+    return false;
+  }
+
+  return !nextWorkflowOwnerRole || nextWorkflowOwnerRole.toLowerCase() !== currentWorkflowOwnerRole.toLowerCase();
+}
+
 // GET /api/tasks/[id] - Get a single task
 export async function GET(
   request: NextRequest,
@@ -415,11 +444,27 @@ export async function PATCH(
 
     run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
 
+    const shouldDetachCurrentRootSessions = shouldDetachRootSessionsForTaskUpdate({
+      existingStatus: existing.status,
+      nextStatus,
+      currentWorkflowOwnerRole,
+      nextWorkflowOwnerRole,
+      updatedByAgentId: validatedData.updated_by_agent_id,
+      requestedAssignmentChange,
+    });
+
     if (
+      shouldDetachCurrentRootSessions &&
+      !validatedData.updated_by_agent_id &&
       nextStatus &&
-      nextStatus !== existing.status &&
-      (validatedData.updated_by_agent_id || nextStatus === 'done' || nextStatus === 'inbox')
+      nextStatus !== existing.status
     ) {
+      console.warn(
+        `[Task PATCH] Missing updated_by_agent_id while detaching active task session for ${id} during ${existing.status} -> ${nextStatus}`,
+      );
+    }
+
+    if (shouldDetachCurrentRootSessions) {
       endActiveTaskSessions(id, now);
     }
 

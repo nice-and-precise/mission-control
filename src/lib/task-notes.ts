@@ -71,7 +71,8 @@ export async function deliverPendingNotesAtCheckpoint(taskId: string): Promise<n
   const session = queryOne<OpenClawSession>(
     `SELECT os.* FROM openclaw_sessions os
      JOIN agents a ON os.agent_id = a.id
-     WHERE os.task_id = ? AND os.status = 'active'
+     WHERE os.active_task_id = ? AND os.status = 'active'
+       AND COALESCE(os.session_type, 'persistent') != 'subagent'
      ORDER BY os.created_at DESC LIMIT 1`,
     [taskId]
   );
@@ -82,7 +83,11 @@ export async function deliverPendingNotesAtCheckpoint(taskId: string): Promise<n
     const taskAgent = queryOne<{ assigned_agent_id: string }>('SELECT assigned_agent_id FROM tasks WHERE id = ?', [taskId]);
     if (taskAgent?.assigned_agent_id) {
       activeSession = queryOne<OpenClawSession>(
-        `SELECT * FROM openclaw_sessions WHERE agent_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+        `SELECT * FROM openclaw_sessions
+         WHERE agent_id = ?
+           AND status = 'active'
+           AND COALESCE(session_type, 'persistent') != 'subagent'
+         ORDER BY created_at DESC LIMIT 1`,
         [taskAgent.assigned_agent_id]
       );
     }
@@ -142,7 +147,11 @@ export function markNotesDelivered(noteIds: string[]): void {
 export function getActiveSessionForTask(taskId: string): { session: OpenClawSession; sessionKey: string } | null {
   // Try task-specific session first
   let session = queryOne<OpenClawSession>(
-    `SELECT * FROM openclaw_sessions WHERE task_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+    `SELECT * FROM openclaw_sessions
+     WHERE active_task_id = ?
+       AND status = 'active'
+       AND COALESCE(session_type, 'persistent') != 'subagent'
+     ORDER BY created_at DESC LIMIT 1`,
     [taskId]
   );
 
@@ -151,7 +160,11 @@ export function getActiveSessionForTask(taskId: string): { session: OpenClawSess
     const task = queryOne<{ assigned_agent_id: string }>('SELECT assigned_agent_id FROM tasks WHERE id = ?', [taskId]);
     if (task?.assigned_agent_id) {
       session = queryOne<OpenClawSession>(
-        `SELECT * FROM openclaw_sessions WHERE agent_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+        `SELECT * FROM openclaw_sessions
+         WHERE agent_id = ?
+           AND status = 'active'
+           AND COALESCE(session_type, 'persistent') != 'subagent'
+         ORDER BY created_at DESC LIMIT 1`,
         [task.assigned_agent_id]
       );
     }

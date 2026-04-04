@@ -94,6 +94,7 @@ test('repo-backed builder instructions require changed files and PR deliverable 
     taskId: 'task-1',
     missionControlUrl: 'http://localhost:4000',
     nextStatus: 'testing',
+    updatedByAgentId: 'agent-builder-1',
     workspacePath: '/tmp/worktree',
     requirePullRequest: true,
     authInstruction: '**Mission Control callback auth:**\n- `Authorization: Bearer token`\n',
@@ -103,6 +104,7 @@ test('repo-backed builder instructions require changed files and PR deliverable 
   assert.match(instructions, /Register the key changed files as deliverables/);
   assert.match(instructions, /PATCH http:\/\/localhost:4000\/api\/tasks\/task-1/);
   assert.match(instructions, /"pr_url": "<github PR url>", "pr_status": "open"/);
+  assert.match(instructions, /"updated_by_agent_id": "agent-builder-1"/);
   assert.match(instructions, new RegExp(`"title": "${PR_DELIVERABLE_TITLE}"`));
   assert.match(instructions, /"path": "\/tmp\/worktree\/path\/to\/file"/);
 });
@@ -112,6 +114,7 @@ test('repo-backed builder instructions do not require a PR for non-GitHub remote
     taskId: 'task-1',
     missionControlUrl: 'http://localhost:4000',
     nextStatus: 'testing',
+    updatedByAgentId: 'agent-builder-2',
     workspacePath: '/tmp/worktree',
     requirePullRequest: false,
   });
@@ -119,6 +122,7 @@ test('repo-backed builder instructions do not require a PR for non-GitHub remote
   assert.match(instructions, /does not support GitHub PR creation/i);
   assert.doesNotMatch(instructions, /"pr_url": "<github PR url>", "pr_status": "open"/);
   assert.doesNotMatch(instructions, new RegExp(`"title": "${PR_DELIVERABLE_TITLE}"`));
+  assert.match(instructions, /"updated_by_agent_id": "agent-builder-2"/);
 });
 
 test('tester instructions require explicit callback completion and blocked fallback', () => {

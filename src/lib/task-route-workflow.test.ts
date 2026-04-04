@@ -106,21 +106,43 @@ function seedTaskRole(taskId: string, role: string, agentId: string) {
   );
 }
 
+function seedStageEvidence(taskId: string, agentId: string) {
+  run(
+    `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+     VALUES (?, ?, ?, 'completed', 'Completed implementation work', datetime('now'))`,
+    [crypto.randomUUID(), taskId, agentId],
+  );
+  run(
+    `INSERT INTO task_deliverables (id, task_id, deliverable_type, title, path, created_at)
+     VALUES (?, ?, 'file', 'src/index.ts', '/tmp/worktree/src/index.ts', datetime('now'))`,
+    [crypto.randomUUID(), taskId],
+  );
+}
+
 function seedSession(args: {
   agentId: string;
   taskId: string;
   openclawSessionId?: string;
   status?: string;
+  sessionType?: string;
+  activeTaskId?: string | null;
 }) {
+  const status = args.status || 'active';
+  const sessionType = args.sessionType || 'persistent';
+  const activeTaskId = args.activeTaskId === undefined
+    ? (status === 'active' && sessionType !== 'subagent' ? args.taskId : null)
+    : args.activeTaskId;
   run(
-    `INSERT INTO openclaw_sessions (id, agent_id, task_id, openclaw_session_id, channel, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'mission-control', ?, datetime('now'), datetime('now'))`,
+    `INSERT INTO openclaw_sessions (id, agent_id, task_id, active_task_id, openclaw_session_id, channel, status, session_type, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'mission-control', ?, ?, datetime('now'), datetime('now'))`,
     [
       crypto.randomUUID(),
       args.agentId,
       args.taskId,
+      activeTaskId,
       args.openclawSessionId || `mission-control-builder-agent-${args.agentId.slice(0, 8)}`,
-      args.status || 'active',
+      status,
+      sessionType,
     ],
   );
 }
@@ -486,4 +508,143 @@ test('planning approval queues a busy builder task instead of starting a second 
   assert.equal(queuedTask?.status, 'assigned');
   assert.equal(queuedTask?.assigned_agent_id, builderId);
   assert.match(queuedTask?.status_reason || '', /Waiting for Builder Agent to finish "Current builder task"/);
+});
+
+test('PATCH to testing detaches the builder root session even when updated_by_agent_id is missing', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const builderId = crypto.randomUUID();
+  const testerId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+  const builderSessionId = buildPersistentAgentSessionId({ id: builderId, name: 'Builder Agent' });
+
+  ensureWorkspace(workspaceId);
+  const templateId = seedStrictWorkflowTemplate(workspaceId);
+  seedAgent({ id: builderId, workspaceId, name: 'Builder Agent', role: 'builder', status: 'working' });
+  seedAgent({ id: testerId, workspaceId, name: 'Tester Agent', role: 'tester' });
+  seedTask({ id: taskId, workspaceId, templateId, status: 'in_progress', assignedAgentId: builderId, title: 'Builder handoff compatibility' });
+  seedTaskRole(taskId, 'builder', builderId);
+  seedTaskRole(taskId, 'tester', testerId);
+  seedStageEvidence(taskId, builderId);
+  seedSession({
+    agentId: builderId,
+    taskId,
+    openclawSessionId: builderSessionId,
+    status: 'active',
+  });
+  stubGatewayClient({ allowDispatch: true });
+
+  global.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    assert.match(url, new RegExp(`/api/tasks/${taskId}/dispatch$`));
+    return dispatchTaskRoute(
+      new NextRequest(url, {
+        method: 'POST',
+        headers: init?.headers,
+      }),
+      { params: Promise.resolve({ id: taskId }) },
+    );
+  };
+
+  const response = await patchTaskRoute(
+    new NextRequest(`http://localhost/api/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'testing' }),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+    { params: Promise.resolve({ id: taskId }) },
+  );
+
+  assert.equal(response.status, 200);
+
+  const builderSession = queryOne<{ status: string; active_task_id: string | null }>(
+    `SELECT status, active_task_id
+     FROM openclaw_sessions
+     WHERE agent_id = ? AND openclaw_session_id = ?`,
+    [builderId, builderSessionId],
+  );
+  const testerSession = queryOne<{ status: string; task_id: string | null; active_task_id: string | null }>(
+    `SELECT status, task_id, active_task_id
+     FROM openclaw_sessions
+     WHERE agent_id = ?
+       AND status = 'active'
+       AND COALESCE(session_type, 'persistent') != 'subagent'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [testerId],
+  );
+
+  assert.equal(builderSession?.status, 'ended');
+  assert.equal(builderSession?.active_task_id, null);
+  assert.equal(testerSession?.status, 'active');
+  assert.equal(testerSession?.task_id, taskId);
+  assert.equal(testerSession?.active_task_id, taskId);
+});
+
+test('PATCH to testing detaches the builder root session when updated_by_agent_id is present', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const builderId = crypto.randomUUID();
+  const testerId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+  const builderSessionId = buildPersistentAgentSessionId({ id: builderId, name: 'Builder Agent' });
+
+  ensureWorkspace(workspaceId);
+  const templateId = seedStrictWorkflowTemplate(workspaceId);
+  seedAgent({ id: builderId, workspaceId, name: 'Builder Agent', role: 'builder', status: 'working' });
+  seedAgent({ id: testerId, workspaceId, name: 'Tester Agent', role: 'tester' });
+  seedTask({ id: taskId, workspaceId, templateId, status: 'in_progress', assignedAgentId: builderId, title: 'Builder handoff explicit owner' });
+  seedTaskRole(taskId, 'builder', builderId);
+  seedTaskRole(taskId, 'tester', testerId);
+  seedStageEvidence(taskId, builderId);
+  seedSession({
+    agentId: builderId,
+    taskId,
+    openclawSessionId: builderSessionId,
+    status: 'active',
+  });
+  stubGatewayClient({ allowDispatch: true });
+
+  global.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    assert.match(url, new RegExp(`/api/tasks/${taskId}/dispatch$`));
+    return dispatchTaskRoute(
+      new NextRequest(url, {
+        method: 'POST',
+        headers: init?.headers,
+      }),
+      { params: Promise.resolve({ id: taskId }) },
+    );
+  };
+
+  const response = await patchTaskRoute(
+    new NextRequest(`http://localhost/api/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'testing', updated_by_agent_id: builderId }),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+    { params: Promise.resolve({ id: taskId }) },
+  );
+
+  assert.equal(response.status, 200);
+
+  const builderSession = queryOne<{ status: string; active_task_id: string | null }>(
+    `SELECT status, active_task_id
+     FROM openclaw_sessions
+     WHERE agent_id = ? AND openclaw_session_id = ?`,
+    [builderId, builderSessionId],
+  );
+  const testerSession = queryOne<{ status: string; active_task_id: string | null }>(
+    `SELECT status, active_task_id
+     FROM openclaw_sessions
+     WHERE agent_id = ?
+       AND status = 'active'
+       AND COALESCE(session_type, 'persistent') != 'subagent'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [testerId],
+  );
+
+  assert.equal(builderSession?.status, 'ended');
+  assert.equal(builderSession?.active_task_id, null);
+  assert.equal(testerSession?.status, 'active');
+  assert.equal(testerSession?.active_task_id, taskId);
 });

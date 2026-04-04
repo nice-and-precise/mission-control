@@ -263,7 +263,8 @@ export interface OpenClawSession {
   channel?: string;
   status: string;
   session_type: 'persistent' | 'subagent';
-  task_id?: string;
+  task_id?: string | null;
+  active_task_id?: string | null;
   requested_model?: string;
   bound_model?: string;
   binding_status?: 'pending' | 'bound' | 'failed' | 'unbound';

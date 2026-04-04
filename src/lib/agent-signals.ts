@@ -136,6 +136,10 @@ function markTaskSessionsEnded(taskId: string, now: string, sessionId?: string):
     run(
       `UPDATE openclaw_sessions
        SET status = CASE WHEN status = 'active' THEN 'ended' ELSE status END,
+           active_task_id = CASE
+             WHEN COALESCE(session_type, 'persistent') != 'subagent' THEN NULL
+             ELSE active_task_id
+           END,
            ended_at = COALESCE(ended_at, ?),
            updated_at = ?
        WHERE openclaw_session_id = ?`,
@@ -145,8 +149,13 @@ function markTaskSessionsEnded(taskId: string, now: string, sessionId?: string):
 
   run(
     `UPDATE openclaw_sessions
-     SET status = 'ended', ended_at = COALESCE(ended_at, ?), updated_at = ?
-     WHERE task_id = ? AND status = 'active'`,
+     SET status = 'ended',
+         active_task_id = NULL,
+         ended_at = COALESCE(ended_at, ?),
+         updated_at = ?
+     WHERE active_task_id = ?
+       AND status = 'active'
+       AND COALESCE(session_type, 'persistent') != 'subagent'`,
     [now, now, taskId]
   );
 }

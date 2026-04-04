@@ -63,6 +63,12 @@ export interface TaskEvidenceReconciliation extends TaskStreamState {
   recoveredDeliverableCount: number;
 }
 
+function isStoredSessionActivelyAttached(session: StoredTaskSession): boolean {
+  if (session.status !== 'active') return false;
+  if (session.session_type === 'subagent') return true;
+  return Boolean(session.active_task_id && session.active_task_id === session.task_id);
+}
+
 let gatewaySessionsResolverForTests: (() => Promise<unknown>) | null = null;
 
 export function setGatewaySessionsResolverForTests(
@@ -123,10 +129,10 @@ export function buildTaskStreamState(
   }
 
   const activeSessionKeys = storedSessions
-    .filter((session) => session.status === 'active')
+    .filter((session) => isStoredSessionActivelyAttached(session))
     .map((session) => buildStoredSessionKey(session));
   const terminalSessionKeys = storedSessions
-    .filter((session) => session.status !== 'active')
+    .filter((session) => !isStoredSessionActivelyAttached(session))
     .map((session) => buildStoredSessionKey(session));
 
   if (activeSessionKeys.length > 0) {
@@ -384,9 +390,16 @@ async function syncActiveStoredTaskSessions(
 
     run(
       `UPDATE openclaw_sessions
-       SET channel = ?, status = ?, ended_at = ?, updated_at = ?
+       SET channel = ?,
+           status = ?,
+           active_task_id = CASE
+             WHEN ? = 'active' THEN active_task_id
+             ELSE NULL
+           END,
+           ended_at = ?,
+           updated_at = ?
        WHERE id = ?`,
-      [nextChannel, mappedStatus, endedAt || null, now, session.id],
+      [nextChannel, mappedStatus, mappedStatus, endedAt || null, now, session.id],
     );
 
     session.channel = nextChannel || undefined;
@@ -850,6 +863,11 @@ export function shouldSuppressHealthEvidenceActivity(
   streamState?: Pick<TaskStreamState, 'status'> | null,
 ): boolean {
   if (!task?.id) return false;
+
+  if (streamState) {
+    return streamState.status !== 'streaming';
+  }
+
   const planningError = task.planning_dispatch_error?.trim();
   if (!planningError) {
     return false;
@@ -862,15 +880,15 @@ export function shouldSuppressHealthEvidenceActivity(
     return false;
   }
 
-  if (streamState) {
-    return streamState.status !== 'streaming';
-  }
-
   const activeTaskSession = queryOne<{ count: number }>(
     `SELECT COUNT(*) AS count
      FROM openclaw_sessions
-     WHERE task_id = ? AND status = 'active'`,
-    [task.id],
+     WHERE status = 'active'
+       AND (
+         (COALESCE(session_type, 'persistent') = 'subagent' AND task_id = ?)
+         OR (COALESCE(session_type, 'persistent') != 'subagent' AND active_task_id = ?)
+       )`,
+    [task.id, task.id],
   )?.count || 0;
 
   return activeTaskSession === 0;

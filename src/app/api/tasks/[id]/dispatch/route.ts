@@ -238,6 +238,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       run(
         `UPDATE openclaw_sessions
          SET status = 'ended',
+             active_task_id = NULL,
              ended_at = COALESCE(ended_at, ?),
              updated_at = ?
          WHERE agent_id = ?
@@ -250,9 +251,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const sessionId = uuidv4();
       
       run(
-        `INSERT INTO openclaw_sessions (id, agent_id, openclaw_session_id, channel, status, task_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [sessionId, agent.id, desiredOpenclawSessionId, 'mission-control', 'active', task.id, now, now]
+        `INSERT INTO openclaw_sessions (id, agent_id, openclaw_session_id, channel, status, task_id, active_task_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [sessionId, agent.id, desiredOpenclawSessionId, 'mission-control', 'active', task.id, task.id, now, now]
       );
 
       session = queryOne<OpenClawSession>(
@@ -279,9 +280,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // checks and session views reflect the real executing task.
     run(
       `UPDATE openclaw_sessions
-       SET task_id = ?, status = 'active', ended_at = NULL, updated_at = ?
+       SET task_id = ?, active_task_id = ?, status = 'active', ended_at = NULL, updated_at = ?
        WHERE id = ?`,
-      [task.id, now, session.id]
+      [task.id, task.id, now, session.id]
     );
 
     // Build task message for agent
@@ -325,7 +326,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         run(
           `UPDATE openclaw_sessions
-           SET status = 'ended', ended_at = COALESCE(ended_at, ?), updated_at = ?
+           SET status = 'ended', active_task_id = NULL, ended_at = COALESCE(ended_at, ?), updated_at = ?
            WHERE id = ?`,
           [now, now, session.id]
         );
@@ -527,6 +528,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         taskId: task.id,
         missionControlUrl,
         nextStatus,
+        updatedByAgentId: agent.id,
         workspacePath: taskProjectDir,
         requirePullRequest: supportsPullRequestWorkflow(task.repo_url),
         authInstruction: missionControlAuthInstruction,
