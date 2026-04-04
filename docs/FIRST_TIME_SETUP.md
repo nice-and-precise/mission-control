@@ -225,6 +225,26 @@ If a Mission Control task is assigned but blocked with an OpenClaw model-binding
 
 This is a machine-local model/catalog mismatch, not usually a product-data problem.
 
+## If a Task Blocks on Budget Caps
+
+If Mission Control shows a task as blocked by a cost cap even though recorded spend is still `$0`:
+
+- remember that Mission Control blocks on estimated dispatch reserve before execution starts
+- dedicated workspaces default to `$20` daily and `$100` monthly local caps on this baseline
+- large or XL tasks can exceed the workspace daily cap immediately
+- check the product Cost tab and confirm whether the blocker is the workspace cap or the product cap
+- use the Cost tab to raise the correct cap layer if John intentionally wants to allow the task
+
+When John needs provider/runtime context outside Mission Control's local accounting model, use these read-only diagnostics:
+
+```bash
+openclaw status --usage
+/usage cost
+/usage full
+```
+
+Those diagnostics are for provider/runtime context only. They do not replace Mission Control's own budget/accounting rules.
+
 ## Sharing Checklist Before John Starts
 
 - John has his own OpenClaw install and credentials
