@@ -2,6 +2,8 @@
 
 Use this as the shareable verification contract for a fresh clone, handoff, or local baseline refresh.
 
+For Jordan's current machine-specific deviations, use [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
+
 ## OpenClaw Gate
 
 Run from the workspace root unless noted otherwise.
@@ -49,6 +51,7 @@ Pass criteria:
 - the runtime preflight succeeds
 - the test suite passes
 - the production build completes successfully
+- if the Cost tab shows a block, operators can distinguish local Mission Control blocked estimated demand from provider/runtime diagnostics
 
 ## Runtime Sanity Check
 
@@ -84,6 +87,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$P
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/swipe/deck | jq
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/health | jq
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/costs | jq
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:4000/api/costs?workspace_id=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/$PRODUCT_ID | jq -r '.workspace_id')&product_id=$PRODUCT_ID" | jq
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID" | jq
 ```
 
@@ -97,14 +101,15 @@ Pass criteria:
 - `/api/openclaw/models` returns separate `agentTargets` and `providerModels`
 - `/api/openclaw/models` reports `defaultAgentTarget: "openclaw"` for the local Autopilot baseline unless you intentionally changed the contract
 - `/api/openclaw/models.defaultProviderModel` is present and maps to a Mission Control policy-allowed, priced provider model
-- any builder or reviewer model you expect to dispatch with is also present in `openclaw models list`
 - `/api/openclaw/background-tasks` returns `tasks`, `status`, `sourceChannel`, and `warning`
 - `/api/openclaw/background-tasks` uses `status: "ok"` for true empty-success responses and `status: "degraded"` when the CLI timed out or only returned JSON on `stderr`
 - if you have a known session key or session ID, `/api/openclaw/sessions/{id}/history` returns a normalized transcript payload instead of `501`
+- `/api/costs` returns `active_blocked_task_count` and `active_blocked_estimated_usd`
+- the product Cost tab shows workspace caps separately from product caps
+- if Mission Control is blocked while provider/runtime context is unclear, operators can still use `openclaw status --usage`, `/usage cost`, and `/usage full` as read-only diagnostics
 - the product smoke flow can create a temporary product, fetch its detail/deck/health/cost routes, and archive it again without `404`
 - after the delete call, the temporary product no longer appears in `GET /api/products`
 - if new `src/app/**` routes were added during an already-running `next dev` session, restart `npm run dev` before treating route-level `404`s as code regressions
-- if a task reaches `assigned` but shows a model-binding error, the fix path is to compare the task agent's configured model against `openclaw models list` and switch the agent to a locally discovered, policy-allowed model
 
 ## Documentation Gate
 
@@ -116,7 +121,7 @@ npm run docs:check
 
 Pass criteria:
 
-- the active portable docs do not hardcode operator-specific absolute machine paths
+- the active portable docs do not hardcode Jordan-specific absolute machine paths
 - local markdown links in the active portable docs resolve
 - the docs sanity gate exits `0`
 

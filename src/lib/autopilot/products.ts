@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDb, queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { reconcileBudgetStateForScope } from '@/lib/costs/budget-policy';
 import { createWorkspaceRecord, getWorkspaceByIdOrSlug } from '@/lib/workspaces';
 import type { Product, ProductWorkspaceMode } from '@/lib/types';
 
@@ -16,6 +17,8 @@ type CreateProductInput = {
   settings?: string;
   build_mode?: string;
   default_branch?: string;
+  cost_cap_per_task?: number | null;
+  cost_cap_monthly?: number | null;
 };
 
 const PRODUCT_SELECT = `
@@ -26,6 +29,9 @@ const PRODUCT_SELECT = `
   FROM products p
   LEFT JOIN workspaces w ON w.id = p.workspace_id
 `;
+
+const DEFAULT_PRODUCT_TASK_CAP_USD = 15;
+const DEFAULT_PRODUCT_MONTHLY_CAP_USD = 40;
 
 export function createProduct(input: CreateProductInput): Product {
   const db = getDb();
@@ -62,9 +68,10 @@ export function createProduct(input: CreateProductInput): Product {
     db.prepare(
       `INSERT INTO products (
          id, workspace_id, workspace_mode, manages_workspace, name, description, repo_url, live_url,
-         product_program, icon, settings, build_mode, default_branch, created_at, updated_at
+         product_program, icon, settings, build_mode, default_branch, cost_cap_per_task, cost_cap_monthly,
+         reserved_cost_usd, budget_status, budget_block_reason, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'clear', NULL, ?, ?)`
     ).run(
       id,
       workspaceId,
@@ -79,6 +86,8 @@ export function createProduct(input: CreateProductInput): Product {
       input.settings || null,
       input.build_mode || 'plan_first',
       input.default_branch || 'main',
+      input.cost_cap_per_task ?? DEFAULT_PRODUCT_TASK_CAP_USD,
+      input.cost_cap_monthly ?? DEFAULT_PRODUCT_MONTHLY_CAP_USD,
       now,
       now,
     );
@@ -142,7 +151,11 @@ export function updateProduct(id: string, updates: Partial<{
   values.push(id);
 
   run(`UPDATE products SET ${fields.join(', ')} WHERE id = ?`, values);
-  return getProduct(id);
+  const product = getProduct(id);
+  if (product) {
+    reconcileBudgetStateForScope(product.workspace_id, id);
+  }
+  return product;
 }
 
 export function archiveProduct(id: string): boolean {

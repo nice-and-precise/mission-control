@@ -19,7 +19,7 @@ What that does:
 
 - creates a product-specific Mission Control workspace
 - clones the default workflow templates into that workspace
-- bootstraps the core workspace agents there using policy-allowed models that are actually discovered in the local OpenClaw catalog when possible
+- bootstraps the core workspace agents there
 - points the product at that workspace so approved ideas create build tasks outside `default`
 
 Use `Use existing workspace` only when you intentionally want the product to share an existing queue such as `default`.
@@ -65,31 +65,20 @@ For local Autopilot on this baseline:
 - treat `openclaw` as the execution target, not a provider override
 - verify `GET /api/openclaw/models` reports both `defaultAgentTarget` and `defaultProviderModel`
 - ensure the reported `defaultProviderModel` is in Mission Control's docs-backed allowlist and has pricing metadata
-- for first-time machine setup, use [FIRST_TIME_SETUP.md](FIRST_TIME_SETUP.md) before editing Mission Control env vars by hand
 
 Why this matters:
 
 - research and ideation execute through the `openclaw` agent target
 - Mission Control still needs a priced, policy-allowed provider model for budget and cost accounting
 - if the OpenClaw default provider model is not allowed or unpriced, Autopilot can fail before research or ideation completes
+- provider quota windows and subscription dashboards are not the same thing as Mission Control workspace/product caps
+- when a task blocks on an estimated reserve, operators should cross-check provider/runtime context with `openclaw status --usage`, `/usage cost`, and `/usage full`
 
-Current Autopilot-compatible default provider models on this branch:
+Workspace cap reminder:
 
-- `openai-codex/gpt-5.4`
-- `opencode-go/kimi-k2.5`
-- `opencode-go/glm-5`
-- `opencode-go/minimax-m2.5`
-
-Important distinction:
-
-- Mission Control policy compatibility is not enough by itself
-- the model also needs to exist in the local machine's OpenClaw configured catalog, or a builder dispatch can fail with `model not allowed`
-
-Recommended preflight before approving real work:
-
-- `openclaw models list`
-- `GET /api/openclaw/models`
-- confirm the workspace builder model is locally discovered and policy-allowed
+- dedicated workspaces currently default to `$20` daily and `$100` monthly local caps
+- large/XL task estimates can exceed that before execution starts, even if recorded spend is still `$0`
+- the product Cost tab now shows both workspace caps and product caps so operators can adjust the correct layer
 
 After deleting a mistaken product:
 
@@ -97,16 +86,3 @@ After deleting a mistaken product:
 - `GET /api/products/{id}` should return `404`
 - if the product had a dedicated workspace, that workspace should also be gone
 - if the product used `default` or another shared workspace, that workspace should remain
-
-## Team Tab Expectations
-
-Before plan approval:
-
-- Planning can be complete while `Assigned roles` still shows `0`
-- planner-suggested agents can appear even though execution-role assignments are still empty
-
-After plan approval:
-
-- task roles should populate from the workspace-scoped agents
-- the task should dispatch to the builder with the builder's configured model
-- if the task shows `Assigned, but blocked`, check for a local model-binding mismatch rather than assuming the workflow is broken

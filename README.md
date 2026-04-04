@@ -286,7 +286,7 @@ Configure autonomous cycles per product:
 - 📋 Multi-agent planning specs
 - 🖼️ Task image attachments (UI mockups, screenshots)
 - 📡 Live real-time activity feed (SSE)
-- 💰 Actual spend, reserved dispatch cost, and hard budget caps
+- 💰 Actual spend, reserved dispatch cost, blocked estimated demand, and hard budget caps
 
 **Infrastructure**
 - 🔌 OpenClaw Gateway integration (WebSocket)
@@ -363,11 +363,6 @@ cp .env.example .env.local
 python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local
 ```
 
-New machine or first-time operator:
-
-- Start with [docs/FIRST_TIME_SETUP.md](docs/FIRST_TIME_SETUP.md) before reusing anyone else's OpenClaw config or Mission Control env file.
-- Choose your own provider auth and default models in OpenClaw with `openclaw onboard`, `openclaw configure`, and `openclaw models set ...`.
-
 Edit `.env.local`:
 
 ```env
@@ -393,21 +388,15 @@ openclaw gateway status --require-rpc --deep
 npm run dev
 ```
 
-On this baseline, the supported OpenClaw operator path is `../scripts/update_openclaw_local_runtime.sh`, not `openclaw update`, so the runtime stays owned by the local prefix under `~/.openclaw`. Local runtime details live in [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md).
+On Jordan's Mac, the supported OpenClaw operator path is `../scripts/update_openclaw_local_runtime.sh`, not `openclaw update`, so the runtime stays owned by the local prefix under `~/.openclaw`. Machine-local runtime details live in [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md).
 
 OpenClaw compatibility notes on this baseline:
 - Mission Control treats `openclaw` as the default agent target for Autopilot HTTP completions.
 - Mission Control resolves Autopilot budget and policy accounting against the OpenClaw catalog's `defaultProviderModel` when `AUTOPILOT_MODEL=openclaw`, so the OpenClaw default provider model must be both allowed by Mission Control policy and priced for accounting.
-- bootstrapped workspace agents now prefer policy-allowed models that are actually discovered in the local OpenClaw catalog, so two operators can use different local model sets without editing product data
 - `/api/openclaw/models` separates agent targets from provider overrides so operators do not confuse the two contracts.
+- Mission Control budget caps are local planning/accounting controls. When you need provider/runtime context outside that local ledger, use `openclaw status --usage`, `/usage cost`, and `/usage full`.
 - `/api/openclaw/sessions/{id}/history` is available as a read-only transcript surface, but oversized entries may still be omitted by OpenClaw's bounded history contract.
 - Detached OpenClaw work is visible through Mission Control's read-only background-task surface and the task modal's `Detached Work` tab, including degraded-ledger metadata when the CLI only returns JSON on `stderr` or times out.
-
-For first-time setup on a different machine:
-
-- OpenClaw's onboarding wizard is the recommended official setup path: <https://docs.openclaw.ai/cli/onboard>
-- OpenClaw model choice lives in the OpenClaw config and model catalog, not in Mission Control env vars: <https://docs.openclaw.ai/cli/models>
-- Mission Control Product Autopilot on this branch currently expects the OpenClaw `defaultProviderModel` to be one of the accounted models documented in [docs/FIRST_TIME_SETUP.md](docs/FIRST_TIME_SETUP.md)
 
 Open **http://localhost:4000** — you're in! 🎉
 
