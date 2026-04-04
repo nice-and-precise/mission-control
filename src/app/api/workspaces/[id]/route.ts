@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { reconcileBudgetStateForScope } from '@/lib/costs/budget-policy';
 
 // GET /api/workspaces/[id] - Get a single workspace
 export async function GET(
@@ -89,6 +90,8 @@ export async function PATCH(
     db.prepare(`
       UPDATE workspaces SET ${updates.join(', ')} WHERE id = ?
     `).run(...values);
+
+    reconcileBudgetStateForScope(id);
     
     const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id);
     return NextResponse.json(workspace);

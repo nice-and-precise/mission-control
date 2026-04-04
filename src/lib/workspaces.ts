@@ -28,8 +28,6 @@ interface CreateWorkspaceInput {
   name: string;
   description?: string | null;
   icon?: string | null;
-  cost_cap_daily?: number | null;
-  cost_cap_monthly?: number | null;
   bootstrap?: boolean;
 }
 
@@ -43,22 +41,9 @@ export function createWorkspaceRecord(
   const slug = generateUniqueWorkspaceSlug(db, name);
 
   db.prepare(
-    `INSERT INTO workspaces (
-       id, name, slug, description, icon, cost_cap_daily, cost_cap_monthly, reserved_cost_usd,
-       budget_status, budget_block_reason, created_at, updated_at
-     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'clear', NULL, ?, ?)`
-  ).run(
-    id,
-    name,
-    slug,
-    input.description || null,
-    input.icon || '📁',
-    input.cost_cap_daily ?? 20,
-    input.cost_cap_monthly ?? 100,
-    now,
-    now,
-  );
+    `INSERT INTO workspaces (id, name, slug, description, icon, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, name, slug, input.description || null, input.icon || '📁', now, now);
 
   if (input.bootstrap !== false) {
     cloneWorkflowTemplates(db, id);

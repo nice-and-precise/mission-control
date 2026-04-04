@@ -286,7 +286,7 @@ Configure autonomous cycles per product:
 - 📋 Multi-agent planning specs
 - 🖼️ Task image attachments (UI mockups, screenshots)
 - 📡 Live real-time activity feed (SSE)
-- 💰 Actual spend, reserved dispatch cost, and hard budget caps
+- 💰 Actual spend, reserved dispatch cost, blocked estimated demand, and hard budget caps
 
 **Infrastructure**
 - 🔌 OpenClaw Gateway integration (WebSocket)
@@ -392,7 +392,9 @@ On Jordan's Mac, the supported OpenClaw operator path is `../scripts/update_open
 
 OpenClaw compatibility notes on this baseline:
 - Mission Control treats `openclaw` as the default agent target for Autopilot HTTP completions.
+- Mission Control resolves Autopilot budget and policy accounting against the OpenClaw catalog's `defaultProviderModel` when `AUTOPILOT_MODEL=openclaw`, so the OpenClaw default provider model must be both allowed by Mission Control policy and priced for accounting.
 - `/api/openclaw/models` separates agent targets from provider overrides so operators do not confuse the two contracts.
+- Mission Control budget caps are local planning/accounting controls. When you need provider/runtime context outside that local ledger, use `openclaw status --usage`, `/usage cost`, and `/usage full`.
 - `/api/openclaw/sessions/{id}/history` is available as a read-only transcript surface, but oversized entries may still be omitted by OpenClaw's bounded history contract.
 - Detached OpenClaw work is visible through Mission Control's read-only background-task surface and the task modal's `Detached Work` tab, including degraded-ledger metadata when the CLI only returns JSON on `stderr` or times out.
 

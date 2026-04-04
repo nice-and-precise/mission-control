@@ -825,6 +825,8 @@ export interface CostOverview {
   this_month: number;
   total: number;
   reserved_total: number;
+  active_blocked_task_count: number;
+  active_blocked_estimated_usd: number;
   blocked_unknown_cost_count: number;
   unpriced_build_runs_count: number;
 }
@@ -836,6 +838,8 @@ export interface CostBreakdown {
   summary: {
     actual_recorded_usd: number;
     reserved_estimated_usd: number;
+    active_blocked_task_count: number;
+    active_blocked_estimated_usd: number;
     blocked_unknown_cost_count: number;
     unpriced_build_runs_count: number;
   };

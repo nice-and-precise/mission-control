@@ -1,4 +1,5 @@
 import { queryOne, queryAll } from '@/lib/db';
+import { UNKNOWN_COST_REASONS } from '@/lib/costs/budget-policy';
 import type { CostBreakdown, CostOverview } from '@/lib/types';
 
 interface PerFeatureStats {
@@ -67,9 +68,29 @@ export function getCostOverview(workspaceId: string, productId?: string): CostOv
     `SELECT COALESCE(SUM(reserved_cost_usd), 0) as total FROM tasks WHERE ${taskScope.clause}`,
     taskScope.params
   );
-  const blockedUnknownCostCount = queryOne<{ count: number }>(
-    `SELECT COUNT(*) as count FROM tasks WHERE ${taskScope.clause} AND budget_status = 'blocked'`,
+  const activeBlockedTaskCount = queryOne<{ count: number }>(
+    `SELECT COUNT(*) as count
+     FROM tasks
+     WHERE ${taskScope.clause}
+       AND budget_status = 'blocked'
+       AND status NOT IN ('done', 'cancelled')`,
     taskScope.params
+  );
+  const activeBlockedEstimatedUsd = queryOne<{ total: number }>(
+    `SELECT COALESCE(SUM(estimated_cost_usd), 0) as total
+     FROM tasks
+     WHERE ${taskScope.clause}
+       AND budget_status = 'blocked'
+       AND status NOT IN ('done', 'cancelled')`,
+    taskScope.params
+  );
+  const blockedUnknownCostCount = queryOne<{ count: number }>(
+    `SELECT COUNT(*) as count
+     FROM tasks
+     WHERE ${taskScope.clause}
+       AND budget_status = 'blocked'
+       AND budget_block_reason IN (${UNKNOWN_COST_REASONS.map(() => '?').join(', ')})`,
+    [...taskScope.params, ...UNKNOWN_COST_REASONS]
   );
   const unpricedBuildRunsCount = queryOne<{ count: number }>(
     `SELECT COUNT(*) as count
@@ -86,6 +107,8 @@ export function getCostOverview(workspaceId: string, productId?: string): CostOv
     this_month: month?.total || 0,
     total: total?.total || 0,
     reserved_total: reserved?.total || 0,
+    active_blocked_task_count: activeBlockedTaskCount?.count || 0,
+    active_blocked_estimated_usd: activeBlockedEstimatedUsd?.total || 0,
     blocked_unknown_cost_count: blockedUnknownCostCount?.count || 0,
     unpriced_build_runs_count: unpricedBuildRunsCount?.count || 0,
   };
@@ -126,9 +149,29 @@ export function getCostBreakdown(workspaceId: string, productId?: string): CostB
       `SELECT COALESCE(SUM(reserved_cost_usd), 0) as total FROM tasks WHERE ${taskScope.clause}`,
       taskScope.params,
     )?.total || 0,
-    blocked_unknown_cost_count: queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count FROM tasks WHERE ${taskScope.clause} AND budget_status = 'blocked'`,
+    active_blocked_task_count: queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count
+       FROM tasks
+       WHERE ${taskScope.clause}
+         AND budget_status = 'blocked'
+         AND status NOT IN ('done', 'cancelled')`,
       taskScope.params,
+    )?.count || 0,
+    active_blocked_estimated_usd: queryOne<{ total: number }>(
+      `SELECT COALESCE(SUM(estimated_cost_usd), 0) as total
+       FROM tasks
+       WHERE ${taskScope.clause}
+         AND budget_status = 'blocked'
+         AND status NOT IN ('done', 'cancelled')`,
+      taskScope.params,
+    )?.total || 0,
+    blocked_unknown_cost_count: queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count
+       FROM tasks
+       WHERE ${taskScope.clause}
+         AND budget_status = 'blocked'
+         AND budget_block_reason IN (${UNKNOWN_COST_REASONS.map(() => '?').join(', ')})`,
+      [...taskScope.params, ...UNKNOWN_COST_REASONS],
     )?.count || 0,
     unpriced_build_runs_count: queryOne<{ count: number }>(
       `SELECT COUNT(*) as count

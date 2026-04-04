@@ -3,6 +3,13 @@
 Short local commands for this checkout.
 
 For the machine-local OpenClaw runtime owner contract, use [../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md](../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md).
+For Product Autopilot workspace setup and reset behavior, use [AUTOPILOT_SETUP.md](AUTOPILOT_SETUP.md).
+
+Set a workspace root once per shell before running the examples below:
+
+```bash
+export WORKSPACE_ROOT="${WORKSPACE_ROOT:-$HOME/.openclaw/workspace}"
+```
 
 For updates on this Mac's local-prefix install, use `../scripts/update_openclaw_local_runtime.sh` from the workspace root instead of `openclaw update`. The helper reruns the official `install-cli.sh` flow against `~/.openclaw`.
 
@@ -11,7 +18,7 @@ After `openclaw gateway restart`, allow a short warm-up window before treating a
 Recommended local check:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace
+cd "$WORKSPACE_ROOT"
 ./scripts/update_openclaw_local_runtime.sh
 ~/.openclaw/bin/openclaw doctor
 ~/.openclaw/bin/openclaw gateway restart
@@ -22,9 +29,11 @@ sleep 8
 ## Start / Restart
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 npm run dev
 ```
+
+If you add or restore `src/app/**` routes while `next dev` is already running and a page or API still returns `404`, fully restart `npm run dev` before treating it as a code bug. A long-lived dev process can keep serving an older route graph.
 
 If `localhost:4000` is already occupied, identify the listener first:
 
@@ -34,7 +43,7 @@ lsof -nP -iTCP:4000 -sTCP:LISTEN
 
 ## Git Remote Model
 
-For this checkout on Jordan's machine:
+For this checkout:
 
 - `origin` = `nice-and-precise/mission-control`
 - `source` = `crshdn/mission-control` (optional read-only comparison remote)
@@ -73,6 +82,94 @@ Expected result: HTTP `200` with JSON like `{"status":"ok",...}`.
 
 If `MC_API_TOKEN` is set in `.env.local`, direct `curl` requests to `/api/*` must include the bearer token. The browser UI still works without manual headers because same-origin browser requests are allowed by the auth middleware.
 
+## Autopilot Surface Check
+
+Use this after restoring or changing Product Autopilot routes:
+
+```bash
+cd "$WORKSPACE_ROOT/mission-control"
+
+TOKEN="$(python3 - <<'PY'
+from dotenv import dotenv_values
+vals = dotenv_values('.env.local')
+print(vals.get('MC_API_TOKEN', ''))
+PY
+)"
+
+curl -I http://localhost:4000/autopilot
+curl -I http://localhost:4000/activity
+
+PRODUCT_ID="$(curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Autopilot Smoke Product","description":"temporary smoke product","icon":"🧪"}' \
+  http://localhost:4000/api/products | jq -r '.id')"
+
+PRODUCT_JSON="$(curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/products/"$PRODUCT_ID")"
+
+WORKSPACE_ID="$(printf '%s' "$PRODUCT_JSON" | jq -r '.workspace_id')"
+
+printf '%s\n' "$PRODUCT_JSON" | jq '{id,name,workspace_id,workspace_mode,manages_workspace,workspace_name,workspace_slug}'
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/swipe/deck | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/health | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/costs | jq
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID" | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/workspaces | jq --arg wid "$WORKSPACE_ID" '[.[] | select(.id == $wid)] | length'
+```
+
+Expected result:
+
+- `/autopilot` and `/activity` return HTTP `200`
+- product create/read/health/cost/delete all succeed without `404`
+- new products default to `workspace_mode: "dedicated"` and a non-`default` workspace
+- the delete call hard-deletes the temp product instead of archiving it
+- the final workspace query returns `0` because the dedicated workspace was also removed
+
+## Product Workspace Modes
+
+Use these API shapes if you want to verify product creation behavior directly.
+
+Dedicated workspace, which is now the default:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Dedicated Smoke Product","icon":"🧪"}' \
+  http://localhost:4000/api/products | jq
+```
+
+Existing shared workspace:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Shared Smoke Product","icon":"🧪","workspace_mode":"existing","workspace_id":"default"}' \
+  http://localhost:4000/api/products | jq
+```
+
+Expected result:
+
+- dedicated mode returns a non-`default` `workspace_id` and `manages_workspace: 1`
+- existing mode keeps `workspace_id: "default"` and returns `manages_workspace: 0`
+
+## Reset a Mistaken Product
+
+UI path:
+
+1. Open `/autopilot`.
+2. Use the product card overflow menu if you know immediately that the product is wrong.
+3. Or open the product dashboard, click the gear icon, and use the `Danger Zone` delete action.
+4. Recreate the product with `Dedicated workspace` if you do not want build cards landing in `default`.
+
+Direct API reset:
+
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/products/<PRODUCT_ID> | jq
+```
+
+This now performs a hard delete for mistaken products and removes any product-owned tasks. Dedicated product workspaces are deleted with the product; shared workspaces are preserved.
+
 ## Runtime Owner Check
 
 Use this when Mission Control starts logging fresh zombie or unreconciled-run activity that does not match the visible UI state.
@@ -80,7 +177,7 @@ Use this when Mission Control starts logging fresh zombie or unreconciled-run ac
 Run:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 python3 scripts/runtime-owner-diagnostics.py
 ```
 
@@ -99,7 +196,7 @@ pkill -f 'src/lib/runtime-leases.test.ts'
 Then restart the real app runtime:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 npm run dev
 ```
 
@@ -113,7 +210,7 @@ Use this when `openclaw dashboard` opens `http://127.0.0.1:18789/` but prints:
 Run:
 
 ```bash
-python3 /Users/jordan/.openclaw/workspace/scripts/openclaw-dashboard-auth.py
+python3 "$WORKSPACE_ROOT/scripts/openclaw-dashboard-auth.py"
 ```
 
 What it does:
@@ -127,14 +224,14 @@ Important:
 
 - `AUTH_TOKEN_MISSING` here usually means the Control UI connected without the bootstrap token.
 - It does not automatically mean the gateway token drifted or the SecretRef is broken.
-- Use `python3 /Users/jordan/.openclaw/workspace/scripts/openclaw-gateway-health.py` if you need to distinguish real gateway drift from UI bootstrap noise.
+- Use `python3 "$WORKSPACE_ROOT/scripts/openclaw-gateway-health.py"` if you need to distinguish real gateway drift from UI bootstrap noise.
 
 ## Mission Control Gateway Token Sync
 
 Refresh `mission-control/.env.local` from the canonical OpenClaw SecretRef target:
 
 ```bash
-cd /Users/jordan/.openclaw/workspace
+cd "$WORKSPACE_ROOT"
 python3 scripts/sync_mission_control_gateway_token.py
 ```
 
@@ -157,11 +254,12 @@ x-openclaw-scopes: operator.read,operator.write
 Mission Control now sends that header from its shared autopilot LLM helper. If the 403 returns again, verify the route directly before touching the gateway token:
 
 ```bash
+cd "$WORKSPACE_ROOT/mission-control"
 python3 - <<'PY'
 from dotenv import dotenv_values
 import urllib.request, json
-
-vals = dotenv_values('/Users/jordan/.openclaw/workspace/mission-control/.env.local')
+from pathlib import Path
+vals = dotenv_values(Path.cwd() / '.env.local')
 base = vals['OPENCLAW_GATEWAY_URL'].replace('ws://', 'http://').replace('wss://', 'https://')
 token = vals['OPENCLAW_GATEWAY_TOKEN']
 
@@ -189,6 +287,13 @@ If that direct call succeeds but Mission Control still fails, restart `npm run d
 
 Keep `AUTOPILOT_MODEL=openclaw` in `mission-control/.env.local` on this machine. Do not hardcode provider model IDs like `anthropic/claude-sonnet-4-6` in local Autopilot routes unless the current OpenClaw agent policy explicitly allows that override.
 
+Important accounting note:
+
+- Autopilot research and ideation execute through `openclaw`
+- Mission Control resolves budget and cost accounting from `/api/openclaw/models` using the catalog's `defaultProviderModel`
+- if `defaultProviderModel` is missing, disallowed, or unpriced, research or ideation can fail before the gateway call finishes
+- on this machine, `defaultProviderModel` should resolve to an allowed priced model such as `opencode-go/kimi-k2.5`
+
 ## OpenClaw Operator Surfaces
 
 Mission Control now separates the main OpenClaw operator surfaces:
@@ -215,6 +320,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 What to expect:
 
 - models response includes `agentTargets`, `providerModels`, `defaultAgentTarget`, and `defaultProviderModel`
+- `defaultAgentTarget` should remain `openclaw` for local Autopilot on this baseline
+- `defaultProviderModel` should be a Mission Control policy-allowed, priced provider model
 - history response includes `sessionRef`, `resolvedSessionKey`, `resolvedSessionId`, `items`, `hasMore`, and `source`
 - background-task response includes top-level `status`, `sourceChannel`, and `warning` plus detached task `id`, `runId`, `sessionKey`, `runtimeKind`, `status`, and any correlated Mission Control session metadata
 - use `status: "degraded"` to distinguish OpenClaw CLI contract issues from a true empty detached-work ledger
@@ -296,7 +403,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 Use this when you want to throw away the current plan and restart planning cleanly for the same task.
 
 1. Cancel planning in Mission Control.
-   Source: [planning/route.ts](/Users/jordan/.openclaw/workspace/mission-control/src/app/api/tasks/[id]/planning/route.ts)
+   Source: [`src/app/api/tasks/[id]/planning/route.ts`](../src/app/api/tasks/[id]/planning/route.ts)
 2. Reset the corresponding OpenClaw planning conversation before starting again.
    OpenClaw’s official docs say `/new` or `/reset` starts a fresh conversation for the same chat key:
    <https://docs.openclaw.ai/help/faq>
@@ -329,7 +436,7 @@ Recovery steps:
 ## Database Backup
 
 ```bash
-cd /Users/jordan/.openclaw/workspace/mission-control
+cd "$WORKSPACE_ROOT/mission-control"
 npm run db:backup
 ```
 

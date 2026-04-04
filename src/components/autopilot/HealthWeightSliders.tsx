@@ -35,6 +35,7 @@ export function HealthWeightSliders({ productId, initialWeights, onSaved }: Prop
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch preview score on mount
   useEffect(() => {
     fetch(`/api/products/${productId}/health`)
       .then((r) => r.ok ? r.json() : null)
@@ -80,6 +81,7 @@ export function HealthWeightSliders({ productId, initialWeights, onSaved }: Prop
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
 
+      // Refresh preview score
       const healthRes = await fetch(`/api/products/${productId}/health`);
       if (healthRes.ok) {
         const data = await healthRes.json();

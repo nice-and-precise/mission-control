@@ -51,6 +51,7 @@ Pass criteria:
 - the runtime preflight succeeds
 - the test suite passes
 - the production build completes successfully
+- if the Cost tab shows a block, operators can distinguish local Mission Control blocked estimated demand from provider/runtime diagnostics
 
 ## Runtime Sanity Check
 
@@ -73,6 +74,21 @@ curl -i -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/health
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/status | jq
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/models | jq
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:4000/api/openclaw/background-tasks" | jq
+curl -I http://localhost:4000/autopilot
+curl -I http://localhost:4000/activity
+
+PRODUCT_ID="$(curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Verification Smoke Product","description":"temporary verification product","icon":"🧪"}' \
+  http://localhost:4000/api/products | jq -r '.id')"
+
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products | jq 'length'
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID" | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/swipe/deck | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/health | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/costs | jq
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:4000/api/costs?workspace_id=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/$PRODUCT_ID | jq -r '.workspace_id')&product_id=$PRODUCT_ID" | jq
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID" | jq
 ```
 
 Pass criteria:
@@ -80,25 +96,34 @@ Pass criteria:
 - `GET /api/health` returns HTTP `200`
 - when `MC_API_TOKEN` is set, direct `curl` checks include `Authorization: Bearer <token>`
 - the UI loads on `http://localhost:4000`
+- `/autopilot` and `/activity` both return HTTP `200`
 - Mission Control can reach the configured OpenClaw gateway
 - `/api/openclaw/models` returns separate `agentTargets` and `providerModels`
+- `/api/openclaw/models` reports `defaultAgentTarget: "openclaw"` for the local Autopilot baseline unless you intentionally changed the contract
+- `/api/openclaw/models.defaultProviderModel` is present and maps to a Mission Control policy-allowed, priced provider model
 - `/api/openclaw/background-tasks` returns `tasks`, `status`, `sourceChannel`, and `warning`
 - `/api/openclaw/background-tasks` uses `status: "ok"` for true empty-success responses and `status: "degraded"` when the CLI timed out or only returned JSON on `stderr`
 - if you have a known session key or session ID, `/api/openclaw/sessions/{id}/history` returns a normalized transcript payload instead of `501`
+- `/api/costs` returns `active_blocked_task_count` and `active_blocked_estimated_usd`
+- the product Cost tab shows workspace caps separately from product caps
+- if Mission Control is blocked while provider/runtime context is unclear, operators can still use `openclaw status --usage`, `/usage cost`, and `/usage full` as read-only diagnostics
+- the product smoke flow can create a temporary product, fetch its detail/deck/health/cost routes, and archive it again without `404`
+- after the delete call, the temporary product no longer appears in `GET /api/products`
+- if new `src/app/**` routes were added during an already-running `next dev` session, restart `npm run dev` before treating route-level `404`s as code regressions
 
 ## Documentation Gate
 
 Run from the workspace root.
 
 ```bash
-pytest tests/test_model_lanes_policy.py tests/test_docs_integrity.py
+npm run docs:check
 ```
 
 Pass criteria:
 
 - the active portable docs do not hardcode Jordan-specific absolute machine paths
 - local markdown links in the active portable docs resolve
-- the current model-lane policy does not reintroduce `qwen-portal`
+- the docs sanity gate exits `0`
 
 ## Final Result
 
