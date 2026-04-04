@@ -341,7 +341,7 @@ export default function ProductDashboardPage() {
           {tab === 'research' && <ResearchReport productId={productId} />}
           {tab === 'build' && <BuildQueue productId={productId} />}
           {tab === 'maybe' && <MaybePool productId={productId} />}
-          {tab === 'costs' && <CostDashboard productId={productId} />}
+          {tab === 'costs' && <CostDashboard productId={productId} workspaceId={product.workspace_id} />}
           {tab === 'program' && <ProductProgramEditor product={product} onSave={setProduct} />}
         </div>
 

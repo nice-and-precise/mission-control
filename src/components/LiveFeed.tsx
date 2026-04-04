@@ -113,16 +113,27 @@ export function LiveFeed() {
 
       {/* Events List */}
       {!isMinimized && (
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {filteredEvents.length === 0 ? (
-            <div className="text-center py-8 text-mc-text-secondary text-sm">
-              No events yet
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {filteredEvents.length === 0 ? (
+              <div className="text-center py-8 text-mc-text-secondary text-sm">
+                No events yet
+              </div>
+            ) : (
+              filteredEvents.map((event) => (
+                <EventItem key={event.id} event={event} />
+              ))
+            )}
+          </div>
+          <div className="border-t border-mc-border px-3 py-3 text-xs text-mc-text-secondary">
+            <div className="font-medium text-mc-text mb-1">Runtime diagnostics</div>
+            <div>Mission Control shows local budget/accounting state.</div>
+            <div className="mt-1 font-mono text-[11px] leading-5">
+              <div>openclaw status --usage</div>
+              <div>/usage cost</div>
+              <div>/usage full</div>
             </div>
-          ) : (
-            filteredEvents.map((event) => (
-              <EventItem key={event.id} event={event} />
-            ))
-          )}
+          </div>
         </div>
       )}
     </aside>
