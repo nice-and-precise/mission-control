@@ -8,11 +8,11 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Snapshot
 
-- Date verified: `2026-04-03`
+- Date verified: `2026-04-05`
 - Upstream base: `v2.4.0`
-- Local checkout state: `feature branch restoring the Product Autopilot surface on top of canonical origin/main`
-- Git ref: `work/research-budget-routing`
-- Baseline commit: `983b6ba`
+- Local checkout state: `E2E recovery branch restoring clean BoreReady pipeline and fixing ghost agent creation under Node 24.13.0`
+- Git ref: `work/e2e-recovery`
+- Baseline commit: `fce29d9`
 - GitHub PR state:
   - PR `#1` remains the earlier repo-reconciliation merge into `origin/main`
   - this restore work is local branch state on top of `origin/main`; local `HEAD` does not currently equal `origin/main`
@@ -86,6 +86,22 @@ The following facts were re-verified against the live local runtime on `2026-04-
   - authenticated `GET /api/openclaw/sessions/{id}` now returns a normal `404` for a missing session instead of a `500`
 - Static error-page build regression is not reproducible on the current checkout
   - `npm run build` completed successfully on this `v2.4.0-local-baseline` worktree after compile, typecheck, static generation, and route optimization
+- Node.js runtime is now pinned to an exact version to prevent native addon mismatch on upgrade
+  - `.nvmrc` pinned from `24` (major-only) to `24.13.0` (exact patch), enforced by `check-runtime.js` preflight
+  - `npm run test:runtime-targeted` runs the focused callback / evidence / repair test suite (47 tests, 0 fail)
+- Stale "run ended without completion callback" error strings on done tasks have been repaired
+  - `npm run tasks:repair-successful-run-errors` (dry-run) and `-- --apply` let operators inspect and clear stale error prefixes on completed tasks
+  - applied against the live DB on `2026-04-05`; cleared 2 stale rows
+- The ONLINE badge now stays green during normal operation
+  - `isSameOriginEventStreamRequest()` in `src/middleware.ts` whitelists same-origin `Accept: text/event-stream` connections without an `Authorization` header
+  - verified: `curl -s -i -m 5 -H 'Sec-Fetch-Site: same-origin' -H 'Accept: text/event-stream' http://localhost:4000/api/events/stream` returns `HTTP 200` + `: connected`
+- `/api/tasks/unread` no longer triggers 404 noise in the UI or server logs
+  - stub route at `src/app/api/tasks/unread/route.ts` returns `[]`; verified via authenticated GET
+- Governance code no longer auto-creates ghost fixer agents
+  - `ensureFixerExists()` in `task-governance.ts` is now lookup-only; it returns `null` when no fixer role agent is pre-seeded rather than inserting one
+  - `escalateFailureIfNeeded()` handles the null case by inserting a `governance_warning` activity row instead
+  - the Auto Fixer ghost agent (id `12a1b1e8`) created during earlier BoreReady stage failures was deleted from the DB
+  - future fixer capability requires deliberately seeding a real fixer-role agent with docs and model
 
 ## Known Gaps
 
@@ -149,6 +165,11 @@ ls -ld .next .next-dev
 | Session-history replay is available through Mission Control's public route | local runtime | `verified with caveat` | authenticated `GET /api/openclaw/sessions/{id}/history` returns normalized transcript payloads for valid session refs | Keep docs explicit that OpenClaw history is bounded and may omit oversized entries |
 | Static error-page build regression is currently reproducible from source | local status note from earlier session | `not reproducible` | current `npm run build` exits `0` on this worktree | Only reopen if a fresh failing revision or exact repro is captured |
 | Current test and build gate succeeds on the pinned Node runtime | [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md), [../README.md](../README.md) | `verified` | `nvm use 24.13.0`, `npm test`, and `npm run build` all exited `0` on `2026-03-29` | Keep `.nvmrc`, runtime preflight, and verification checklist aligned |
+| `.nvmrc` pins the exact Node patch version so native addons never silently break | `.nvmrc`, `scripts/check-runtime.js` | `verified` | `node --version` returns `v24.13.0` after `nvm use` on `2026-04-05` | Keep both `.nvmrc` and preflight script in sync on every Node upgrade |
+| Stale unreconciled-run error strings on done tasks can be repaired non-destructively | `scripts/repair-successful-run-errors.ts`, `src/lib/task-run-error-repair.ts` | `verified` | dry-run showed 2 rows; apply cleared them with `changes() = 2` on `2026-04-05` | Use `npm run tasks:repair-successful-run-errors -- --apply` after any batch of stuck-then-recovered tasks |
+| SSE connection is whitelisted for same-origin browser clients without a bearer token | `src/middleware.ts` | `verified` | curl with `Sec-Fetch-Site: same-origin` + `Accept: text/event-stream` returns `HTTP 200` + `: connected` on `2026-04-05` | Keep `isSameOriginEventStreamRequest()` guard and confirm ONLINE badge after any middleware change |
+| `/api/tasks/unread` returns `[]` and does not generate 404 server log noise | `src/app/api/tasks/unread/route.ts` | `verified` | authenticated GET returns `[]` on `2026-04-05` | Keep stub aligned with any future unread-count feature work |
+| `ensureFixerExists()` no longer auto-inserts ghost agents during stage escalation | `src/lib/task-governance.ts` | `verified` | looked up test DB — zero rows inserted after 2 failure activities; governance_warning activity inserted instead on `2026-04-05` | Any fixer capability must be deliberately seeded via a real agent row with docs and model |
 
 ## Historical Snapshots
 
