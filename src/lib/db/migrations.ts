@@ -1893,6 +1893,25 @@ const migrations: Migration[] = [
 
       db.exec(`CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_active_task ON openclaw_sessions(active_task_id)`);
     }
+  },
+  {
+    id: '037',
+    name: 'add_workspace_model_overrides',
+    up: (db) => {
+      console.log('[Migration 037] Adding workspace model override columns...');
+
+      const workspaceInfo = db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[];
+
+      if (!workspaceInfo.some(col => col.name === 'autopilot_model_override')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN autopilot_model_override TEXT`);
+        console.log('[Migration 037] Added autopilot_model_override to workspaces');
+      }
+
+      if (!workspaceInfo.some(col => col.name === 'planning_model_override')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN planning_model_override TEXT`);
+        console.log('[Migration 037] Added planning_model_override to workspaces');
+      }
+    }
   }
 ];
 

@@ -9,14 +9,15 @@
 cd /path/to/mission-control
 nvm use
 npm ci
+npm run test:runtime-targeted
 npm run dev
 ```
 
-`nvm use` defaults the repo to Node 24 for local testing. Node 20 is also supported, but switching between Node 20 and Node 24 requires a fresh `npm ci`.
+`nvm use` defaults the repo to the pinned `.nvmrc` runtime (`24.13.0`) for local testing. Node 20 is also supported, but switching between Node 20 and Node 24 requires a fresh `npm ci`.
 
 Open http://localhost:4000 (production server) or http://localhost:4000 (local)
 
-If `npm run dev` fails with a runtime or `better-sqlite3` mismatch, rerun `nvm use` and `npm ci` before retrying.
+If `npm run dev` or `npm run test:runtime-targeted` fails with a runtime or `better-sqlite3` mismatch, rerun `nvm use` and `npm ci` before retrying. Prefer the guarded npm scripts over raw `tsx --test ...` commands so the runtime preflight always runs.
 
 If `MC_API_TOKEN` is configured, add `-H "Authorization: Bearer <token>"` to the API requests below.
 

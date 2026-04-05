@@ -63,10 +63,10 @@ interface AgentDef {
 }
 
 const ROLE_MODEL_FALLBACKS: Record<string, string[]> = {
-  builder: ['openai-codex/gpt-5.4', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go/minimax-m2.5'],
-  reviewer: ['openai-codex/gpt-5.4', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go/minimax-m2.5'],
-  tester: ['opencode-go/minimax-m2.5', 'opencode-go/kimi-k2.5', 'opencode-go/glm-5'],
-  learner: ['opencode-go/kimi-k2.5', 'opencode-go/glm-5', 'opencode-go/minimax-m2.5'],
+  builder: ['openrouter/qwen/qwen3.6-plus:free', 'opencode/qwen3.6-plus-free', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
+  reviewer: ['openrouter/qwen/qwen3.6-plus:free', 'opencode/qwen3.6-plus-free', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
+  tester: ['opencode-go-mm/minimax-m2.5', 'opencode-go/kimi-k2.5', 'opencode-go/glm-5'],
+  learner: ['opencode-go/kimi-k2.5', 'opencode-go/glm-5', 'opencode-go-mm/minimax-m2.5'],
 };
 
 function resolveBootstrapModelForRole(role: string): string {

@@ -289,6 +289,80 @@ test('dispatch rejects workflow mismatch instead of sending the wrong prompt', a
   assert.match(task?.status_reason || '', /in_progress is builder-owned/i);
 });
 
+test('dispatch prompt uses MC_API_TOKEN instructions without leaking the raw bearer token', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const builderId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+  const previousToken = process.env.MC_API_TOKEN;
+  let dispatchedMessage = '';
+
+  process.env.MC_API_TOKEN = 'super-secret-token-for-test';
+  try {
+    ensureWorkspace(workspaceId);
+    const templateId = seedStrictWorkflowTemplate(workspaceId);
+    seedAgent({ id: builderId, workspaceId, name: 'Builder Agent', role: 'builder' });
+    seedTask({ id: taskId, workspaceId, templateId, status: 'assigned', assignedAgentId: builderId, title: 'Auth prompt task' });
+    seedTaskRole(taskId, 'builder', builderId);
+
+    const client = getOpenClawClient() as unknown as {
+      isConnected: () => boolean;
+      connect: () => Promise<void>;
+      listAgents: () => Promise<unknown[]>;
+      patchSessionModel: (sessionKey: string, model: string) => Promise<unknown>;
+      getSessionByKey: (sessionKey: string) => Promise<unknown>;
+      call: (...args: unknown[]) => Promise<unknown>;
+    };
+    let boundModel = 'openai-codex/gpt-5.4';
+    client.isConnected = () => true;
+    client.connect = async () => undefined;
+    client.listAgents = async () => [];
+    client.patchSessionModel = async (sessionKey: string, model: string) => {
+      boundModel = model;
+      const [provider, ...rest] = model.split('/');
+      return {
+        key: sessionKey,
+        resolved: { modelProvider: provider, model: rest.join('/') },
+      };
+    };
+    client.getSessionByKey = async (sessionKey: string) => {
+      const [provider, ...rest] = boundModel.split('/');
+      return {
+        key: sessionKey,
+        sessionId: `runtime-${sessionKey}`,
+        modelProvider: provider,
+        model: rest.join('/'),
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      };
+    };
+    client.call = async (...args: unknown[]) => {
+      if (args[0] === 'chat.send') {
+        dispatchedMessage = String((args[1] as { message?: string } | undefined)?.message || '');
+        return {};
+      }
+      throw new Error(`Unexpected gateway call: ${JSON.stringify(args)}`);
+    };
+
+    const response = await dispatchTaskRoute(
+      new NextRequest(`http://localhost/api/tasks/${taskId}/dispatch`, { method: 'POST' }),
+      { params: Promise.resolve({ id: taskId }) },
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(dispatchedMessage, /MC_API_TOKEN/);
+    assert.match(dispatchedMessage, /Authorization: Bearer \$MC_API_TOKEN/);
+    assert.doesNotMatch(dispatchedMessage, /super-secret-token-for-test/);
+  } finally {
+    if (previousToken === undefined) {
+      delete process.env.MC_API_TOKEN;
+    } else {
+      process.env.MC_API_TOKEN = previousToken;
+    }
+  }
+});
+
 test('POST /api/tasks dispatches assigned tasks server-side', async () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;
   const builderId = crypto.randomUUID();

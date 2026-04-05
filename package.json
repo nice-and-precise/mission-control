@@ -22,6 +22,7 @@
     "start": "MISSION_CONTROL_RUNTIME_BOOT=1 node scripts/check-runtime.js && MISSION_CONTROL_RUNTIME_BOOT=1 next start -p ${PORT:-4000}",
     "lint": "next lint",
     "test": "node scripts/check-runtime.js && mkdir -p .tmp && rm -f .tmp/mission-control-test.db* && NODE_ENV=test DATABASE_PATH=.tmp/mission-control-test.db tsx --test --test-concurrency=1 src/**/*.test.ts scripts/check-runtime.test.ts",
+    "test:runtime-targeted": "node scripts/check-runtime.js && mkdir -p .tmp && rm -f .tmp/mission-control-test.db* && NODE_ENV=test DATABASE_PATH=.tmp/mission-control-test.db tsx --test --test-concurrency=1 src/lib/task-route-workflow.test.ts src/lib/task-evidence.test.ts src/lib/openclaw/session-history.test.ts src/lib/task-run-error-repair.test.ts",
     "docs:check": "bash scripts/docs-sanity.sh",
     "git:check-policy": "bash scripts/git-branch-policy.sh check",
     "git:install-hooks": "git config core.hooksPath .githooks && echo 'Configured core.hooksPath=.githooks'",
@@ -29,7 +30,8 @@
     "db:backup": "sqlite3 mission-control.db 'PRAGMA wal_checkpoint(TRUNCATE);' && cp mission-control.db mission-control.db.backup && echo 'Backed up to mission-control.db.backup'",
     "db:restore": "cp mission-control.db.backup mission-control.db && echo 'Restored from backup'",
     "db:reset": "rm -f mission-control.db mission-control.db-* && npm run db:seed",
-    "sessions:repair-active-task-attachments": "tsx scripts/repair-active-task-attachments.ts"
+    "sessions:repair-active-task-attachments": "tsx scripts/repair-active-task-attachments.ts",
+    "tasks:repair-successful-run-errors": "node scripts/check-runtime.js && tsx scripts/repair-successful-run-errors.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1014.0",

@@ -6,8 +6,12 @@ import { buildCheckpointContext } from '@/lib/checkpoint';
 import { processAgentSignal } from '@/lib/agent-signals';
 import { resolveTaskRunOutcomeFromGatewayHistory } from '@/lib/openclaw/session-history';
 import { syncOpenClawBuildUsage } from '@/lib/openclaw/session-runtime';
-import { buildAgentSessionKey } from '@/lib/openclaw/routing';
-import { reconcileTaskRuntimeEvidence, shouldSuppressHealthEvidenceActivity } from '@/lib/task-evidence';
+import {
+  buildStoredSessionKey,
+  getAuthoritativeStoredTaskSession,
+  reconcileTaskRuntimeEvidence,
+  shouldSuppressHealthEvidenceActivity,
+} from '@/lib/task-evidence';
 import type { Agent, AgentHealth, AgentHealthState, Task } from '@/lib/types';
 
 const STALL_THRESHOLD_MINUTES = 5;
@@ -251,7 +255,11 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
   );
 
   for (const { id } of activeTaskIds) {
-    await reconcileTaskRuntimeEvidence(id);
+    const streamState = await reconcileTaskRuntimeEvidence(id);
+    const activeTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+    if (activeTask) {
+      clearFalseUnreconciledRunError(activeTask, streamState, now);
+    }
   }
 
   await syncOpenClawBuildUsage().catch((error) => {
@@ -392,45 +400,37 @@ export async function runHealthCheckCycle(): Promise<AgentHealth[]> {
   }
 }
 
-type UnreconciledRunTask = Task & {
-  latest_session_status?: string;
-  latest_session_created_at?: string;
-  latest_session_updated_at?: string;
-  latest_openclaw_session_id?: string;
-  latest_agent_role?: string | null;
-  latest_agent_session_key_prefix?: string | null;
-};
+function clearFalseUnreconciledRunError(
+  task: Pick<Task, 'id' | 'planning_dispatch_error' | 'status_reason'>,
+  streamState: Pick<Awaited<ReturnType<typeof reconcileTaskRuntimeEvidence>>, 'status'>,
+  now: string,
+): boolean {
+  if (streamState.status !== 'streaming') return false;
+
+  const hasGenericRunError = Boolean(task.planning_dispatch_error?.startsWith(UNRECONCILED_RUN_ERROR_PREFIX));
+  const hasGenericStatusReason = Boolean(task.status_reason?.startsWith(UNRECONCILED_RUN_ERROR_PREFIX));
+  if (!hasGenericRunError && !hasGenericStatusReason) {
+    return false;
+  }
+
+  run(
+    `UPDATE tasks
+     SET planning_dispatch_error = NULL,
+         status_reason = NULL,
+         updated_at = ?
+     WHERE id = ?`,
+    [now, task.id],
+  );
+
+  return true;
+}
 
 async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number> {
-  const unreconciledRuns = queryAll<UnreconciledRunTask>(
-    `WITH ranked_task_sessions AS (
-       SELECT
-         os.*,
-         ROW_NUMBER() OVER (
-           PARTITION BY os.task_id
-           ORDER BY
-             CASE WHEN os.session_type = 'subagent' THEN 1 ELSE 0 END,
-             CASE WHEN os.agent_id = t.assigned_agent_id THEN 0 ELSE 1 END,
-             os.updated_at DESC
-         ) as session_rank
-       FROM openclaw_sessions os
-       JOIN tasks t ON t.id = os.task_id
-     )
-     SELECT
-       t.*,
-       os.status as latest_session_status,
-       os.created_at as latest_session_created_at,
-       os.updated_at as latest_session_updated_at,
-       os.openclaw_session_id as latest_openclaw_session_id,
-       a.role as latest_agent_role,
-       a.session_key_prefix as latest_agent_session_key_prefix
+  const candidateTasks = queryAll<Task>(
+    `SELECT DISTINCT t.*
      FROM tasks t
-     JOIN ranked_task_sessions os
-       ON os.task_id = t.id
-      AND os.session_rank = 1
-     LEFT JOIN agents a ON a.id = os.agent_id
+     JOIN openclaw_sessions os ON os.task_id = t.id
      WHERE t.status IN ('assigned', 'in_progress', 'testing', 'review', 'verification')
-       AND os.status != 'active'
        AND (
          t.planning_dispatch_error IS NULL
          OR trim(t.planning_dispatch_error) = ''
@@ -441,9 +441,18 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
 
   let recoveredCount = 0;
 
-  for (const task of unreconciledRuns) {
+  for (const task of candidateTasks) {
     const reconciliationState = await reconcileTaskRuntimeEvidence(task.id);
-    const sessionKey = buildTaskSessionKey(task);
+    if (clearFalseUnreconciledRunError(task, reconciliationState, now)) {
+      continue;
+    }
+
+    const authoritativeSession = getAuthoritativeStoredTaskSession(task.id, task.assigned_agent_id);
+    if (!authoritativeSession || authoritativeSession.status === 'active') {
+      continue;
+    }
+
+    const sessionKey = buildStoredSessionKey(authoritativeSession);
 
     if (sessionKey) {
       const matchingGatewaySession = reconciliationState.relevantSessions.find(
@@ -452,7 +461,7 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
 
       try {
         console.info(
-          `[Health] Reconciling ended task run ${task.id}: session=${sessionKey} status=${task.latest_session_status || 'unknown'} history=lookup`,
+          `[Health] Reconciling ended task run ${task.id}: session=${sessionKey} status=${authoritativeSession.status || 'unknown'} history=lookup`,
         );
         const resolvedOutcome = await resolveTaskRunOutcomeFromGatewayHistory({
           sessionKey,
@@ -492,7 +501,7 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
       );
     }
 
-    const error = `Run ended without completion callback or workflow handoff (${task.latest_session_status || 'ended'} session).`;
+    const error = `Run ended without completion callback or workflow handoff (${authoritativeSession.status || 'ended'} session).`;
     const existingRunError = queryOne<{ id: string }>(
       `SELECT id
        FROM task_activities
@@ -501,7 +510,7 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
          AND created_at >= COALESCE(?, ?, created_at)
        ORDER BY created_at DESC
        LIMIT 1`,
-      [task.id, error, task.latest_session_created_at || null, task.latest_session_updated_at || null]
+      [task.id, error, authoritativeSession.created_at || null, authoritativeSession.updated_at || null]
     );
 
     if (existingRunError && task.planning_dispatch_error === error) {
@@ -555,21 +564,6 @@ export function setHealthCheckImplementationForTests(
 ): void {
   healthCheckImplementationForTests = implementation;
   healthCheckCycleInFlight = null;
-}
-
-function buildTaskSessionKey(task: {
-  latest_openclaw_session_id?: string;
-  latest_agent_role?: string | null;
-  latest_agent_session_key_prefix?: string | null;
-}): string | null {
-  const openclawSessionId = task.latest_openclaw_session_id;
-  if (!openclawSessionId) return null;
-  if (openclawSessionId.startsWith('agent:')) return openclawSessionId;
-
-  return buildAgentSessionKey(openclawSessionId, {
-    role: task.latest_agent_role || undefined,
-    session_key_prefix: task.latest_agent_session_key_prefix || undefined,
-  });
 }
 
 /**

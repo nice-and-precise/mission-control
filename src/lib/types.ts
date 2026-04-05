@@ -182,6 +182,8 @@ export interface Workspace {
   slug: string;
   description?: string;
   icon: string;
+  autopilot_model_override?: string | null;
+  planning_model_override?: string | null;
   cost_cap_daily?: number;
   cost_cap_monthly?: number;
   reserved_cost_usd?: number;

@@ -345,6 +345,23 @@ If the task still does not recover:
 2. Confirm the task/session link uses the expected stable session key.
 3. Then run the health sweep manually as a fallback diagnostic path, not as the first-line operator step.
 
+If the task is already `done` but the generic unreconciled-run banner still shows on the card, repair only the stale task fields:
+
+```bash
+cd /Users/jordan/.openclaw/workspace/mission-control
+npm run tasks:repair-successful-run-errors
+npm run tasks:repair-successful-run-errors -- --apply
+```
+
+If callback/runtime regressions start after a Node switch, re-enter the pinned runtime and use the guarded targeted suite:
+
+```bash
+cd /Users/jordan/.openclaw/workspace/mission-control
+nvm use
+npm ci
+npm run test:runtime-targeted
+```
+
 ## Browser Crash Triage
 
 Use this ladder when `next dev` is running but the browser shows:

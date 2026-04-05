@@ -12,6 +12,7 @@ Start here when you need to know which Mission Control docs to trust.
 - [OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-02.md](OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-02.md): release-impact audit for the current OpenClaw baseline and Mission Control operator surfaces
 - [USER_GUIDE.md](USER_GUIDE.md): operator entrypoint that separates portable setup from machine-local runbooks
 - [AUTOPILOT_SETUP.md](AUTOPILOT_SETUP.md): product workspace setup, reset, and operator expectations for Product Autopilot
+- [CARD_OPERATIONS_RUNBOOK.md](CARD_OPERATIONS_RUNBOOK.md): correct way to create, dispatch, monitor, and recover Mission Control cards based on the BoreReady failures
 - [../README.md](../README.md): upstream/public-facing product guide
 - [../ORCHESTRATION.md](../ORCHESTRATION.md): workflow behavior and runtime evidence expectations
 - [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md): agent callback and completion-marker contract

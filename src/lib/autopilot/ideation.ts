@@ -3,8 +3,8 @@ import { queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { enforceBudgetPolicy, recordAutopilotEstimatedCost } from '@/lib/costs/budget-policy';
 import { recordCostEvent } from '@/lib/costs/tracker';
-import { getAutopilotDefaultModel } from '@/lib/openclaw/model-policy';
 import { resolvePolicyAccountingModel } from '@/lib/openclaw/model-catalog';
+import { resolveAutopilotModelForWorkspace } from '@/lib/openclaw/workspace-model-overrides';
 import { emitAutopilotActivity } from './activity';
 import { completeJSON } from './llm';
 import { batchCheckSimilarity, storeEmbedding, checkSimilarity } from './similarity';
@@ -71,7 +71,7 @@ Respond with ONLY a JSON array of idea objects. No markdown, no code blocks, no 
 export async function runIdeationCycle(productId: string, cycleId?: string, existingIdeationId?: string): Promise<string> {
   const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
   if (!product) throw new Error(`Product ${productId} not found`);
-  const model = getAutopilotDefaultModel();
+  const model = await resolveAutopilotModelForWorkspace(product.workspace_id);
 
   // Get latest research report
   let researchReport: string | null = null;

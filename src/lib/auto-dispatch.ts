@@ -10,6 +10,14 @@ interface AutoDispatchOptions {
   workspaceId?: string;
 }
 
+interface AutoDispatchResult {
+  success: boolean;
+  queued?: boolean;
+  error?: string;
+  waitingForTaskId?: string;
+  waitingForTaskTitle?: string;
+}
+
 /**
  * Narrow dispatch helper kept for server-side retry flows.
  *
@@ -17,8 +25,8 @@ interface AutoDispatchOptions {
  * workflow engine. Do not reintroduce this helper into client-side status
  * change flows; that was the source of earlier double-dispatch races.
  */
-export async function triggerAutoDispatch(options: AutoDispatchOptions): Promise<{ success: boolean; error?: string }> {
-  const { taskId, taskTitle, agentId, agentName, workspaceId } = options;
+export async function triggerAutoDispatch(options: AutoDispatchOptions): Promise<AutoDispatchResult> {
+  const { taskId, taskTitle, agentId, agentName } = options;
 
   if (!agentId) {
     return { success: false, error: 'No agent ID provided for dispatch' };
@@ -37,13 +45,30 @@ export async function triggerAutoDispatch(options: AutoDispatchOptions): Promise
       headers,
     });
 
+    const payload = await dispatchRes.json().catch(() => null) as {
+      error?: string;
+      queued?: boolean;
+      message?: string;
+      waiting_for_task_id?: string;
+      waiting_for_task_title?: string;
+    } | null;
+
     if (dispatchRes.ok) {
+      if (payload?.queued) {
+        console.log(`[Auto-Dispatch] Task "${taskTitle}" is queued behind another active task`);
+        return {
+          success: false,
+          queued: true,
+          error: payload.message || 'Dispatch queued until the assigned agent is free',
+          waitingForTaskId: payload.waiting_for_task_id,
+          waitingForTaskTitle: payload.waiting_for_task_title,
+        };
+      }
       console.log(`[Auto-Dispatch] Task "${taskTitle}" auto-dispatched to ${agentName}`);
       return { success: true };
     } else {
-      const errorData = await dispatchRes.json().catch(() => ({ error: 'Unknown error' }));
-      console.error(`[Auto-Dispatch] Failed for task "${taskTitle}":`, errorData);
-      return { success: false, error: errorData.error || 'Dispatch failed' };
+      console.error(`[Auto-Dispatch] Failed for task "${taskTitle}":`, payload);
+      return { success: false, error: payload?.error || 'Dispatch failed' };
     }
   } catch (dispatchError) {
     const errorMessage = dispatchError instanceof Error ? dispatchError.message : 'Unknown error';

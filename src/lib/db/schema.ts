@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   slug TEXT NOT NULL UNIQUE,
   description TEXT,
   icon TEXT DEFAULT '📁',
+  autopilot_model_override TEXT,
+  planning_model_override TEXT,
   cost_cap_daily REAL DEFAULT 20,
   cost_cap_monthly REAL DEFAULT 100,
   reserved_cost_usd REAL DEFAULT 0,

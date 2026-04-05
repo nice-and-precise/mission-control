@@ -18,7 +18,7 @@ const UNRECONCILED_RUN_ERROR_PREFIX = 'Run ended without completion callback or 
 const EXPLICIT_BLOCKER_PREFIX = 'Blocked:';
 export const FRESH_PERSISTENT_SESSION_GRACE_MS = 30_000;
 
-interface StoredTaskSession extends OpenClawSession {
+export interface StoredTaskSession extends OpenClawSession {
   agent_name?: string | null;
   agent_role?: string | null;
   agent_session_key_prefix?: string | null;
@@ -266,7 +266,7 @@ async function loadGatewaySessions(): Promise<GatewaySessionRecord[]> {
   }
 }
 
-function getStoredTaskSessions(taskId: string): StoredTaskSession[] {
+export function getStoredTaskSessions(taskId: string): StoredTaskSession[] {
   return queryAll<StoredTaskSession>(
     `SELECT
        os.*,
@@ -279,6 +279,72 @@ function getStoredTaskSessions(taskId: string): StoredTaskSession[] {
      ORDER BY os.updated_at DESC, os.created_at DESC`,
     [taskId],
   );
+}
+
+function getStoredTaskSessionAuthorityRank(
+  session: StoredTaskSession,
+  options: { taskId: string; assignedAgentId?: string | null },
+): number {
+  const isRootSession = session.session_type !== 'subagent';
+  const isActiveAttachedRoot =
+    isRootSession &&
+    session.status === 'active' &&
+    session.active_task_id === options.taskId;
+  if (isActiveAttachedRoot) return 0;
+
+  const isAssignedAgentRoot =
+    isRootSession &&
+    Boolean(options.assignedAgentId) &&
+    session.agent_id === options.assignedAgentId;
+  if (isAssignedAgentRoot) return 1;
+
+  if (isRootSession) return 2;
+  return 3;
+}
+
+function compareStoredTaskSessionsByAuthority(
+  left: StoredTaskSession,
+  right: StoredTaskSession,
+  options: { taskId: string; assignedAgentId?: string | null },
+): number {
+  const leftRank = getStoredTaskSessionAuthorityRank(left, options);
+  const rightRank = getStoredTaskSessionAuthorityRank(right, options);
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank;
+  }
+
+  const leftUpdatedAt = timestampToMs(left.updated_at) || 0;
+  const rightUpdatedAt = timestampToMs(right.updated_at) || 0;
+  if (leftUpdatedAt !== rightUpdatedAt) {
+    return rightUpdatedAt - leftUpdatedAt;
+  }
+
+  const leftCreatedAt = timestampToMs(left.created_at) || 0;
+  const rightCreatedAt = timestampToMs(right.created_at) || 0;
+  return rightCreatedAt - leftCreatedAt;
+}
+
+export function pickAuthoritativeStoredTaskSession(
+  sessions: StoredTaskSession[],
+  options: { taskId: string; assignedAgentId?: string | null },
+): StoredTaskSession | null {
+  if (sessions.length === 0) return null;
+
+  const sorted = [...sessions].sort((left, right) =>
+    compareStoredTaskSessionsByAuthority(left, right, options),
+  );
+
+  return sorted[0] || null;
+}
+
+export function getAuthoritativeStoredTaskSession(
+  taskId: string,
+  assignedAgentId?: string | null,
+): StoredTaskSession | null {
+  return pickAuthoritativeStoredTaskSession(getStoredTaskSessions(taskId), {
+    taskId,
+    assignedAgentId,
+  });
 }
 
 function collectRelevantGatewaySessions(
@@ -747,7 +813,7 @@ function logReconciliationActivity(
   });
 }
 
-function buildStoredSessionKey(session: StoredTaskSession): string {
+export function buildStoredSessionKey(session: Pick<StoredTaskSession, 'session_key' | 'openclaw_session_id' | 'agent_role' | 'agent_session_key_prefix'>): string {
   const persistedKey = (session.session_key || '').trim();
   if (persistedKey) {
     return persistedKey;

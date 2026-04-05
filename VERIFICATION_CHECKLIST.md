@@ -42,6 +42,7 @@ Run from `mission-control/`.
 ```bash
 nvm use
 npm ci
+npm run test:runtime-targeted
 npm test
 npm run build
 ```
@@ -49,6 +50,7 @@ npm run build
 Pass criteria:
 
 - the runtime preflight succeeds
+- the targeted callback/runtime suite passes
 - the test suite passes
 - the production build completes successfully
 

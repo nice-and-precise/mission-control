@@ -458,7 +458,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    const expectedRole = task.status === 'assigned'
+    let expectedRole = task.status === 'assigned'
       ? 'builder'
       : getWorkflowOwnerRoleForStatus(workflow, task.status);
 
@@ -474,14 +474,40 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     if (workflow && currentStage && !currentStage.role) {
-      const error = `Cannot dispatch queue stage ${task.status} directly. Advance it through the workflow engine instead.`;
-      run(
-        `UPDATE tasks
-         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
-         WHERE id = ?`,
-        [error, error, now, id]
-      );
-      return NextResponse.json({ error }, { status: 409 });
+      const nextRole = (nextStage?.role || '').toLowerCase();
+      const assignedRole = (agent.role || '').toLowerCase();
+
+      if (nextStage?.status && nextRole && assignedRole === nextRole) {
+        run(
+          `UPDATE tasks
+           SET status = ?,
+               planning_dispatch_error = NULL,
+               status_reason = NULL,
+               updated_at = ?
+           WHERE id = ?`,
+          [nextStage.status, now, id],
+        );
+        run(
+          `INSERT INTO events (id, type, task_id, message, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+          [uuidv4(), 'task_status_changed', id, `Auto-advanced queue stage ${task.status} -> ${nextStage.status} for ${agent.name} dispatch`, now],
+        );
+
+        task.status = nextStage.status;
+        currentStage = nextStage;
+        const promotedStageIndex = workflow.stages.findIndex((s) => s.status === task.status);
+        nextStage = promotedStageIndex >= 0 ? workflow.stages[promotedStageIndex + 1] : undefined;
+        expectedRole = getWorkflowOwnerRoleForStatus(workflow, task.status);
+      } else {
+        const error = `Cannot dispatch queue stage ${task.status} directly. Advance it through the workflow engine instead.`;
+        run(
+          `UPDATE tasks
+           SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+           WHERE id = ?`,
+          [error, error, now, id]
+        );
+        return NextResponse.json({ error }, { status: 409 });
+      }
     }
 
     const builderOwnedDispatch = expectedRole?.toLowerCase() === 'builder';
@@ -518,8 +544,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const isRepoTask = isRepoBackedTask(task as Task);
     const nextStatus = nextStage?.status || 'review';
     const missionControlAuthInstruction = process.env.MC_API_TOKEN
-      ? `**Mission Control callback auth:** Include this header on every Mission Control API call below.\n- \`Authorization: Bearer ${process.env.MC_API_TOKEN}\`\n`
-      : '';
+      ? `**Mission Control callback auth:** Use the \`MC_API_TOKEN\` environment variable already available in this runtime for every Mission Control API call below.\n- Header: \`Authorization: Bearer $MC_API_TOKEN\`\n- Do not print, echo, or paste the token value into logs, files, or chat.\n`
+      : `**Mission Control callback auth:** If \`MC_API_TOKEN\` is unavailable in this runtime, stop and end the run with:\n- \`BLOCKED: Mission Control callback failed: missing MC_API_TOKEN | need: runtime auth token exposure | meanwhile: no authenticated callback attempted\`\n`;
     const registeredDeliverables = getTaskDispatchDeliverables(task.id);
     const repoSurfacePath = getRepoTaskSurfacePath(task as Task, taskProjectDir);
 

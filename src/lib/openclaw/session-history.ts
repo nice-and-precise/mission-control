@@ -286,10 +286,11 @@ function stripToolEvents(items: GatewayTranscriptItem[]): GatewayTranscriptItem[
 }
 
 function stripToolContentFromItem(item: GatewayTranscriptItem): GatewayTranscriptItem | null {
-  const nextItem: GatewayTranscriptItem = {
-    ...item,
-    message: item.message ? { ...item.message } : undefined,
-  };
+  const nextItem: GatewayTranscriptItem = { ...item };
+
+  if (item.message) {
+    nextItem.message = { ...item.message };
+  }
 
   const filteredContent = stripToolContent(item.content);
   if (filteredContent !== undefined) {

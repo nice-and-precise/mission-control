@@ -100,6 +100,24 @@ export async function POST(request: NextRequest) {
 
     const workspaceId = validatedData.workspace_id || 'default';
     const status = validatedData.status || 'inbox';
+    // Tasks created directly into execution/review stages should not reopen planning UI.
+    const planningComplete = status === 'planning' || status === 'inbox' ? 0 : 1;
+
+    const workspaceProduct = queryOne<{
+      id: string;
+      repo_url: string | null;
+      default_branch: string | null;
+    }>(
+      `SELECT id, repo_url, default_branch
+       FROM products
+       WHERE workspace_id = ? AND status = 'active'
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [workspaceId]
+    );
+    const productId = workspaceProduct?.id || null;
+    const repoUrl = workspaceProduct?.repo_url || null;
+    const repoBranch = workspaceProduct?.default_branch || null;
 
     // Auto-assign the workspace's default workflow template
     const defaultTemplate = queryOne<{ id: string }>(
@@ -109,8 +127,8 @@ export async function POST(request: NextRequest) {
     const workflowTemplateId = defaultTemplate?.id || null;
 
     run(
-      `INSERT INTO tasks (id, title, description, status, priority, assigned_agent_id, created_by_agent_id, workspace_id, business_id, due_date, workflow_template_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, title, description, status, priority, assigned_agent_id, created_by_agent_id, workspace_id, business_id, due_date, planning_complete, product_id, repo_url, repo_branch, workflow_template_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         validatedData.title,
@@ -122,6 +140,10 @@ export async function POST(request: NextRequest) {
         workspaceId,
         validatedData.business_id || 'default',
         validatedData.due_date || null,
+        planningComplete,
+        productId,
+        repoUrl,
+        repoBranch,
         workflowTemplateId,
         now,
         now,

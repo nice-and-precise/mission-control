@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDb, queryOne, run } from '@/lib/db';
 import { getOpenClawClient } from './client';
-import { syncOpenClawBuildUsage } from './session-runtime';
+import { rememberOpenClawRunId, syncOpenClawBuildUsage } from './session-runtime';
 
 const TEST_DB_PATH = process.env.DATABASE_PATH || join(tmpdir(), `mission-control-tests-${process.pid}.sqlite`);
 process.env.DATABASE_PATH = TEST_DB_PATH;
@@ -65,7 +65,7 @@ function seedWorkspaceProductTask(agentModel: string) {
     [sessionId, agentId, openclawSessionId, sessionKey, taskId, agentModel, agentModel],
   );
 
-  return { workspaceId, productId, agentId, taskId, sessionId, sessionKey };
+  return { workspaceId, productId, agentId, taskId, sessionId, sessionKey, openclawSessionId };
 }
 
 test('syncOpenClawBuildUsage records one priced build_task event and is idempotent', async () => {
@@ -184,4 +184,46 @@ test('syncOpenClawBuildUsage releases reserved spend and marks unpriced runs exp
   );
   assert.equal(session?.usage_sync_status, 'unpriced');
   assert.ok(session?.usage_external_id);
+});
+
+test('rememberOpenClawRunId scopes the new run id to the active root session row', () => {
+  const seeded = seedWorkspaceProductTask('openai-codex/gpt-5.4');
+  const endedSessionId = crypto.randomUUID();
+
+  run(
+    `UPDATE openclaw_sessions
+     SET status = 'active',
+         active_task_id = ?,
+         updated_at = '2026-04-05T15:40:05.446Z'
+     WHERE id = ?`,
+    [seeded.taskId, seeded.sessionId],
+  );
+  run(
+    `INSERT INTO openclaw_sessions (
+       id, agent_id, openclaw_session_id, session_key, channel, status, session_type, task_id, active_task_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, 'mission-control', 'ended', 'persistent', ?, NULL, '2026-04-05T06:10:13.038Z', '2026-04-05T15:40:05.446Z')`,
+    [
+      endedSessionId,
+      seeded.agentId,
+      seeded.openclawSessionId,
+      seeded.sessionKey,
+      seeded.taskId,
+    ],
+  );
+
+  rememberOpenClawRunId(seeded.sessionKey, 'dispatch-active-run-123');
+
+  const activeSession = queryOne<{ last_run_id: string | null; updated_at: string }>(
+    'SELECT last_run_id, updated_at FROM openclaw_sessions WHERE id = ?',
+    [seeded.sessionId],
+  );
+  const endedSession = queryOne<{ last_run_id: string | null; updated_at: string }>(
+    'SELECT last_run_id, updated_at FROM openclaw_sessions WHERE id = ?',
+    [endedSessionId],
+  );
+
+  assert.equal(activeSession?.last_run_id, 'dispatch-active-run-123');
+  assert.notEqual(activeSession?.updated_at, '2026-04-05T15:40:05.446Z');
+  assert.equal(endedSession?.last_run_id, null);
+  assert.equal(endedSession?.updated_at, '2026-04-05T15:40:05.446Z');
 });
