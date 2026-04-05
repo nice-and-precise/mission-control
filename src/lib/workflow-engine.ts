@@ -83,11 +83,20 @@ export function getWorkflowOwnerRoleForStatus(
   return getWorkflowStageForStatus(workflow, status)?.role || null;
 }
 
+function safeParseJson<T>(raw: string | null | undefined, fallback: T, context: string): T {
+  try {
+    return JSON.parse(raw || '') as T;
+  } catch (error) {
+    console.error(`[Workflow] Failed to parse ${context}:`, error);
+    return fallback;
+  }
+}
+
 function parseTemplate(row: { id: string; workspace_id: string; name: string; description: string; stages: string; fail_targets: string; is_default: number; created_at: string; updated_at: string }): WorkflowTemplate {
   return {
     ...row,
-    stages: JSON.parse(row.stages || '[]') as WorkflowStage[],
-    fail_targets: JSON.parse(row.fail_targets || '{}') as Record<string, string>,
+    stages: safeParseJson<WorkflowStage[]>(row.stages, [], `workflow stages for template ${row.id}`),
+    fail_targets: safeParseJson<Record<string, string>>(row.fail_targets, {}, `workflow fail_targets for template ${row.id}`),
     is_default: Boolean(row.is_default),
   };
 }
@@ -119,15 +128,16 @@ function getAgentForRole(taskId: string, role: string): { id: string; name: stri
   return result ? { id: result.agent_id, name: result.agent_name } : null;
 }
 
-async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: string): Promise<boolean> {
+async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: string, workspaceId: string): Promise<boolean> {
   const executingPlaceholders = EXECUTING_STATUSES.map(() => '?').join(', ');
   const otherExecutingTasks = queryOne<{ cnt: number }>(
     `SELECT COUNT(*) as cnt
      FROM tasks
      WHERE assigned_agent_id = ?
        AND id != ?
+       AND workspace_id = ?
        AND status IN (${executingPlaceholders})`,
-    [agentId, previousTaskId, ...EXECUTING_STATUSES]
+    [agentId, previousTaskId, workspaceId, ...EXECUTING_STATUSES]
   );
 
   if (Number(otherExecutingTasks?.cnt || 0) > 0) {
@@ -139,6 +149,7 @@ async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: st
      FROM tasks t
      WHERE t.assigned_agent_id = ?
        AND t.id != ?
+       AND t.workspace_id = ?
        AND t.status = 'assigned'
        AND t.status_reason LIKE ?
        AND NOT EXISTS (
@@ -150,7 +161,7 @@ async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: st
        )
      ORDER BY t.updated_at ASC
      LIMIT 1`,
-    [agentId, previousTaskId, `${WAITING_FOR_AGENT_PREFIX}%before starting this task.`]
+    [agentId, previousTaskId, workspaceId, `${WAITING_FOR_AGENT_PREFIX}%before starting this task.`]
   );
 
   if (!queuedTask) {
@@ -296,14 +307,15 @@ export async function handleStageTransition(
 
   // Preserve previous agent before updating the task. If the workflow moves the
   // task off the builder, we may immediately start the next queued builder task.
-  const previousTask = queryOne<{ assigned_agent_id: string | null }>(
-    'SELECT assigned_agent_id FROM tasks WHERE id = ?',
+  const previousTask = queryOne<{ assigned_agent_id: string | null; workspace_id: string | null }>(
+    'SELECT assigned_agent_id, workspace_id FROM tasks WHERE id = ?',
     [taskId]
   );
   const releasedAgentId =
     previousTask?.assigned_agent_id && previousTask.assigned_agent_id !== roleAgent.id
       ? previousTask.assigned_agent_id
       : null;
+  const releasedWorkspaceId = previousTask?.workspace_id || null;
 
   // Assign agent to task. Preserve the explicit failure reason when a stage is
   // being routed back through the workflow fail target so the UI still shows
@@ -319,8 +331,8 @@ export async function handleStageTransition(
       : [roleAgent.id, now, taskId]
   );
 
-  if (releasedAgentId) {
-    const startedQueuedTask = await dispatchNextQueuedBuilderTask(releasedAgentId, taskId).catch(err => {
+  if (releasedAgentId && releasedWorkspaceId) {
+    const startedQueuedTask = await dispatchNextQueuedBuilderTask(releasedAgentId, taskId, releasedWorkspaceId).catch(err => {
       console.error(`[Workflow] Failed to advance queued builder task for agent ${releasedAgentId}:`, err);
       return false;
     });
@@ -332,8 +344,9 @@ export async function handleStageTransition(
          FROM tasks
          WHERE assigned_agent_id = ?
            AND id != ?
+           AND workspace_id = ?
            AND status IN (${executingPlaceholders})`,
-        [releasedAgentId, taskId, ...EXECUTING_STATUSES]
+        [releasedAgentId, taskId, releasedWorkspaceId, ...EXECUTING_STATUSES]
       );
       if (!otherExecutingTasks || otherExecutingTasks.cnt === 0) {
         run(

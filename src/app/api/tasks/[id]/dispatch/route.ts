@@ -38,17 +38,18 @@ interface RouteParams {
 
 const AGENT_EXECUTING_STATUSES = ['in_progress', 'testing', 'review', 'verification', 'convoy_active'];
 
-function findBlockingActiveTask(agentId: string, taskId: string): { id: string; title: string; status: string } | null {
+function findBlockingActiveTask(agentId: string, taskId: string, workspaceId: string): { id: string; title: string; status: string } | null {
   const placeholders = AGENT_EXECUTING_STATUSES.map(() => '?').join(', ');
   return queryOne<{ id: string; title: string; status: string }>(
     `SELECT id, title, status
      FROM tasks
      WHERE assigned_agent_id = ?
        AND id != ?
+       AND workspace_id = ?
        AND status IN (${placeholders})
      ORDER BY updated_at DESC
      LIMIT 1`,
-    [agentId, taskId, ...AGENT_EXECUTING_STATUSES]
+    [agentId, taskId, workspaceId, ...AGENT_EXECUTING_STATUSES]
   ) || null;
 }
 
@@ -484,7 +485,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const builderOwnedDispatch = expectedRole?.toLowerCase() === 'builder';
-    const blockingTask = builderOwnedDispatch ? findBlockingActiveTask(agent.id, task.id) : null;
+    const blockingTask = builderOwnedDispatch ? findBlockingActiveTask(agent.id, task.id, task.workspace_id) : null;
 
     if (builderOwnedDispatch && blockingTask) {
       queueTaskUntilAgentIsFree({
