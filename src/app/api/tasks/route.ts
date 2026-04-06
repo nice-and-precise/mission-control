@@ -205,10 +205,16 @@ export async function POST(request: NextRequest) {
         });
 
         if (!dispatchRes.ok) {
-          const errorText = await dispatchRes.text();
+          let errorMessage: string;
+          try {
+            const errorBody = await dispatchRes.json() as { error?: string; message?: string };
+            errorMessage = errorBody.error || errorBody.message || `Auto-dispatch failed (${dispatchRes.status})`;
+          } catch {
+            errorMessage = `Auto-dispatch failed (${dispatchRes.status})`;
+          }
           run(
             'UPDATE tasks SET planning_dispatch_error = ?, updated_at = ? WHERE id = ?',
-            [`Auto-dispatch failed (${dispatchRes.status}): ${errorText}`, now, id]
+            [errorMessage, now, id]
           );
         }
       } catch (err) {
