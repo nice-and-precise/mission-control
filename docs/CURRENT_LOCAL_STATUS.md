@@ -8,11 +8,11 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Snapshot
 
-- Date verified: `2026-04-05`
+- Date verified: `2026-04-05` (session 2)
 - Upstream base: `v2.4.0`
-- Local checkout state: `E2E recovery branch restoring clean BoreReady pipeline and fixing ghost agent creation under Node 24.13.0`
+- Local checkout state: `E2E recovery + reviewer callback gap fix; LLI SaaS unblocked`
 - Git ref: `work/e2e-recovery`
-- Baseline commit: `fce29d9`
+- Baseline commit: `6bb7904` (reviewer callback fix on top of `fce29d9` E2E recovery)
 - GitHub PR state:
   - PR `#1` remains the earlier repo-reconciliation merge into `origin/main`
   - this restore work is local branch state on top of `origin/main`; local `HEAD` does not currently equal `origin/main`
@@ -102,6 +102,14 @@ The following facts were re-verified against the live local runtime on `2026-04-
   - `escalateFailureIfNeeded()` handles the null case by inserting a `governance_warning` activity row instead
   - the Auto Fixer ghost agent (id `12a1b1e8`) created during earlier BoreReady stage failures was deleted from the DB
   - future fixer capability requires deliberately seeding a real fixer-role agent with docs and model
+- Reviewer callback gap (missed VERIFY_PASS/VERIFY_FAIL) is now mitigated by three layers
+  - `buildContractBanner(role)` in `repo-task-handoff.ts` prepends a compact ⚠️ output-format reminder as the very first content of every tester/verifier dispatch message, before any task context
+  - `POST /api/tasks/[id]/verification/retry-dispatch` lets operators manually re-dispatch a reviewer stuck in the `verification` stage
+  - `recoverUnreconciledTaskRunsInternal()` in `agent-health.ts` fires one automatic retry via that endpoint when it detects a missed verdict; idempotence-gated by a `verification_auto_retry` activity row so it fires at most once per task
+- LLI SaaS product monthly cost cap set to `$5.00`
+  - the new budget policy (commits `3dcf254`/`6046e24`) made `cost_cap_monthly` required before dispatch; the product had been left with `NULL` and `budget_status = 'blocked'`
+  - updated directly in DB: `cost_cap_monthly=5.00`, `budget_status='clear'`
+  - tasks under the LLI SaaS product can now be dispatched normally
 
 ## Known Gaps
 
