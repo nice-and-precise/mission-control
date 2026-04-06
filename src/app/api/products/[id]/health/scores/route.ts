@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllProductScores } from '@/lib/autopilot/health-score';
 
 /**
- * GET /api/products/health/scores
+ * GET /api/products/[id]/health/scores
  * Returns all product health scores as a map { productId: score }.
- * Note: This route is placed under [id] directory but the actual batch
- * endpoint is at /api/products/health-scores (see below).
+ * Note: the `id` path segment is unused — this returns scores for all products.
+ * This is the batch health scores endpoint for this deployment.
  */
 export async function GET() {
   try {

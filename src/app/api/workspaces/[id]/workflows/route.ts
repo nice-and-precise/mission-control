@@ -24,11 +24,17 @@ export async function GET(
       'SELECT * FROM workflow_templates WHERE workspace_id = ? ORDER BY is_default DESC, created_at ASC'
     ).all(workspace.id) as Record<string, unknown>[];
 
-    const templates = rows.map((row) => ({
-      ...row,
-      stages: typeof row.stages === 'string' ? JSON.parse(row.stages) : row.stages,
-      fail_targets: typeof row.fail_targets === 'string' ? JSON.parse(row.fail_targets) : row.fail_targets,
-    }));
+    const templates = rows.map((row) => {
+      let stages: unknown = row.stages;
+      let fail_targets: unknown = row.fail_targets;
+      if (typeof row.stages === 'string') {
+        try { stages = JSON.parse(row.stages); } catch { stages = []; console.error(`[Workflows] Invalid stages JSON for template ${row.id}`); }
+      }
+      if (typeof row.fail_targets === 'string') {
+        try { fail_targets = JSON.parse(row.fail_targets); } catch { fail_targets = {}; console.error(`[Workflows] Invalid fail_targets JSON for template ${row.id}`); }
+      }
+      return { ...row, stages, fail_targets };
+    });
 
     return NextResponse.json(templates);
   } catch (error) {

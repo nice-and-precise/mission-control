@@ -47,17 +47,6 @@ function isSameOriginRequest(request: NextRequest): boolean {
   return false;
 }
 
-function isSameOriginEventStreamRequest(request: NextRequest): boolean {
-  if (request.nextUrl.pathname !== '/api/events/stream') {
-    return false;
-  }
-
-  const fetchSite = request.headers.get('sec-fetch-site');
-  const accept = request.headers.get('accept') || '';
-
-  return fetchSite === 'same-origin' && accept.includes('text/event-stream');
-}
-
 // Demo mode — read-only, blocks all mutations
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 if (DEMO_MODE) {
@@ -104,9 +93,6 @@ export function middleware(request: NextRequest) {
   if (pathname === '/api/events/stream') {
     const queryToken = request.nextUrl.searchParams.get('token');
     if (queryToken && queryToken === MC_API_TOKEN) {
-      return NextResponse.next();
-    }
-    if (isSameOriginEventStreamRequest(request)) {
       return NextResponse.next();
     }
     // Fall through to header check below

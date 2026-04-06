@@ -32,30 +32,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ readme });
       }
     } catch {
-      // GitHub API failed, try local filesystem
-    }
-
-    // Try local filesystem — check common project directories
-    const fs = await import('fs');
-    const path = await import('path');
-    const homeDir = process.env.HOME || '/Users/nomames';
-    const projectDirs = [
-      path.join(homeDir, 'projects', repo),
-      path.join(homeDir, 'projects', repo.toLowerCase()),
-    ];
-
-    for (const dir of projectDirs) {
-      const readmePath = path.join(dir, 'README.md');
-      if (fs.existsSync(readmePath)) {
-        const readme = fs.readFileSync(readmePath, 'utf-8');
-        return NextResponse.json({ readme });
-      }
-      // Also try lowercase
-      const readmePathLower = path.join(dir, 'readme.md');
-      if (fs.existsSync(readmePathLower)) {
-        const readme = fs.readFileSync(readmePathLower, 'utf-8');
-        return NextResponse.json({ readme });
-      }
+      // GitHub API failed — private repo or network error
     }
 
     return NextResponse.json(
