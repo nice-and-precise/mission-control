@@ -104,16 +104,25 @@ function seedSession(args: {
   taskId: string;
   openclawSessionId?: string;
   status?: string;
+  sessionType?: string;
+  activeTaskId?: string | null;
 }) {
+  const status = args.status || 'active';
+  const sessionType = args.sessionType || 'persistent';
+  const activeTaskId = args.activeTaskId === undefined
+    ? (status === 'active' && sessionType !== 'subagent' ? args.taskId : null)
+    : args.activeTaskId;
   run(
-    `INSERT INTO openclaw_sessions (id, agent_id, task_id, openclaw_session_id, channel, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'mission-control', ?, datetime('now'), datetime('now'))`,
+    `INSERT INTO openclaw_sessions (id, agent_id, task_id, active_task_id, openclaw_session_id, channel, status, session_type, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'mission-control', ?, ?, datetime('now'), datetime('now'))`,
     [
       crypto.randomUUID(),
       args.agentId,
       args.taskId,
+      activeTaskId,
       args.openclawSessionId || `mission-control-builder-agent-${args.agentId.slice(0, 8)}`,
-      args.status || 'active',
+      status,
+      sessionType,
     ]
   );
 }

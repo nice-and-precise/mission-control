@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDb, queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { reconcileBudgetStateForScope } from '@/lib/costs/budget-policy';
 import { createWorkspaceRecord, getWorkspaceByIdOrSlug } from '@/lib/workspaces';
 import type { Product, ProductWorkspaceMode } from '@/lib/types';
 
@@ -150,7 +151,11 @@ export function updateProduct(id: string, updates: Partial<{
   values.push(id);
 
   run(`UPDATE products SET ${fields.join(', ')} WHERE id = ?`, values);
-  return getProduct(id);
+  const product = getProduct(id);
+  if (product) {
+    reconcileBudgetStateForScope(product.workspace_id, id);
+  }
+  return product;
 }
 
 export function archiveProduct(id: string): boolean {

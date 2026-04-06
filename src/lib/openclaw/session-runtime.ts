@@ -2,6 +2,7 @@ import { queryAll, run } from '@/lib/db';
 import { syncReservedSpendTotals } from '@/lib/costs/budget-policy';
 import { recordCostEvent } from '@/lib/costs/tracker';
 import { getOpenClawClient, type OpenClawClient } from './client';
+import { canonicalMissionControlModelId } from './model-policy';
 import { buildAgentSessionKey } from './routing';
 import type { GatewayConfigSnapshot } from './model-catalog';
 import type { OpenClawSession, OpenClawSessionInfo } from '@/lib/types';
@@ -86,9 +87,11 @@ function readNumber(record: Record<string, unknown> | null, key: string): number
 function normalizeProviderModelId(model?: string | null, provider?: string | null): string | undefined {
   const normalizedModel = (model || '').trim();
   if (!normalizedModel) return undefined;
-  if (normalizedModel.includes('/')) return normalizedModel;
+  if (normalizedModel.includes('/')) return canonicalMissionControlModelId(normalizedModel);
   const normalizedProvider = (provider || '').trim();
-  return normalizedProvider ? `${normalizedProvider}/${normalizedModel}` : normalizedModel;
+  return canonicalMissionControlModelId(
+    normalizedProvider ? `${normalizedProvider}/${normalizedModel}` : normalizedModel,
+  );
 }
 
 export function resolveOpenClawSessionKey(session: Pick<SessionRoutingRow, 'openclaw_session_id' | 'session_key' | 'role' | 'session_key_prefix'>): string {
@@ -336,7 +339,28 @@ export async function bindOpenClawSessionModel(args: {
   await ensureClientReady(client);
 
   const sessionKey = resolveOpenClawSessionKey(args.session);
-  const patchResult = await client.patchSessionModel(sessionKey, args.requestedModel);
+  let patchResult: Record<string, unknown> = {};
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      patchResult = await client.patchSessionModel(sessionKey, args.requestedModel);
+      lastError = null;
+      break;
+    } catch (err) {
+      lastError = err as Error;
+      if (attempt === 1 && /Request timeout: sessions\.patch/i.test(lastError.message || '')) {
+        // One targeted retry after reconnect handles transient gateway stalls.
+        client.forceReconnect();
+        await ensureClientReady(client);
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+
   const patchRecord = asRecord(patchResult);
   const resolvedRecord = asRecord(patchRecord?.resolved);
   const patchedKey = readString(patchRecord, 'key') || sessionKey;
@@ -388,11 +412,39 @@ export function rememberOpenClawRunId(sessionKey: string, runId?: string | null)
     return;
   }
 
+  const now = new Date().toISOString();
+  const activeRootUpdates = run(
+    `UPDATE openclaw_sessions
+     SET last_run_id = ?, updated_at = ?
+     WHERE session_key = ?
+       AND COALESCE(session_type, 'persistent') != 'subagent'
+       AND status = 'active'`,
+    [normalizedRunId, now, normalizedKey],
+  ).changes;
+
+  if (activeRootUpdates > 0) {
+    return;
+  }
+
+  const fallbackRow = queryAll<{ id: string }>(
+    `SELECT id
+     FROM openclaw_sessions
+     WHERE session_key = ?
+       AND COALESCE(session_type, 'persistent') != 'subagent'
+     ORDER BY updated_at DESC, created_at DESC
+     LIMIT 1`,
+    [normalizedKey],
+  )[0];
+
+  if (!fallbackRow?.id) {
+    return;
+  }
+
   run(
     `UPDATE openclaw_sessions
      SET last_run_id = ?, updated_at = ?
-     WHERE session_key = ?`,
-    [normalizedRunId, new Date().toISOString(), normalizedKey],
+     WHERE id = ?`,
+    [normalizedRunId, now, fallbackRow.id],
   );
 }
 

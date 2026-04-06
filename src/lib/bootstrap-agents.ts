@@ -10,6 +10,7 @@ import Database from 'better-sqlite3';
 import { getDb } from '@/lib/db';
 import { getMissionControlUrl } from '@/lib/config';
 import { getDispatchDefaultModelForRole } from '@/lib/openclaw/model-policy';
+import { discoverLocalModelCatalog } from '@/lib/openclaw/model-catalog';
 
 // ── Agent Definitions ──────────────────────────────────────────────
 
@@ -59,6 +60,42 @@ interface AgentDef {
   emoji: string;
   soulMd: string;
   sessionKeyPrefix?: string;
+}
+
+const ROLE_MODEL_FALLBACKS: Record<string, string[]> = {
+  builder: ['openrouter/qwen/qwen3.6-plus:free', 'opencode/qwen3.6-plus-free', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
+  reviewer: ['openrouter/qwen/qwen3.6-plus:free', 'opencode/qwen3.6-plus-free', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
+  tester: ['opencode-go-mm/minimax-m2.5', 'opencode-go/kimi-k2.5', 'opencode-go/glm-5'],
+  learner: ['opencode-go/kimi-k2.5', 'opencode-go/glm-5', 'opencode-go-mm/minimax-m2.5'],
+};
+
+function resolveBootstrapModelForRole(role: string): string {
+  const preferred = getDispatchDefaultModelForRole(role);
+  const catalog = discoverLocalModelCatalog();
+  const available = new Set(
+    (catalog?.providerModels || [])
+      .filter((model) => model.discovered && model.policy_allowed && model.priced)
+      .map((model) => model.id),
+  );
+
+  if (available.size === 0) {
+    return preferred;
+  }
+
+  const roleKey = (role || '').trim().toLowerCase();
+  const candidates = [
+    preferred,
+    ...(ROLE_MODEL_FALLBACKS[roleKey] || []),
+    catalog?.defaultProviderModel || '',
+  ].filter((candidate, index, all): candidate is string => Boolean(candidate) && all.indexOf(candidate) === index);
+
+  for (const candidate of candidates) {
+    if (available.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  return preferred;
 }
 
 const CORE_AGENTS: AgentDef[] = [
@@ -225,7 +262,7 @@ export function bootstrapCoreAgentsRaw(
       agent.soulMd,
       userMd,
       SHARED_AGENTS_MD,
-      getDispatchDefaultModelForRole(agent.role),
+      resolveBootstrapModelForRole(agent.role),
       agent.sessionKeyPrefix || null,
       now,
       now,

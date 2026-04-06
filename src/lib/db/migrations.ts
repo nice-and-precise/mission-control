@@ -1869,6 +1869,49 @@ const migrations: Migration[] = [
       db.exec(`UPDATE openclaw_sessions SET usage_start_cache_write_tokens = COALESCE(usage_start_cache_write_tokens, 0)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_session_key ON openclaw_sessions(session_key)`);
     }
+  },
+  {
+    id: '036',
+    name: 'add_openclaw_active_task_pointer',
+    up: (db) => {
+      console.log('[Migration 036] Adding active_task_id to openclaw_sessions...');
+
+      const sessionsInfo = db.prepare("PRAGMA table_info(openclaw_sessions)").all() as { name: string }[];
+      if (!sessionsInfo.some(col => col.name === 'active_task_id')) {
+        db.exec(`ALTER TABLE openclaw_sessions ADD COLUMN active_task_id TEXT REFERENCES tasks(id)`);
+        console.log('[Migration 036] Added active_task_id to openclaw_sessions');
+      }
+
+      db.exec(`
+        UPDATE openclaw_sessions
+        SET active_task_id = task_id
+        WHERE status = 'active'
+          AND COALESCE(session_type, 'persistent') != 'subagent'
+          AND task_id IS NOT NULL
+          AND active_task_id IS NULL
+      `);
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_active_task ON openclaw_sessions(active_task_id)`);
+    }
+  },
+  {
+    id: '037',
+    name: 'add_workspace_model_overrides',
+    up: (db) => {
+      console.log('[Migration 037] Adding workspace model override columns...');
+
+      const workspaceInfo = db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[];
+
+      if (!workspaceInfo.some(col => col.name === 'autopilot_model_override')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN autopilot_model_override TEXT`);
+        console.log('[Migration 037] Added autopilot_model_override to workspaces');
+      }
+
+      if (!workspaceInfo.some(col => col.name === 'planning_model_override')) {
+        db.exec(`ALTER TABLE workspaces ADD COLUMN planning_model_override TEXT`);
+        console.log('[Migration 037] Added planning_model_override to workspaces');
+      }
+    }
   }
 ];
 
@@ -1905,15 +1948,17 @@ function createPreMigrationBackup(db: Database.Database): void {
 
   // Build a timestamp string that is valid in filenames on all platforms.
   // ISO 8601 with colons replaced — colons are illegal in Windows filenames.
-  // Milliseconds are stripped for a cleaner, more readable filename.
+  // Milliseconds are kept to avoid filename collision when multiple test-suite
+  // DB instances are created within the same wall-clock second.
   const timestamp = new Date().toISOString()
     .replace(/:/g, '-')   // colons → hyphens (Windows compatibility)
-    .replace(/\..+$/, ''); // strip fractional seconds: "2026-03-14T16-32-00"
+    .replace(/\./g, '-')  // dot before ms → hyphen: "2026-03-14T16-32-00-123Z"
+    .replace(/Z$/, '');   // strip trailing Z for cleaner filenames
 
   // Full original filename (e.g. "mission-control.db") becomes the prefix so
   // the backup is clearly associated with its source database.
   const dbBasename = path.basename(dbPath);                  // "mission-control.db"
-  const backupFilename = `${dbBasename}.backup.${timestamp}`; // "mission-control.db.backup.2026-03-14T16-32-00"
+  const backupFilename = `${dbBasename}.backup.${timestamp}`; // "mission-control.db.backup.2026-03-14T16-32-00-123"
   const backupPath = path.join(backupDir, backupFilename);
 
   // VACUUM INTO creates a consistent, compacted snapshot of the open database.

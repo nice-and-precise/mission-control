@@ -451,13 +451,14 @@ export class OpenClawClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve: resolve as (value: unknown) => void, reject });
 
-      // Timeout after 30 seconds
+      // Some gateway operations (notably sessions.patch) can legitimately take longer.
+      const timeoutMs = method === 'sessions.patch' ? 60000 : 30000;
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           reject(new Error(`Request timeout: ${method}`));
         }
-      }, 30000);
+      }, timeoutMs);
 
       this.ws!.send(JSON.stringify(message));
     });

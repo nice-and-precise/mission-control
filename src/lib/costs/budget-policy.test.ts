@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDb, queryOne, run } from '@/lib/db';
-import { enforceBudgetPolicy } from './budget-policy';
+import { enforceBudgetPolicy, syncReservedSpendTotals } from './budget-policy';
 import { recordCostEvent } from './tracker';
 
 const TEST_DB_PATH = process.env.DATABASE_PATH || join(tmpdir(), `mission-control-tests-${process.pid}.sqlite`);
@@ -145,4 +145,60 @@ test('dispatch budget policy hard-blocks products missing required monthly caps'
   assert.equal(blocked?.product_status, 'blocked');
   assert.equal(blocked?.task_status, 'blocked');
   assert.equal(blocked?.product_reason, 'missing_product_monthly_cap');
+});
+
+test('dispatch budget policy explains estimated reserve blocks and clears cap state after reserves drop', () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const productId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+
+  seedWorkspace(workspaceId, 20, 100);
+  seedProduct(productId, workspaceId, 75, 180);
+  seedTask(taskId, workspaceId, productId, 60);
+
+  const blocked = enforceBudgetPolicy({
+    action: 'dispatch',
+    workspaceId,
+    productId,
+    taskId,
+    model: 'openai-codex/gpt-5.4',
+    reserveCostUsd: 60,
+  });
+
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reasonCode, 'workspace_daily_cap_exceeded');
+  assert.match(blocked.message || '', /Mission Control estimated reserve block/i);
+  assert.match(blocked.message || '', /Recorded spend \$0\.00 \+ reserved spend \$0\.00 \+ requested estimated reserve \$60\.00/i);
+  assert.match(blocked.message || '', /not recorded spend or provider quota usage/i);
+
+  run(
+    `UPDATE tasks
+     SET status = 'done',
+         budget_status = 'blocked',
+         budget_block_reason = 'workspace_daily_cap_exceeded',
+         reserved_cost_usd = 0
+     WHERE id = ?`,
+    [taskId],
+  );
+
+  syncReservedSpendTotals(workspaceId, productId);
+
+  const reconciled = queryOne<{
+    workspace_status: string;
+    workspace_reason: string | null;
+    product_status: string;
+    product_reason: string | null;
+  }>(
+    `SELECT
+       (SELECT budget_status FROM workspaces WHERE id = ?) AS workspace_status,
+       (SELECT budget_block_reason FROM workspaces WHERE id = ?) AS workspace_reason,
+       (SELECT budget_status FROM products WHERE id = ?) AS product_status,
+       (SELECT budget_block_reason FROM products WHERE id = ?) AS product_reason`,
+    [workspaceId, workspaceId, productId, productId],
+  );
+
+  assert.equal(reconciled?.workspace_status, 'clear');
+  assert.equal(reconciled?.workspace_reason, null);
+  assert.equal(reconciled?.product_status, 'clear');
+  assert.equal(reconciled?.product_reason, null);
 });

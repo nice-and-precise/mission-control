@@ -29,6 +29,23 @@ interface SpendTotals {
 
 const CLEAR_STATUS: BudgetStatus = 'clear';
 const BLOCKED_STATUS: BudgetStatus = 'blocked';
+const CAP_REASONS = new Set([
+  'workspace_daily_cap_exceeded',
+  'workspace_monthly_cap_exceeded',
+  'product_monthly_cap_exceeded',
+  'task_cap_exceeded',
+]);
+
+export const UNKNOWN_COST_REASONS = ['model_unpriced', 'usage_missing_accountable_pricing'] as const;
+const UNKNOWN_COST_REASON_SET = new Set<string>(UNKNOWN_COST_REASONS);
+
+export function isCapBudgetReason(reason?: string | null): boolean {
+  return !!reason && CAP_REASONS.has(reason);
+}
+
+export function isUnknownCostBudgetReason(reason?: string | null): boolean {
+  return !!reason && UNKNOWN_COST_REASON_SET.has(reason);
+}
 
 export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult {
   const workspace = queryOne<Workspace>('SELECT * FROM workspaces WHERE id = ?', [input.workspaceId]);
@@ -88,7 +105,7 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
     return blockBudgetState(
       input,
       'task_cap_exceeded',
-      `Estimated task cost $${requestedReserve.toFixed(2)} exceeds the per-task cap of $${product.cost_cap_per_task.toFixed(2)}.`,
+      `Mission Control estimated reserve block: requested estimated reserve $${requestedReserve.toFixed(2)} exceeds the product per-task cap of $${product.cost_cap_per_task.toFixed(2)}. This is a local Mission Control planning limit, not recorded spend or provider quota usage.`,
     );
   }
 
@@ -97,7 +114,14 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
     return blockBudgetState(
       input,
       'workspace_daily_cap_exceeded',
-      `Workspace daily cap exceeded: $${(todayTotals.actual + todayTotals.reserved + additionalReserve).toFixed(2)} / $${Number(workspace.cost_cap_daily).toFixed(2)}.`,
+      buildCapExceededMessage({
+        label: 'workspace daily cap',
+        actual: todayTotals.actual,
+        reserved: todayTotals.reserved,
+        requestedReserve: additionalReserve,
+        total: todayTotals.actual + todayTotals.reserved + additionalReserve,
+        limit: Number(workspace.cost_cap_daily),
+      }),
     );
   }
 
@@ -106,7 +130,14 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
     return blockBudgetState(
       input,
       'workspace_monthly_cap_exceeded',
-      `Workspace monthly cap exceeded: $${(monthTotals.actual + monthTotals.reserved + additionalReserve).toFixed(2)} / $${Number(workspace.cost_cap_monthly).toFixed(2)}.`,
+      buildCapExceededMessage({
+        label: 'workspace monthly cap',
+        actual: monthTotals.actual,
+        reserved: monthTotals.reserved,
+        requestedReserve: additionalReserve,
+        total: monthTotals.actual + monthTotals.reserved + additionalReserve,
+        limit: Number(workspace.cost_cap_monthly),
+      }),
     );
   }
 
@@ -116,15 +147,27 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
       return blockBudgetState(
         input,
         'product_monthly_cap_exceeded',
-        `Product monthly cap exceeded: $${(productMonthTotals.actual + productMonthTotals.reserved + additionalReserve).toFixed(2)} / $${Number(product.cost_cap_monthly).toFixed(2)}.`,
+        buildCapExceededMessage({
+          label: 'product monthly cap',
+          actual: productMonthTotals.actual,
+          reserved: productMonthTotals.reserved,
+          requestedReserve: additionalReserve,
+          total: productMonthTotals.actual + productMonthTotals.reserved + additionalReserve,
+          limit: Number(product.cost_cap_monthly),
+        }),
       );
     }
   }
 
   if (input.taskId) {
     run(
-      `UPDATE tasks SET budget_status = ?, budget_block_reason = NULL, reserved_cost_usd = ? WHERE id = ?`,
-      [CLEAR_STATUS, Math.max(currentTaskReserve, requestedReserve), input.taskId],
+      `UPDATE tasks
+       SET budget_status = ?,
+           budget_block_reason = NULL,
+           reserved_cost_usd = ?,
+           updated_at = ?
+       WHERE id = ?`,
+      [CLEAR_STATUS, Math.max(currentTaskReserve, requestedReserve), new Date().toISOString(), input.taskId],
     );
   }
 
@@ -170,6 +213,61 @@ export function syncReservedSpendTotals(workspaceId: string, productId?: string)
     )?.total || 0;
     run('UPDATE products SET reserved_cost_usd = ? WHERE id = ?', [productReserved, productId]);
   }
+
+  reconcileBudgetStateForScope(workspaceId, productId);
+}
+
+export function reconcileBudgetStateForScope(workspaceId: string, productId?: string): void {
+  const workspace = queryOne<Workspace>('SELECT * FROM workspaces WHERE id = ?', [workspaceId]);
+  if (!workspace) return;
+
+  const activeWorkspaceCapReason = queryOne<{ reason: string | null }>(
+    `SELECT budget_block_reason AS reason
+     FROM tasks
+     WHERE workspace_id = ?
+       AND budget_status = 'blocked'
+       AND status NOT IN ('done', 'cancelled')
+       AND budget_block_reason IN (${Array.from(CAP_REASONS).map(() => '?').join(', ')})
+     ORDER BY updated_at DESC, created_at DESC
+     LIMIT 1`,
+    [workspaceId, ...Array.from(CAP_REASONS)],
+  )?.reason;
+
+  if (activeWorkspaceCapReason) {
+    setEntityBudgetState('workspaces', workspaceId, BLOCKED_STATUS, activeWorkspaceCapReason);
+  } else if (
+    isCapBudgetReason(workspace.budget_block_reason)
+    && !workspaceCapsExceeded(workspaceId, workspace)
+  ) {
+    clearEntityBudgetState('workspaces', workspaceId);
+  }
+
+  if (!productId) return;
+
+  const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
+  if (!product) return;
+
+  const activeProductCapReason = queryOne<{ reason: string | null }>(
+    `SELECT budget_block_reason AS reason
+     FROM tasks
+     WHERE product_id = ?
+       AND budget_status = 'blocked'
+       AND status NOT IN ('done', 'cancelled')
+       AND budget_block_reason IN (${Array.from(CAP_REASONS).map(() => '?').join(', ')})
+     ORDER BY updated_at DESC, created_at DESC
+     LIMIT 1`,
+    [productId, ...Array.from(CAP_REASONS)],
+  )?.reason;
+
+  if (activeProductCapReason) {
+    setEntityBudgetState('products', productId, BLOCKED_STATUS, activeProductCapReason);
+  } else if (
+    isCapBudgetReason(product.budget_block_reason)
+    && !productCapsExceeded(productId, product)
+    && !workspaceCapsExceeded(workspaceId, workspace)
+  ) {
+    clearEntityBudgetState('products', productId);
+  }
 }
 
 function blockBudgetState(input: BudgetGuardInput, reasonCode: string, message: string): BudgetGuardResult {
@@ -191,11 +289,21 @@ function blockBudgetState(input: BudgetGuardInput, reasonCode: string, message: 
 }
 
 function setEntityBudgetState(entity: BudgetEntity, id: string, status: BudgetStatus, reason: string | null): void {
-  run(`UPDATE ${entity} SET budget_status = ?, budget_block_reason = ? WHERE id = ?`, [status, reason, id]);
+  run(
+    `UPDATE ${entity}
+     SET budget_status = ?, budget_block_reason = ?, updated_at = ?
+     WHERE id = ?`,
+    [status, reason, new Date().toISOString(), id],
+  );
 }
 
 function clearEntityBudgetState(entity: BudgetEntity, id: string): void {
-  run(`UPDATE ${entity} SET budget_status = ?, budget_block_reason = NULL WHERE id = ?`, [CLEAR_STATUS, id]);
+  run(
+    `UPDATE ${entity}
+     SET budget_status = ?, budget_block_reason = NULL, updated_at = ?
+     WHERE id = ?`,
+    [CLEAR_STATUS, new Date().toISOString(), id],
+  );
 }
 
 function getWorkspaceSpendTotals(workspaceId: string, periodStart: string): SpendTotals {
@@ -230,4 +338,42 @@ function startOfTodayIso(): string {
 function startOfMonthIso(): string {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+}
+
+function workspaceCapsExceeded(workspaceId: string, workspace: Workspace): boolean {
+  if (workspace.cost_cap_daily != null) {
+    const todayTotals = getWorkspaceSpendTotals(workspaceId, startOfTodayIso());
+    if (todayTotals.actual + todayTotals.reserved > Number(workspace.cost_cap_daily)) {
+      return true;
+    }
+  }
+
+  if (workspace.cost_cap_monthly != null) {
+    const monthTotals = getWorkspaceSpendTotals(workspaceId, startOfMonthIso());
+    if (monthTotals.actual + monthTotals.reserved > Number(workspace.cost_cap_monthly)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function productCapsExceeded(productId: string, product: Product): boolean {
+  if (product.cost_cap_monthly == null) {
+    return false;
+  }
+
+  const monthTotals = getProductSpendTotals(productId, startOfMonthIso());
+  return monthTotals.actual + monthTotals.reserved > Number(product.cost_cap_monthly);
+}
+
+function buildCapExceededMessage(input: {
+  label: string;
+  actual: number;
+  reserved: number;
+  requestedReserve: number;
+  total: number;
+  limit: number;
+}): string {
+  return `Mission Control estimated reserve block: ${input.label} would be exceeded. Recorded spend $${input.actual.toFixed(2)} + reserved spend $${input.reserved.toFixed(2)} + requested estimated reserve $${input.requestedReserve.toFixed(2)} = $${input.total.toFixed(2)} against a cap of $${input.limit.toFixed(2)}. This is a local Mission Control planning limit, not recorded spend or provider quota usage.`;
 }

@@ -90,15 +90,57 @@ test('task cannot be done when status_reason indicates failure', () => {
   assert.equal(taskCanBeDone(taskId), false);
 });
 
-test('ensureFixerExists creates fixer when missing', () => {
+test('ensureFixerExists returns null when no fixer agent exists', () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;
   ensureWorkspace(workspaceId);
-  const fixer = ensureFixerExists(workspaceId);
-  assert.equal(fixer.created, true);
+  const result = ensureFixerExists(workspaceId);
+  assert.equal(result, null);
+});
 
-  const stored = queryOne<{ id: string; role: string }>('SELECT id, role FROM agents WHERE id = ?', [fixer.id]);
-  assert.ok(stored);
-  assert.equal(stored?.role, 'fixer');
+test('ensureFixerExists returns a pre-seeded fixer agent when one exists', () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const fixerId = crypto.randomUUID();
+  seedAgent({ id: fixerId, workspace: workspaceId, name: 'Senior Fixer', role: 'fixer' });
+  const result = ensureFixerExists(workspaceId);
+  assert.ok(result);
+  assert.equal(result?.id, fixerId);
+  assert.equal(result?.name, 'Senior Fixer');
+});
+
+test('escalateFailureIfNeeded logs governance_warning when no fixer is configured', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+  const assignedId = crypto.randomUUID();
+  seedTask(taskId, workspaceId);
+  seedAgent({ id: assignedId, workspace: workspaceId, name: 'Builder', role: 'builder' });
+  run(`UPDATE tasks SET assigned_agent_id = ? WHERE id = ?`, [assignedId, taskId]);
+
+  // Seed 2 stage failure activities to cross the threshold
+  run(
+    `INSERT INTO task_activities (id, task_id, activity_type, message, created_at)
+     VALUES (lower(hex(randomblob(16))), ?, 'status_changed', 'Stage failed: testing', datetime('now'))`,
+    [taskId]
+  );
+  run(
+    `INSERT INTO task_activities (id, task_id, activity_type, message, created_at)
+     VALUES (lower(hex(randomblob(16))), ?, 'status_changed', 'Stage failed: testing', datetime('now'))`,
+    [taskId]
+  );
+
+  const { escalateFailureIfNeeded: escalate } = await import('./task-governance');
+  await escalate(taskId, 'testing');
+
+  // Task should NOT have been reassigned
+  const task = queryOne<{ assigned_agent_id: string }>('SELECT assigned_agent_id FROM tasks WHERE id = ?', [taskId]);
+  assert.equal(task?.assigned_agent_id, assignedId);
+
+  // A governance_warning activity should have been inserted
+  const warning = queryOne<{ activity_type: string; message: string }>(
+    `SELECT activity_type, message FROM task_activities WHERE task_id = ? AND activity_type = 'governance_warning'`,
+    [taskId]
+  );
+  assert.ok(warning, 'governance_warning activity should have been inserted');
+  assert.ok(warning?.message.includes('testing'), 'warning message should mention the stage');
 });
 
 test('failure counter reads status_changed failure events', () => {

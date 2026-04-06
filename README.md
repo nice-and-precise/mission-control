@@ -372,6 +372,8 @@ OPENCLAW_GATEWAY_TOKEN=your-token-here
 
 > **Token source:** use the same token or SecretRef-backed value that your OpenClaw gateway actually uses. On this local baseline, the supported path is `python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local`, which derives `OPENCLAW_GATEWAY_TOKEN` from the configured OpenClaw SecretRef target instead of scraping config or LaunchAgent metadata.
 
+`nvm use` reads `.nvmrc`, which is pinned to the same Node `24.13.0` runtime used in CI. If you switch Node majors, run a fresh `npm ci` before testing or starting the app.
+
 ### Run
 
 ```bash
@@ -519,6 +521,19 @@ Subtasks run in parallel with dependency-aware scheduling. Health monitoring det
 | `WORKSPACE_BASE_PATH` | — | `~/Documents/Shared` | Base directory for workspace files |
 | `PROJECTS_PATH` | — | `~/Documents/Shared/projects` | Directory for project folders |
 
+### Workspace AI Routing Overrides
+
+Mission Control now supports workspace-scoped model routing overrides in **Settings**:
+
+- `Autopilot Model Override` controls the model used by product research and ideation for that workspace.
+- `Planning Model Override` controls the model used when planning sessions are started for tasks in that workspace.
+
+Behavior:
+
+- If an override is set, Mission Control uses it for that workflow.
+- If no override is set, Mission Control falls back to the configured environment defaults.
+- Overrides are validated against the OpenClaw model policy allowlist before being saved.
+
 ### Security (Production)
 
 Generate secure tokens:
@@ -647,6 +662,16 @@ autensa/
 2. Verify your AI API key is valid
 3. Refresh and click the task again
 
+### Task looks active but Sessions tab is empty
+
+Mission Control task runs can use either a root persistent session or spawned subagent sessions.
+
+If you are debugging a task and want the full runtime picture:
+
+1. Open the task modal and check the Sessions tab for task-scoped sessions
+2. Query `GET /api/openclaw/sessions?task_id=<task-id>` to inspect all task sessions directly
+3. Do not treat an empty `/api/tasks/[id]/subagent` response as proof that the builder is idle; that endpoint only covers spawned subagents
+
 ### Port 4000 already in use
 
 ```bash
@@ -672,6 +697,23 @@ docker run -e NO_PROXY=localhost,127.0.0.1 ...
 ```
 
 For historical context, see the upstream discussion in [crshdn/mission-control issue #30](https://github.com/crshdn/mission-control/issues/30).
+
+### Callback/runtime regressions after changing Node versions
+
+Use the guarded runtime suite instead of raw `tsx --test` commands:
+
+```bash
+nvm use
+npm ci
+npm run test:runtime-targeted
+```
+
+If a completed card still shows the generic `Run ended without completion callback or workflow handoff ...` banner, preview and apply the targeted cleanup:
+
+```bash
+npm run tasks:repair-successful-run-errors
+npm run tasks:repair-successful-run-errors -- --apply
+```
 
 ---
 

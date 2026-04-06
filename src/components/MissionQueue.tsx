@@ -51,7 +51,10 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
   const [statusMoveTask, setStatusMoveTask] = useState<Task | null>(null);
   const [pendingMove, setPendingMove] = useState<{ task: Task; targetStatus: TaskStatus } | null>(null);
 
-  const getTasksByStatus = (status: TaskStatus) => tasks.filter((task) => task.status === status);
+  const getTasksByStatus = (status: TaskStatus) =>
+    tasks.filter((task) =>
+      task.status === status || (status === 'planning' && task.status === 'pending_dispatch')
+    );
 
   // Active pipeline states where manual moves are dangerous
   const ACTIVE_PIPELINE_STATES: TaskStatus[] = ['assigned', 'in_progress', 'convoy_active', 'testing', 'review', 'verification'];
@@ -322,6 +325,7 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
 
 function AssignedStatusBadge({ task, portraitMode }: { task: Task; portraitMode: boolean }) {
   const [retrying, setRetrying] = useState(false);
+  const statusReason = (task.status_reason || '').trim();
   const updatedAt = new Date(task.updated_at).getTime();
   const staleMs = Date.now() - updatedAt;
   const isStale = staleMs > 2 * 60 * 1000; // 2 minutes
@@ -344,11 +348,12 @@ function AssignedStatusBadge({ task, portraitMode }: { task: Task; portraitMode:
 
   if (isStale) {
     const staleMinutes = Math.floor(staleMs / 60000);
+    const staleLabel = statusReason ? `${statusReason} (${staleMinutes}m)` : `Stuck in assigned for ${staleMinutes}m`;
     return (
       <div className={`${portraitMode ? 'mb-3 py-2 px-3' : 'mb-2 py-1.5 px-2.5'} bg-amber-500/10 rounded-md border border-amber-500/30`}>
         <div className="flex items-center gap-2 mb-1.5">
           <div className="w-2 h-2 bg-amber-400 rounded-full flex-shrink-0" />
-          <span className="text-xs text-amber-200">Stuck in assigned for {staleMinutes}m</span>
+          <span className="text-xs text-amber-200">{staleLabel}</span>
         </div>
         <button
           onClick={handleRetryDispatch}
@@ -357,6 +362,15 @@ function AssignedStatusBadge({ task, portraitMode }: { task: Task; portraitMode:
         >
           {retrying ? 'Dispatching...' : '↻ Retry Dispatch'}
         </button>
+      </div>
+    );
+  }
+
+  if (statusReason) {
+    return (
+      <div className={`flex items-center gap-2 ${portraitMode ? 'mb-3 py-2 px-3' : 'mb-2 py-1.5 px-2.5'} bg-yellow-500/10 rounded-md border border-yellow-500/30`}>
+        <div className="w-2 h-2 bg-yellow-400 rounded-full flex-shrink-0" />
+        <span className="text-xs text-yellow-200">{statusReason}</span>
       </div>
     );
   }

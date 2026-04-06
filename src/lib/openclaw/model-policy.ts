@@ -23,6 +23,19 @@ export interface MissionControlModelPolicy {
 const OPENCODE_GO_GLM5_USD_PER_REQUEST = 12 / 1150;
 const OPENCODE_GO_KIMI_USD_PER_REQUEST = 12 / 1850;
 const OPENCODE_GO_MINIMAX_M25_USD_PER_REQUEST = 12 / 20000;
+const FREE_MODEL_USD_PER_REQUEST = 0;
+
+const MODEL_ID_ALIASES: Record<string, string> = {
+  'qwen/qwen3.6-plus:free': 'openrouter/qwen/qwen3.6-plus:free',
+  'qwen/qwen3.6-plus-preview:free': 'openrouter/qwen/qwen3.6-plus-preview:free',
+  'qwen/qwen3.5-plus-02-15': 'openrouter/qwen/qwen3.5-plus-02-15',
+  'qwen/qwen3-max-thinking': 'openrouter/qwen/qwen3-max-thinking',
+  'nvidia/nemotron-3-super-120b-a12b:free': 'openrouter/nvidia/nemotron-3-super-120b-a12b:free',
+};
+
+export function canonicalMissionControlModelId(modelId: string): string {
+  return MODEL_ID_ALIASES[modelId] || modelId;
+}
 
 const DOCS_BACKED_MODEL_POLICIES: MissionControlModelPolicy[] = [
   {
@@ -75,15 +88,89 @@ const DOCS_BACKED_MODEL_POLICIES: MissionControlModelPolicy[] = [
     },
   },
   {
-    id: 'opencode-go/minimax-m2.5',
-    label: 'opencode-go/minimax-m2.5',
+    id: 'opencode-go-mm/minimax-m2.5',
+    label: 'opencode-go-mm/minimax-m2.5',
     policy_allowed: true,
-    provider_family: 'opencode-go',
+    provider_family: 'opencode-go-mm',
     priced: true,
     pricing: {
       kind: 'flat_request',
       estimatedUsdPerRequest: OPENCODE_GO_MINIMAX_M25_USD_PER_REQUEST,
       note: 'Estimated from OpenCode Go documented $12 per 5-hour window and 20,000 MiniMax M2.5 requests per window.',
+    },
+  },
+  {
+    id: 'opencode/qwen3.6-plus-free',
+    label: 'opencode/qwen3.6-plus-free',
+    policy_allowed: true,
+    provider_family: 'opencode',
+    priced: true,
+    pricing: {
+      kind: 'flat_request',
+      estimatedUsdPerRequest: FREE_MODEL_USD_PER_REQUEST,
+      note: 'OpenCode Zen free lane; cost tracked as $0/request for Mission Control accounting.',
+    },
+  },
+  {
+    id: 'openrouter/qwen/qwen3.6-plus:free',
+    label: 'openrouter/qwen/qwen3.6-plus:free',
+    policy_allowed: true,
+    provider_family: 'openrouter',
+    priced: true,
+    pricing: {
+      kind: 'flat_request',
+      estimatedUsdPerRequest: FREE_MODEL_USD_PER_REQUEST,
+      note: 'OpenRouter free tier lane; cost tracked as $0/request for Mission Control accounting.',
+    },
+  },
+  {
+    id: 'openrouter/qwen/qwen3.6-plus-preview:free',
+    label: 'openrouter/qwen/qwen3.6-plus-preview:free',
+    policy_allowed: true,
+    provider_family: 'openrouter',
+    priced: true,
+    pricing: {
+      kind: 'flat_request',
+      estimatedUsdPerRequest: FREE_MODEL_USD_PER_REQUEST,
+      note: 'OpenRouter preview free lane; cost tracked as $0/request for Mission Control accounting.',
+    },
+  },
+  {
+    id: 'openrouter/nvidia/nemotron-3-super-120b-a12b:free',
+    label: 'openrouter/nvidia/nemotron-3-super-120b-a12b:free',
+    policy_allowed: true,
+    provider_family: 'openrouter',
+    priced: true,
+    pricing: {
+      kind: 'flat_request',
+      estimatedUsdPerRequest: FREE_MODEL_USD_PER_REQUEST,
+      note: 'OpenRouter Nemotron free lane; cost tracked as $0/request for Mission Control accounting.',
+    },
+  },
+  {
+    id: 'openrouter/xiaomi/mimo-v2-pro',
+    label: 'openrouter/xiaomi/mimo-v2-pro',
+    policy_allowed: true,
+    provider_family: 'openrouter',
+    priced: true,
+    pricing: {
+      kind: 'token',
+      inputUsdPerMillion: 0.2,
+      outputUsdPerMillion: 0.8,
+      note: 'Mission Control accounting estimate for MiMo V2 Pro while preserving budget enforcement.',
+    },
+  },
+  {
+    id: 'openrouter/qwen/qwen3.5-plus-02-15',
+    label: 'openrouter/qwen/qwen3.5-plus-02-15',
+    policy_allowed: true,
+    provider_family: 'openrouter',
+    priced: true,
+    pricing: {
+      kind: 'token',
+      inputUsdPerMillion: 0.26,
+      outputUsdPerMillion: 1.56,
+      note: 'Mission Control accounting estimate for Qwen3.5-Plus on OpenRouter while preserving budget enforcement.',
     },
   },
 ];
@@ -96,17 +183,18 @@ function providerFamilyForModel(modelId: string): string {
 }
 
 export function getMissionControlModelPolicy(modelId: string): MissionControlModelPolicy {
-  const policy = POLICY_BY_ID.get(modelId);
+  const canonicalId = canonicalMissionControlModelId(modelId);
+  const policy = POLICY_BY_ID.get(canonicalId);
   if (policy) {
     return policy;
   }
 
   return {
-    id: modelId,
-    label: modelId,
+    id: canonicalId,
+    label: canonicalId,
     policy_allowed: false,
     policy_reason: 'Not in the Mission Control docs-backed model policy allowlist.',
-    provider_family: providerFamilyForModel(modelId),
+    provider_family: providerFamilyForModel(canonicalId),
     priced: false,
     pricing: {
       kind: 'none',
@@ -123,9 +211,9 @@ export function getDispatchDefaultModelForRole(role?: string | null): string {
   switch ((role || '').trim().toLowerCase()) {
     case 'reviewer':
     case 'builder':
-      return 'openai-codex/gpt-5.4';
+      return 'openrouter/qwen/qwen3.6-plus:free';
     case 'tester':
-      return 'opencode-go/minimax-m2.5';
+      return 'opencode-go-mm/minimax-m2.5';
     case 'learner':
       return 'opencode-go/kimi-k2.5';
     default:

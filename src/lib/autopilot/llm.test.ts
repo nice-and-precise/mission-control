@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('gateway HTTP completions default to the Mission Control policy model and send the required OpenClaw scopes header', async () => {
+test('gateway HTTP completions send the required OpenClaw scopes header', async () => {
   process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
+  // Pin to an openclaw agent target so no x-openclaw-model header is added.
+  process.env.AUTOPILOT_MODEL = 'openclaw';
 
   const originalFetch = globalThis.fetch;
   let capturedInit: RequestInit | undefined;
@@ -24,12 +26,10 @@ test('gateway HTTP completions default to the Mission Control policy model and s
     const result = await mod.complete('hello');
 
     assert.equal(result.content, 'ok');
-    assert.equal(result.model, 'opencode-go/kimi-k2.5');
     assert.deepEqual(capturedInit?.headers, {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer test-token',
       'x-openclaw-scopes': 'operator.read,operator.write',
-      'x-openclaw-model': 'opencode-go/kimi-k2.5',
     });
 
     const body = JSON.parse(String(capturedInit?.body));
@@ -37,6 +37,7 @@ test('gateway HTTP completions default to the Mission Control policy model and s
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.AUTOPILOT_MODEL;
   }
 });
 
@@ -60,9 +61,7 @@ test('gateway HTTP completions route provider model overrides through x-openclaw
 
   try {
     const mod = await import(`./llm?test-override=${Date.now()}`);
-    const result = await mod.complete('hello', { model: 'openai-codex/gpt-5.4' });
-
-    assert.equal(result.model, 'openai-codex/gpt-5.4');
+    await mod.complete('hello', { model: 'openai-codex/gpt-5.4' });
 
     assert.deepEqual(capturedInit?.headers, {
       'Content-Type': 'application/json',

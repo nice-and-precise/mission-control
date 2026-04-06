@@ -42,6 +42,7 @@ Run from `mission-control/`.
 ```bash
 nvm use
 npm ci
+npm run test:runtime-targeted
 npm test
 npm run build
 ```
@@ -49,6 +50,7 @@ npm run build
 Pass criteria:
 
 - the runtime preflight succeeds
+- the targeted callback/runtime suite passes
 - the test suite passes
 - the production build completes successfully
 
@@ -73,6 +75,20 @@ curl -i -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/health
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/status | jq
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/openclaw/models | jq
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:4000/api/openclaw/background-tasks" | jq
+curl -I http://localhost:4000/autopilot
+curl -I http://localhost:4000/activity
+
+PRODUCT_ID="$(curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Verification Smoke Product","description":"temporary verification product","icon":"🧪"}' \
+  http://localhost:4000/api/products | jq -r '.id')"
+
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products | jq 'length'
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID" | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/swipe/deck | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/health | jq
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID"/costs | jq
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/products/"$PRODUCT_ID" | jq
 ```
 
 Pass criteria:
@@ -80,25 +96,29 @@ Pass criteria:
 - `GET /api/health` returns HTTP `200`
 - when `MC_API_TOKEN` is set, direct `curl` checks include `Authorization: Bearer <token>`
 - the UI loads on `http://localhost:4000`
+- `/autopilot` and `/activity` both return HTTP `200`
 - Mission Control can reach the configured OpenClaw gateway
 - `/api/openclaw/models` returns separate `agentTargets` and `providerModels`
 - `/api/openclaw/background-tasks` returns `tasks`, `status`, `sourceChannel`, and `warning`
 - `/api/openclaw/background-tasks` uses `status: "ok"` for true empty-success responses and `status: "degraded"` when the CLI timed out or only returned JSON on `stderr`
 - if you have a known session key or session ID, `/api/openclaw/sessions/{id}/history` returns a normalized transcript payload instead of `501`
+- the product smoke flow can create a temporary product, fetch its detail/deck/health/cost routes, and archive it again without `404`
+- after the delete call, the temporary product no longer appears in `GET /api/products`
+- if new `src/app/**` routes were added during an already-running `next dev` session, restart `npm run dev` before treating route-level `404`s as code regressions
 
 ## Documentation Gate
 
 Run from the workspace root.
 
 ```bash
-pytest tests/test_model_lanes_policy.py tests/test_docs_integrity.py
+npm run docs:check
 ```
 
 Pass criteria:
 
 - the active portable docs do not hardcode Jordan-specific absolute machine paths
 - local markdown links in the active portable docs resolve
-- the current model-lane policy does not reintroduce `qwen-portal`
+- the docs sanity gate exits `0`
 
 ## Final Result
 

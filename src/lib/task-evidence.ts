@@ -18,7 +18,7 @@ const UNRECONCILED_RUN_ERROR_PREFIX = 'Run ended without completion callback or 
 const EXPLICIT_BLOCKER_PREFIX = 'Blocked:';
 export const FRESH_PERSISTENT_SESSION_GRACE_MS = 30_000;
 
-interface StoredTaskSession extends OpenClawSession {
+export interface StoredTaskSession extends OpenClawSession {
   agent_name?: string | null;
   agent_role?: string | null;
   agent_session_key_prefix?: string | null;
@@ -61,6 +61,12 @@ export interface TaskStreamState {
 export interface TaskEvidenceReconciliation extends TaskStreamState {
   recoveredSubagentCount: number;
   recoveredDeliverableCount: number;
+}
+
+function isStoredSessionActivelyAttached(session: StoredTaskSession): boolean {
+  if (session.status !== 'active') return false;
+  if (session.session_type === 'subagent') return true;
+  return Boolean(session.active_task_id && session.active_task_id === session.task_id);
 }
 
 let gatewaySessionsResolverForTests: (() => Promise<unknown>) | null = null;
@@ -123,10 +129,10 @@ export function buildTaskStreamState(
   }
 
   const activeSessionKeys = storedSessions
-    .filter((session) => session.status === 'active')
+    .filter((session) => isStoredSessionActivelyAttached(session))
     .map((session) => buildStoredSessionKey(session));
   const terminalSessionKeys = storedSessions
-    .filter((session) => session.status !== 'active')
+    .filter((session) => !isStoredSessionActivelyAttached(session))
     .map((session) => buildStoredSessionKey(session));
 
   if (activeSessionKeys.length > 0) {
@@ -260,7 +266,7 @@ async function loadGatewaySessions(): Promise<GatewaySessionRecord[]> {
   }
 }
 
-function getStoredTaskSessions(taskId: string): StoredTaskSession[] {
+export function getStoredTaskSessions(taskId: string): StoredTaskSession[] {
   return queryAll<StoredTaskSession>(
     `SELECT
        os.*,
@@ -273,6 +279,72 @@ function getStoredTaskSessions(taskId: string): StoredTaskSession[] {
      ORDER BY os.updated_at DESC, os.created_at DESC`,
     [taskId],
   );
+}
+
+function getStoredTaskSessionAuthorityRank(
+  session: StoredTaskSession,
+  options: { taskId: string; assignedAgentId?: string | null },
+): number {
+  const isRootSession = session.session_type !== 'subagent';
+  const isActiveAttachedRoot =
+    isRootSession &&
+    session.status === 'active' &&
+    session.active_task_id === options.taskId;
+  if (isActiveAttachedRoot) return 0;
+
+  const isAssignedAgentRoot =
+    isRootSession &&
+    Boolean(options.assignedAgentId) &&
+    session.agent_id === options.assignedAgentId;
+  if (isAssignedAgentRoot) return 1;
+
+  if (isRootSession) return 2;
+  return 3;
+}
+
+function compareStoredTaskSessionsByAuthority(
+  left: StoredTaskSession,
+  right: StoredTaskSession,
+  options: { taskId: string; assignedAgentId?: string | null },
+): number {
+  const leftRank = getStoredTaskSessionAuthorityRank(left, options);
+  const rightRank = getStoredTaskSessionAuthorityRank(right, options);
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank;
+  }
+
+  const leftUpdatedAt = timestampToMs(left.updated_at) || 0;
+  const rightUpdatedAt = timestampToMs(right.updated_at) || 0;
+  if (leftUpdatedAt !== rightUpdatedAt) {
+    return rightUpdatedAt - leftUpdatedAt;
+  }
+
+  const leftCreatedAt = timestampToMs(left.created_at) || 0;
+  const rightCreatedAt = timestampToMs(right.created_at) || 0;
+  return rightCreatedAt - leftCreatedAt;
+}
+
+export function pickAuthoritativeStoredTaskSession(
+  sessions: StoredTaskSession[],
+  options: { taskId: string; assignedAgentId?: string | null },
+): StoredTaskSession | null {
+  if (sessions.length === 0) return null;
+
+  const sorted = [...sessions].sort((left, right) =>
+    compareStoredTaskSessionsByAuthority(left, right, options),
+  );
+
+  return sorted[0] || null;
+}
+
+export function getAuthoritativeStoredTaskSession(
+  taskId: string,
+  assignedAgentId?: string | null,
+): StoredTaskSession | null {
+  return pickAuthoritativeStoredTaskSession(getStoredTaskSessions(taskId), {
+    taskId,
+    assignedAgentId,
+  });
 }
 
 function collectRelevantGatewaySessions(
@@ -384,9 +456,16 @@ async function syncActiveStoredTaskSessions(
 
     run(
       `UPDATE openclaw_sessions
-       SET channel = ?, status = ?, ended_at = ?, updated_at = ?
+       SET channel = ?,
+           status = ?,
+           active_task_id = CASE
+             WHEN ? = 'active' THEN active_task_id
+             ELSE NULL
+           END,
+           ended_at = ?,
+           updated_at = ?
        WHERE id = ?`,
-      [nextChannel, mappedStatus, endedAt || null, now, session.id],
+      [nextChannel, mappedStatus, mappedStatus, endedAt || null, now, session.id],
     );
 
     session.channel = nextChannel || undefined;
@@ -734,7 +813,7 @@ function logReconciliationActivity(
   });
 }
 
-function buildStoredSessionKey(session: StoredTaskSession): string {
+export function buildStoredSessionKey(session: Pick<StoredTaskSession, 'session_key' | 'openclaw_session_id' | 'agent_role' | 'agent_session_key_prefix'>): string {
   const persistedKey = (session.session_key || '').trim();
   if (persistedKey) {
     return persistedKey;
@@ -850,6 +929,11 @@ export function shouldSuppressHealthEvidenceActivity(
   streamState?: Pick<TaskStreamState, 'status'> | null,
 ): boolean {
   if (!task?.id) return false;
+
+  if (streamState) {
+    return streamState.status !== 'streaming';
+  }
+
   const planningError = task.planning_dispatch_error?.trim();
   if (!planningError) {
     return false;
@@ -862,15 +946,15 @@ export function shouldSuppressHealthEvidenceActivity(
     return false;
   }
 
-  if (streamState) {
-    return streamState.status !== 'streaming';
-  }
-
   const activeTaskSession = queryOne<{ count: number }>(
     `SELECT COUNT(*) AS count
      FROM openclaw_sessions
-     WHERE task_id = ? AND status = 'active'`,
-    [task.id],
+     WHERE status = 'active'
+       AND (
+         (COALESCE(session_type, 'persistent') = 'subagent' AND task_id = ?)
+         OR (COALESCE(session_type, 'persistent') != 'subagent' AND active_task_id = ?)
+       )`,
+    [task.id, task.id],
   )?.count || 0;
 
   return activeTaskSession === 0;

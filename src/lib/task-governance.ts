@@ -37,22 +37,15 @@ export function getFailureCountInStage(taskId: string, stage: string): number {
   return Number(row?.count || 0);
 }
 
-export function ensureFixerExists(workspaceId: string): { id: string; name: string; created: boolean } {
-  const existing = queryOne<{ id: string; name: string }>(
+// Lookup-only: returns a pre-seeded fixer/senior agent for this workspace, or null if none
+// exists. Does NOT auto-create agents — callers must seed a fixer agent manually before
+// the escalation path can activate. This prevents ghost agents with no model or docs from
+// appearing on the board after stage failures.
+export function ensureFixerExists(workspaceId: string): { id: string; name: string } | null {
+  return queryOne<{ id: string; name: string }>(
     `SELECT id, name FROM agents WHERE workspace_id = ? AND role IN ('fixer','senior') AND status != 'offline' ORDER BY role = 'fixer' DESC, updated_at DESC LIMIT 1`,
     [workspaceId]
-  );
-  if (existing) return { ...existing, created: false };
-
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
-  const name = 'Auto Fixer';
-  run(
-    `INSERT INTO agents (id, name, role, description, avatar_emoji, status, is_master, workspace_id, source, created_at, updated_at)
-     VALUES (?, ?, 'fixer', 'Auto-created fixer for repeated stage failures', '🛠️', 'standby', 0, ?, 'local', ?, ?)`,
-    [id, name, workspaceId, now, now]
-  );
-  return { id, name, created: true };
+  ) ?? null;
 }
 
 export async function escalateFailureIfNeeded(taskId: string, stage: string): Promise<void> {
@@ -63,6 +56,18 @@ export async function escalateFailureIfNeeded(taskId: string, stage: string): Pr
 
   const fixer = ensureFixerExists(task.workspace_id);
   const now = new Date().toISOString();
+
+  if (!fixer) {
+    // No fixer agent is configured for this workspace — log a board-visible warning and stop.
+    // To activate escalation, manually create an agent with role='fixer' in this workspace.
+    run(
+      `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+       VALUES (lower(hex(randomblob(16))), ?, NULL, 'governance_warning', ?, ?)`,
+      [taskId, `Escalation threshold reached in stage "${stage}" but no fixer agent is configured for this workspace. Manually create a fixer agent to enable auto-escalation.`, now]
+    );
+    return;
+  }
+
   transaction(() => {
     run('UPDATE tasks SET assigned_agent_id = ?, status_reason = ?, updated_at = ? WHERE id = ?', [
       fixer.id,
@@ -84,14 +89,12 @@ export async function escalateFailureIfNeeded(taskId: string, stage: string): Pr
     );
   });
 
-  if (fixer.created) {
-    await notifyLearner(taskId, {
-      previousStatus: stage,
-      newStatus: stage,
-      passed: true,
-      context: `Auto-created fixer agent (${fixer.name}) due to repeated stage failures.`,
-    });
-  }
+  await notifyLearner(taskId, {
+    previousStatus: stage,
+    newStatus: stage,
+    passed: true,
+    context: `Fixer agent (${fixer.name}) assigned due to repeated stage failures.`,
+  });
 }
 
 export async function recordLearnerOnTransition(taskId: string, previousStatus: string, newStatus: string, passed = true, failReason?: string): Promise<void> {

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Zap, Settings, ChevronLeft, LayoutGrid } from 'lucide-react';
+import { Zap, Settings, ChevronLeft, LayoutGrid, Rocket, Activity } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import { format } from 'date-fns';
 import type { Workspace } from '@/lib/types';
@@ -102,6 +102,24 @@ export function Header({ workspace }: HeaderProps) {
 
       {/* Right: Time & Status */}
       <div className="flex items-center gap-4">
+        {workspace && (
+          <div className="flex items-center gap-2">
+            <Link
+              href="/autopilot"
+              className="flex items-center gap-1 rounded border border-mc-border px-2 py-1 text-xs text-mc-text-secondary hover:bg-mc-bg-tertiary hover:text-mc-text"
+            >
+              <Rocket className="w-3.5 h-3.5" />
+              Autopilot
+            </Link>
+            <Link
+              href={`/workspace/${workspace.slug}/activity`}
+              className="flex items-center gap-1 rounded border border-mc-border px-2 py-1 text-xs text-mc-text-secondary hover:bg-mc-bg-tertiary hover:text-mc-text"
+            >
+              <Activity className="w-3.5 h-3.5" />
+              Activity
+            </Link>
+          </div>
+        )}
         <span className="text-mc-text-secondary text-sm font-mono">
           {format(currentTime, 'HH:mm:ss')}
         </span>

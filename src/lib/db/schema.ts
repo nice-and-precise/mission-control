@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   slug TEXT NOT NULL UNIQUE,
   description TEXT,
   icon TEXT DEFAULT '📁',
+  autopilot_model_override TEXT,
+  planning_model_override TEXT,
   cost_cap_daily REAL DEFAULT 20,
   cost_cap_monthly REAL DEFAULT 100,
   reserved_cost_usd REAL DEFAULT 0,
@@ -204,6 +206,7 @@ CREATE TABLE IF NOT EXISTS openclaw_sessions (
   status TEXT DEFAULT 'active',
   session_type TEXT DEFAULT 'persistent',
   task_id TEXT REFERENCES tasks(id),
+  active_task_id TEXT REFERENCES tasks(id),
   requested_model TEXT,
   bound_model TEXT,
   binding_status TEXT DEFAULT 'unbound',
@@ -782,6 +785,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE INDEX IF NOT EXISTS idx_activities_task ON task_activities(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deliverables_task ON task_deliverables(task_id);
 CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_task ON openclaw_sessions(task_id);
+CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_active_task ON openclaw_sessions(active_task_id);
 CREATE INDEX IF NOT EXISTS idx_openclaw_sessions_session_key ON openclaw_sessions(session_key);
 CREATE INDEX IF NOT EXISTS idx_planning_questions_task ON planning_questions(task_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_workflow_templates_workspace ON workflow_templates(workspace_id);

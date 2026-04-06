@@ -17,6 +17,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { existsSync, mkdirSync, readFileSync } from 'fs';
 import path from 'path';
 import * as csstree from 'css-tree';
+import { handleStageTransition } from '@/lib/workflow-engine';
 import type { Task, TaskDeliverable } from '@/lib/types';
 
 interface CssValidationError {
@@ -166,7 +167,7 @@ export async function POST(
     let newStatus: string | undefined;
 
     if (passed) {
-      // Tests passed -> move to review for human approval
+      // Tests passed -> move through workflow handoff so review ownership is updated correctly
       run(
         'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
         ['review', now, taskId]
@@ -184,8 +185,12 @@ export async function POST(
           now
         ]
       );
+
+      await handleStageTransition(taskId, 'review', {
+        previousStatus: 'testing',
+      });
     } else {
-      // Tests failed -> move back to assigned for agent to fix
+      // Tests failed -> move back through workflow handoff so builder ownership/queueing is updated correctly
       run(
         'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
         ['assigned', now, taskId]
@@ -203,6 +208,11 @@ export async function POST(
           now
         ]
       );
+
+      await handleStageTransition(taskId, 'assigned', {
+        previousStatus: 'testing',
+        failReason: summary,
+      });
     }
 
     const response: TestResponse = {

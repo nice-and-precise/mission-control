@@ -6,8 +6,12 @@ import { buildCheckpointContext } from '@/lib/checkpoint';
 import { processAgentSignal } from '@/lib/agent-signals';
 import { resolveTaskRunOutcomeFromGatewayHistory } from '@/lib/openclaw/session-history';
 import { syncOpenClawBuildUsage } from '@/lib/openclaw/session-runtime';
-import { buildAgentSessionKey } from '@/lib/openclaw/routing';
-import { reconcileTaskRuntimeEvidence, shouldSuppressHealthEvidenceActivity } from '@/lib/task-evidence';
+import {
+  buildStoredSessionKey,
+  getAuthoritativeStoredTaskSession,
+  reconcileTaskRuntimeEvidence,
+  shouldSuppressHealthEvidenceActivity,
+} from '@/lib/task-evidence';
 import type { Agent, AgentHealth, AgentHealthState, Task } from '@/lib/types';
 
 const STALL_THRESHOLD_MINUTES = 5;
@@ -18,6 +22,20 @@ const UNRECONCILED_RUN_ERROR_PREFIX = 'Run ended without completion callback or 
 let healthCheckCycleInFlight: Promise<AgentHealth[]> | null = null;
 let healthCheckImplementationForTests: (() => Promise<AgentHealth[]>) | null = null;
 let unreconciledTaskRunRecoveryInFlight: Promise<number> | null = null;
+
+function parseObservedAt(value?: string | null): number | null {
+  if (!value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function latestObservedAt(...values: Array<string | null | undefined>): number | null {
+  const observed = values
+    .map((value) => parseObservedAt(value))
+    .filter((value): value is number => value !== null);
+  if (observed.length === 0) return null;
+  return Math.max(...observed);
+}
 
 /**
  * Check health state for a single agent.
@@ -49,39 +67,48 @@ export function checkAgentHealth(agentId: string): AgentHealthState {
   if (!activeTask) return 'idle';
 
   // Check if OpenClaw session is still alive
-  const session = queryOne<{ status: string }>(
+  const session = queryOne<{ status: string; updated_at: string | null }>(
     `SELECT status
+            , updated_at
      FROM openclaw_sessions
      WHERE agent_id = ?
-       AND task_id = ?
+       AND active_task_id = ?
        AND status = 'active'
        AND session_type != 'subagent'
      LIMIT 1`,
     [agentId, activeTask.id]
   );
 
+  let runtimeActivityAt = session?.updated_at || null;
   if (!session) {
     // Check for any active session (task might not be linked yet)
-    const anySession = queryOne<{ status: string }>(
+    const anySession = queryOne<{ status: string; updated_at: string | null }>(
       `SELECT status
+              , updated_at
        FROM openclaw_sessions
        WHERE agent_id = ?
          AND status = 'active'
          AND session_type != 'subagent'
+       ORDER BY updated_at DESC
        LIMIT 1`,
       [agentId]
     );
     if (!anySession) return 'zombie';
+    runtimeActivityAt = anySession.updated_at || null;
   }
 
-  // Check last REAL activity (exclude health check logs — they reset the clock and prevent stuck detection)
+  // Treat live session freshness as real activity too. OpenClaw's Sessions API exposes
+  // per-session updatedAt, and the local session mirror updates updated_at whenever fresh
+  // run traffic arrives. Long-running tasks with sparse task_activities should stay
+  // healthy while the runtime session is still moving.
   const lastActivity = queryOne<{ created_at: string }>(
     `SELECT created_at FROM task_activities WHERE task_id = ? AND message NOT LIKE 'Agent health:%' ORDER BY created_at DESC LIMIT 1`,
     [activeTask.id]
   );
 
-  if (lastActivity) {
-    const minutesSince = (Date.now() - new Date(lastActivity.created_at).getTime()) / 60000;
+  const lastObservedAt = latestObservedAt(lastActivity?.created_at, runtimeActivityAt);
+  if (lastObservedAt !== null) {
+    const minutesSince = (Date.now() - lastObservedAt) / 60000;
     if (minutesSince > STUCK_THRESHOLD_MINUTES) return 'stuck';
     if (minutesSince > STALL_THRESHOLD_MINUTES) return 'stalled';
   } else {
@@ -218,12 +245,21 @@ async function runHealthCheckCycleInternal(): Promise<AgentHealth[]> {
   const activeTaskIds = queryAll<{ id: string }>(
     `SELECT DISTINCT t.id
      FROM tasks t
-     JOIN openclaw_sessions os ON os.task_id = t.id AND os.status = 'active'
+     JOIN openclaw_sessions os
+       ON (
+         (COALESCE(os.session_type, 'persistent') = 'subagent' AND os.task_id = t.id)
+         OR (COALESCE(os.session_type, 'persistent') != 'subagent' AND os.active_task_id = t.id)
+       )
+      AND os.status = 'active'
      WHERE t.status IN ('assigned', 'in_progress', 'testing', 'review', 'verification')`
   );
 
   for (const { id } of activeTaskIds) {
-    await reconcileTaskRuntimeEvidence(id);
+    const streamState = await reconcileTaskRuntimeEvidence(id);
+    const activeTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+    if (activeTask) {
+      clearFalseUnreconciledRunError(activeTask, streamState, now);
+    }
   }
 
   await syncOpenClawBuildUsage().catch((error) => {
@@ -257,7 +293,11 @@ async function sweepOrphanedAssignedTasks(now: string): Promise<void> {
      WHERE status = 'assigned' 
        AND planning_complete = 1 
        AND NOT EXISTS (
-         SELECT 1 FROM openclaw_sessions os WHERE os.task_id = tasks.id
+         SELECT 1
+         FROM openclaw_sessions os
+         WHERE os.active_task_id = tasks.id
+           AND os.status = 'active'
+           AND COALESCE(os.session_type, 'persistent') != 'subagent'
        )
        AND (julianday('now') - julianday(updated_at)) * 1440 > ?`,
     [ASSIGNED_STALE_MINUTES]
@@ -316,7 +356,7 @@ function shouldSuppressPendingDispatchHealthNoise(
   const activeRootSessionCount = queryOne<{ count: number }>(
     `SELECT COUNT(*) AS count
      FROM openclaw_sessions
-     WHERE task_id = ?
+     WHERE active_task_id = ?
        AND session_type != 'subagent'
        AND status = 'active'`,
     [task.id],
@@ -360,45 +400,37 @@ export async function runHealthCheckCycle(): Promise<AgentHealth[]> {
   }
 }
 
-type UnreconciledRunTask = Task & {
-  latest_session_status?: string;
-  latest_session_created_at?: string;
-  latest_session_updated_at?: string;
-  latest_openclaw_session_id?: string;
-  latest_agent_role?: string | null;
-  latest_agent_session_key_prefix?: string | null;
-};
+function clearFalseUnreconciledRunError(
+  task: Pick<Task, 'id' | 'planning_dispatch_error' | 'status_reason'>,
+  streamState: Pick<Awaited<ReturnType<typeof reconcileTaskRuntimeEvidence>>, 'status'>,
+  now: string,
+): boolean {
+  if (streamState.status !== 'streaming') return false;
+
+  const hasGenericRunError = Boolean(task.planning_dispatch_error?.startsWith(UNRECONCILED_RUN_ERROR_PREFIX));
+  const hasGenericStatusReason = Boolean(task.status_reason?.startsWith(UNRECONCILED_RUN_ERROR_PREFIX));
+  if (!hasGenericRunError && !hasGenericStatusReason) {
+    return false;
+  }
+
+  run(
+    `UPDATE tasks
+     SET planning_dispatch_error = NULL,
+         status_reason = NULL,
+         updated_at = ?
+     WHERE id = ?`,
+    [now, task.id],
+  );
+
+  return true;
+}
 
 async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number> {
-  const unreconciledRuns = queryAll<UnreconciledRunTask>(
-    `WITH ranked_task_sessions AS (
-       SELECT
-         os.*,
-         ROW_NUMBER() OVER (
-           PARTITION BY os.task_id
-           ORDER BY
-             CASE WHEN os.session_type = 'subagent' THEN 1 ELSE 0 END,
-             CASE WHEN os.agent_id = t.assigned_agent_id THEN 0 ELSE 1 END,
-             os.updated_at DESC
-         ) as session_rank
-       FROM openclaw_sessions os
-       JOIN tasks t ON t.id = os.task_id
-     )
-     SELECT
-       t.*,
-       os.status as latest_session_status,
-       os.created_at as latest_session_created_at,
-       os.updated_at as latest_session_updated_at,
-       os.openclaw_session_id as latest_openclaw_session_id,
-       a.role as latest_agent_role,
-       a.session_key_prefix as latest_agent_session_key_prefix
+  const candidateTasks = queryAll<Task>(
+    `SELECT DISTINCT t.*
      FROM tasks t
-     JOIN ranked_task_sessions os
-       ON os.task_id = t.id
-      AND os.session_rank = 1
-     LEFT JOIN agents a ON a.id = os.agent_id
+     JOIN openclaw_sessions os ON os.task_id = t.id
      WHERE t.status IN ('assigned', 'in_progress', 'testing', 'review', 'verification')
-       AND os.status != 'active'
        AND (
          t.planning_dispatch_error IS NULL
          OR trim(t.planning_dispatch_error) = ''
@@ -409,9 +441,18 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
 
   let recoveredCount = 0;
 
-  for (const task of unreconciledRuns) {
+  for (const task of candidateTasks) {
     const reconciliationState = await reconcileTaskRuntimeEvidence(task.id);
-    const sessionKey = buildTaskSessionKey(task);
+    if (clearFalseUnreconciledRunError(task, reconciliationState, now)) {
+      continue;
+    }
+
+    const authoritativeSession = getAuthoritativeStoredTaskSession(task.id, task.assigned_agent_id);
+    if (!authoritativeSession || authoritativeSession.status === 'active') {
+      continue;
+    }
+
+    const sessionKey = buildStoredSessionKey(authoritativeSession);
 
     if (sessionKey) {
       const matchingGatewaySession = reconciliationState.relevantSessions.find(
@@ -420,7 +461,7 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
 
       try {
         console.info(
-          `[Health] Reconciling ended task run ${task.id}: session=${sessionKey} status=${task.latest_session_status || 'unknown'} history=lookup`,
+          `[Health] Reconciling ended task run ${task.id}: session=${sessionKey} status=${authoritativeSession.status || 'unknown'} history=lookup`,
         );
         const resolvedOutcome = await resolveTaskRunOutcomeFromGatewayHistory({
           sessionKey,
@@ -460,7 +501,7 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
       );
     }
 
-    const error = `Run ended without completion callback or workflow handoff (${task.latest_session_status || 'ended'} session).`;
+    const error = `Run ended without completion callback or workflow handoff (${authoritativeSession.status || 'ended'} session).`;
     const existingRunError = queryOne<{ id: string }>(
       `SELECT id
        FROM task_activities
@@ -469,7 +510,7 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
          AND created_at >= COALESCE(?, ?, created_at)
        ORDER BY created_at DESC
        LIMIT 1`,
-      [task.id, error, task.latest_session_created_at || null, task.latest_session_updated_at || null]
+      [task.id, error, authoritativeSession.created_at || null, authoritativeSession.updated_at || null]
     );
 
     if (existingRunError && task.planning_dispatch_error === error) {
@@ -499,6 +540,43 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
         [now, task.assigned_agent_id]
       );
     }
+
+    // One-shot auto-redispatch for verification tasks: if the reviewer session ended without
+    // emitting VERIFY_PASS/VERIFY_FAIL, schedule a single redispatch so the reviewer sees
+    // the output-format contract banner at the top of the message. The
+    // verification_auto_retry activity row gates this to one attempt per task — if the
+    // activity already exists the task is left for operator intervention.
+    if (task.status === 'verification' && task.assigned_agent_id) {
+      const existingRetry = queryOne<{ id: string }>(
+        `SELECT id FROM task_activities WHERE task_id = ? AND activity_type = 'verification_auto_retry' LIMIT 1`,
+        [task.id],
+      );
+      if (!existingRetry) {
+        const retryMsg =
+          'Auto-redispatching to reviewer: session ended without VERIFY_PASS/VERIFY_FAIL verdict.';
+        run(
+          `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+           VALUES (?, ?, ?, 'verification_auto_retry', ?, ?)`,
+          [uuidv4(), task.id, task.assigned_agent_id, retryMsg, now],
+        );
+        const retryUrl = getMissionControlUrl();
+        const retryHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (process.env.MC_API_TOKEN) {
+          retryHeaders['Authorization'] = `Bearer ${process.env.MC_API_TOKEN}`;
+        }
+        void fetch(`${retryUrl}/api/tasks/${task.id}/verification/retry-dispatch`, {
+          method: 'POST',
+          headers: retryHeaders,
+          signal: AbortSignal.timeout(30_000),
+        }).catch((err: Error) => {
+          console.warn(
+            `[Health] Verification auto-redispatch failed for task ${task.id}:`,
+            err.message,
+          );
+        });
+        console.info(`[Health] Scheduled verification auto-redispatch for task ${task.id}`);
+      }
+    }
   }
 
   return recoveredCount;
@@ -523,21 +601,6 @@ export function setHealthCheckImplementationForTests(
 ): void {
   healthCheckImplementationForTests = implementation;
   healthCheckCycleInFlight = null;
-}
-
-function buildTaskSessionKey(task: {
-  latest_openclaw_session_id?: string;
-  latest_agent_role?: string | null;
-  latest_agent_session_key_prefix?: string | null;
-}): string | null {
-  const openclawSessionId = task.latest_openclaw_session_id;
-  if (!openclawSessionId) return null;
-  if (openclawSessionId.startsWith('agent:')) return openclawSessionId;
-
-  return buildAgentSessionKey(openclawSessionId, {
-    role: task.latest_agent_role || undefined,
-    session_key_prefix: task.latest_agent_session_key_prefix || undefined,
-  });
 }
 
 /**
@@ -570,7 +633,14 @@ export async function nudgeAgent(agentId: string): Promise<{ success: boolean; e
 
   // Kill current session
   run(
-    `UPDATE openclaw_sessions SET status = 'ended', ended_at = ?, updated_at = ? WHERE agent_id = ? AND status = 'active'`,
+    `UPDATE openclaw_sessions
+     SET status = 'ended',
+         active_task_id = NULL,
+         ended_at = ?,
+         updated_at = ?
+     WHERE agent_id = ?
+       AND status = 'active'
+       AND COALESCE(session_type, 'persistent') != 'subagent'`,
     [now, now, agentId]
   );
 

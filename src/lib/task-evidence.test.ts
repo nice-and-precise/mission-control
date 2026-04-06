@@ -130,18 +130,25 @@ function seedTaskSession(args: {
   openclawSessionId: string;
   status?: string;
   sessionType?: string;
+  activeTaskId?: string | null;
 }) {
+  const status = args.status || 'ended';
+  const sessionType = args.sessionType || 'persistent';
+  const activeTaskId = args.activeTaskId === undefined
+    ? (status === 'active' && sessionType !== 'subagent' ? args.taskId : null)
+    : args.activeTaskId;
   run(
     `INSERT INTO openclaw_sessions
-      (id, agent_id, openclaw_session_id, channel, status, session_type, task_id, created_at, updated_at)
-     VALUES (?, ?, ?, 'mission-control', ?, ?, ?, datetime('now'), datetime('now'))`,
+      (id, agent_id, openclaw_session_id, channel, status, session_type, task_id, active_task_id, created_at, updated_at)
+     VALUES (?, ?, ?, 'mission-control', ?, ?, ?, ?, datetime('now'), datetime('now'))`,
     [
       args.id || crypto.randomUUID(),
       args.agentId,
       args.openclawSessionId,
-      args.status || 'ended',
-      args.sessionType || 'persistent',
+      status,
+      sessionType,
       args.taskId,
+      activeTaskId,
     ],
   );
 }
@@ -1686,6 +1693,98 @@ test('openclaw status route triggers immediate unreconciled run recovery for end
   assert.equal(response.status, 200);
   assert.equal(payload.recovered_runs, 1);
   assert.equal(task?.status, 'done');
+  assert.equal(task?.planning_dispatch_error, null);
+  assert.equal(task?.status_reason, null);
+});
+
+test('openclaw status route clears a false unreconciled error when a reused builder lane is still streaming', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = buildTaskId('streamlive');
+  const builderId = crypto.randomUUID();
+  const activeSessionId = crypto.randomUUID();
+  const endedSessionId = crypto.randomUUID();
+  const sessionKey = 'agent:coder:mission-control-builder-agent-streamlive';
+  const sessionId = 'mission-control-builder-agent-streamlive';
+
+  seedAgent({
+    id: builderId,
+    workspaceId,
+    name: 'Builder Agent',
+    role: 'builder',
+    status: 'working',
+  });
+  seedTask({
+    id: taskId,
+    workspaceId,
+    assignedAgentId: builderId,
+    status: 'in_progress',
+    planningDispatchError: 'Run ended without completion callback or workflow handoff (ended session).',
+  });
+  seedTaskSession({
+    id: endedSessionId,
+    taskId,
+    agentId: builderId,
+    openclawSessionId: sessionId,
+    status: 'ended',
+  });
+  seedTaskSession({
+    id: activeSessionId,
+    taskId,
+    agentId: builderId,
+    openclawSessionId: sessionId,
+    status: 'active',
+  });
+  run(
+    `UPDATE openclaw_sessions
+     SET session_key = ?, updated_at = '2026-04-05T15:40:05.446Z'
+     WHERE id IN (?, ?)`,
+    [sessionKey, activeSessionId, endedSessionId],
+  );
+  run(
+    `UPDATE openclaw_sessions
+     SET ended_at = '2026-04-05T15:40:05.165Z', active_task_id = NULL
+     WHERE id = ?`,
+    [endedSessionId],
+  );
+
+  setGatewaySessionsResolverForTests(async () => ({
+    sessions: [
+      {
+        key: sessionKey,
+        sessionId: 'runtime-streamlive',
+        status: 'running',
+        channel: 'mission-control',
+        updatedAt: 1775404381000,
+      },
+    ],
+  }));
+
+  const client = getOpenClawClient() as unknown as {
+    isConnected: () => boolean;
+    connect: () => Promise<void>;
+    listSessions: () => Promise<unknown[]>;
+  };
+  client.isConnected = () => true;
+  client.connect = async () => undefined;
+  client.listSessions = async () => [
+    {
+      key: sessionKey,
+      sessionId: 'runtime-streamlive',
+      status: 'running',
+      channel: 'mission-control',
+    },
+  ];
+
+  const response = await getOpenClawStatusRoute();
+  const payload = await response.json();
+  const task = queryOne<{ status: string; planning_dispatch_error: string | null; status_reason: string | null }>(
+    'SELECT status, planning_dispatch_error, status_reason FROM tasks WHERE id = ?',
+    [taskId],
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.recovered_runs, 0);
+  assert.equal(task?.status, 'in_progress');
   assert.equal(task?.planning_dispatch_error, null);
   assert.equal(task?.status_reason, null);
 });

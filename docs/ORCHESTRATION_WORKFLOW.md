@@ -9,18 +9,23 @@ This guide explains how the master agent should orchestrate sub-agents to proper
 
 When the orchestrator spawns a sub-agent to work on a task, **all activities, deliverables, and session info should be logged** to Mission Control so the UI shows real-time progress.
 
+For the concrete operator sequence for card creation, queue handling, and recovery after the 2026-04-05 BoreReady failures, use [CARD_OPERATIONS_RUNBOOK.md](CARD_OPERATIONS_RUNBOOK.md). This guide explains the orchestration contract; the runbook explains the safe operating method.
+
 Mission Control now has a fallback reconciliation path for visibility, but that fallback is not a substitute for the normal orchestration contract:
+
 - Sessions can be recovered from the live OpenClaw session tree
 - Deliverables can be recovered from the isolated workspace diff
 - Agent Live can remain visible and report `session_ended` for unreconciled ended runs
 - Workflow advancement still requires explicit completion markers
 
 For repo-backed tasks, the normal orchestration contract is workspace-first:
+
 - test/review against the task `workspace_path`
 - use registered file deliverables as the primary artifact list
 - include the PR URL as supporting context and as a `url` deliverable when available
 
 For repo-backed testing and review work:
+
 - shell commands should use `cd <workspace> && ...`
 - non-shell file tools such as `read`, `edit`, `find`, `glob`, and file-path-based `ls` must use absolute paths under the task workspace
 - when a deliverable is listed with an absolute path, copy that exact path instead of switching to a bare repo-relative path
@@ -63,6 +68,7 @@ await orchestrator.onSubAgentSpawned({
 ```
 
 **What this does:**
+
 - Creates activity log entry: "Sub-agent spawned: fix-mission-control-integration"
 - Registers session in `openclaw_sessions` table with `session_type='subagent'`
 - Broadcasts SSE event so UI updates immediately
@@ -89,6 +95,7 @@ await orchestrator.logActivity({
 ```
 
 **Activity Types:**
+
 - `spawned` - Sub-agent started
 - `updated` - General progress update
 - `completed` - Sub-agent finished
@@ -126,6 +133,7 @@ await orchestrator.onSubAgentCompleted({
 ```
 
 **What this does:**
+
 - Logs completion activity
 - Marks session as `status='completed'`, sets `ended_at` timestamp
 - Logs all deliverables to `task_deliverables` table
@@ -137,6 +145,7 @@ await orchestrator.onSubAgentCompleted({
 In the strict workflow, `review` is a queue stage and `verification` is the active reviewer-owned approval stage.
 
 **Before approving**:
+
 - if the task is still in `review`, it is waiting for the verification slot and should not be marked `done` yet
 - once the task reaches `verification`, verify deliverables exist and the assigned reviewer may complete `verification -> done`
 - legacy direct `review -> done` approval remains master-only
@@ -162,6 +171,7 @@ await fetch('http://localhost:4000/api/tasks/task-abc123', {
 ```
 
 **Backend validation:**
+
 - Endpoint will reject `review` → `done` transitions from non-master agents
 - Endpoint allows `verification` → `done` for the assigned reviewer role or a master agent
 - This ensures quality control

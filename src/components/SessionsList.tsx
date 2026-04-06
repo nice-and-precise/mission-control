@@ -1,6 +1,6 @@
 /**
  * SessionsList Component
- * Displays OpenClaw sub-agent sessions for a task
+ * Displays OpenClaw task sessions for a task
  */
 
 'use client';
@@ -13,13 +13,17 @@ interface SessionWithAgent {
   id: string;
   agent_id: string | null;
   openclaw_session_id: string;
+  session_key?: string | null;
   channel: string | null;
   status: string;
-  session_type: string;
+  session_type: string | null;
   task_id: string | null;
   ended_at: string | null;
   created_at: string;
   updated_at: string;
+  requested_model?: string | null;
+  bound_model?: string | null;
+  binding_status?: string | null;
   agent_name?: string;
   agent_avatar_emoji?: string;
 }
@@ -35,7 +39,7 @@ export function SessionsList({ taskId }: SessionsListProps) {
 
   const loadSessions = useCallback(async () => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}/subagent`);
+      const res = await fetch(`/api/openclaw/sessions?task_id=${encodeURIComponent(taskId)}`);
       if (res.ok) {
         const data = await res.json();
         setSessions(data);
@@ -63,6 +67,17 @@ export function SessionsList({ taskId }: SessionsListProps) {
         return <Circle className="w-4 h-4 text-mc-text-secondary" />;
     }
   };
+
+  const getSessionTypeLabel = (sessionType: string | null | undefined) => {
+    if (sessionType === 'subagent') {
+      return 'Sub-agent';
+    }
+    return 'Root session';
+  };
+
+  const isSubagentSession = (session: SessionWithAgent) => session.session_type === 'subagent';
+
+  const getHistoryRef = (session: SessionWithAgent) => session.session_key || session.openclaw_session_id;
 
   const formatDuration = (start: string, end?: string | null) => {
     const startTime = new Date(start).getTime();
@@ -176,7 +191,7 @@ export function SessionsList({ taskId }: SessionsListProps) {
     return (
       <div className="flex flex-col items-center justify-center py-8 text-mc-text-secondary">
         <div className="text-4xl mb-2">🤖</div>
-        <p>No sub-agent sessions yet</p>
+        <p>No task sessions yet</p>
       </div>
     );
   }
@@ -201,7 +216,10 @@ export function SessionsList({ taskId }: SessionsListProps) {
               <div className="flex items-center gap-2 mb-1">
                 {getStatusIcon(session.status)}
                 <span className="font-medium text-mc-text">
-                  {session.agent_name || 'Sub-Agent'}
+                  {session.agent_name || (isSubagentSession(session) ? 'Sub-Agent' : 'Task Session')}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-mc-border text-mc-text-secondary uppercase tracking-wide">
+                  {getSessionTypeLabel(session.session_type)}
                 </span>
                 <span className="text-xs text-mc-text-secondary capitalize">
                   {session.status}
@@ -210,8 +228,17 @@ export function SessionsList({ taskId }: SessionsListProps) {
 
               {/* Session ID */}
               <div className="text-xs text-mc-text-secondary font-mono mb-2 truncate">
-                Session: {session.openclaw_session_id}
+                Session: {getHistoryRef(session)}
               </div>
+
+              {(session.bound_model || session.requested_model) && (
+                <div className="text-xs text-mc-text-secondary mb-2">
+                  Model: <span className="font-mono text-mc-text">{session.bound_model || session.requested_model}</span>
+                  {session.binding_status && (
+                    <span className="ml-2 capitalize">({session.binding_status})</span>
+                  )}
+                </div>
+              )}
 
               {/* Duration and timestamps */}
               <div className="flex items-center gap-3 text-xs text-mc-text-secondary">
@@ -232,7 +259,7 @@ export function SessionsList({ taskId }: SessionsListProps) {
 
             {/* Action Buttons */}
             <div className="flex flex-col gap-1">
-              {session.status === 'active' && (
+              {session.status === 'active' && isSubagentSession(session) && (
                 <button
                   onClick={() => handleMarkComplete(session.openclaw_session_id)}
                   className="p-1.5 hover:bg-mc-bg-tertiary rounded text-green-500"
@@ -242,25 +269,27 @@ export function SessionsList({ taskId }: SessionsListProps) {
                 </button>
               )}
               <button
-                onClick={() => toggleHistory(session.openclaw_session_id)}
+                onClick={() => toggleHistory(getHistoryRef(session))}
                 className="p-1.5 hover:bg-mc-bg-tertiary rounded text-mc-text-secondary"
                 title="Toggle history"
               >
                 <History className="w-4 h-4" />
               </button>
-              <button
-                onClick={() => handleDelete(session.openclaw_session_id)}
-                className="p-1.5 hover:bg-mc-bg-tertiary rounded text-red-500"
-                title="Delete session"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {isSubagentSession(session) && (
+                <button
+                  onClick={() => handleDelete(session.openclaw_session_id)}
+                  className="p-1.5 hover:bg-mc-bg-tertiary rounded text-red-500"
+                  title="Delete session"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
-          {expandedHistory[session.openclaw_session_id] && (
+          {expandedHistory[getHistoryRef(session)] && (
             <div className="ml-11 mt-2 rounded-lg border border-mc-border bg-mc-bg p-3 text-xs text-mc-text-secondary space-y-2">
-              {expandedHistory[session.openclaw_session_id].map((line, index) => (
-                <div key={`${session.openclaw_session_id}-${index}`} className="whitespace-pre-wrap break-words font-mono">
+              {expandedHistory[getHistoryRef(session)].map((line, index) => (
+                <div key={`${getHistoryRef(session)}-${index}`} className="whitespace-pre-wrap break-words font-mono">
                   {line}
                 </div>
               ))}

@@ -2,6 +2,7 @@
 'use strict';
 
 const LOCAL_DEFAULT_NODE_MAJOR = 24;
+const LOCAL_DEFAULT_NODE_VERSION = '24.13.0';
 const DOCKER_PARITY_NODE_MAJOR = 20;
 const SUPPORTED_NODE_MAJORS = [20, 24];
 const SUPPORTED_NODE_RANGE = '20.x or 24.x';
@@ -38,7 +39,7 @@ function formatNodeVersionError(actualVersion) {
     `Current runtime: Node ${actualVersion}`,
     '',
     'Fix:',
-    `  1. Use Node ${LOCAL_DEFAULT_NODE_MAJOR} for local quick start: nvm use`,
+    `  1. Use Node ${LOCAL_DEFAULT_NODE_VERSION} for local quick start: nvm use`,
     `  2. Or use Node ${DOCKER_PARITY_NODE_MAJOR} for Docker/CI parity`,
     '  3. Reinstall dependencies after switching runtimes: npm ci',
     '',
@@ -51,7 +52,7 @@ function formatMissingDependencyError(packageName) {
     `Mission Control could not load ${packageName}.`,
     '',
     'Fix:',
-    `  1. Use a supported runtime (Node ${LOCAL_DEFAULT_NODE_MAJOR} by default, or Node ${DOCKER_PARITY_NODE_MAJOR} for Docker parity)`,
+    `  1. Use a supported runtime (Node ${LOCAL_DEFAULT_NODE_VERSION} by default, or Node ${DOCKER_PARITY_NODE_MAJOR} for Docker parity)`,
     '  2. npm ci',
   ].join('\n');
 }
@@ -64,7 +65,7 @@ function formatNativeAddonError(error) {
     detail,
     '',
     'Fix:',
-    `  1. Stay on one supported runtime at a time (Node ${LOCAL_DEFAULT_NODE_MAJOR} for local quick start or Node ${DOCKER_PARITY_NODE_MAJOR} for Docker parity)`,
+    `  1. Stay on one supported runtime at a time (Node ${LOCAL_DEFAULT_NODE_VERSION} for local quick start or Node ${DOCKER_PARITY_NODE_MAJOR} for Docker parity)`,
     '  2. Reinstall dependencies for that runtime: npm ci',
     `  3. If the addon is still stale after a clean install, run npm rebuild ${SQLITE_PACKAGE_NAME}`,
   ].join('\n');
@@ -135,6 +136,7 @@ if (require.main === module) {
 module.exports = {
   DOCKER_PARITY_NODE_MAJOR,
   LOCAL_DEFAULT_NODE_MAJOR,
+  LOCAL_DEFAULT_NODE_VERSION,
   SUPPORTED_NODE_MAJORS,
   SUPPORTED_NODE_RANGE,
   checkNodeVersion,

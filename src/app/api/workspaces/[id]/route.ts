@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { reconcileBudgetStateForScope } from '@/lib/costs/budget-policy';
+import { validateWorkspaceOverrideModel } from '@/lib/openclaw/workspace-model-overrides';
 
 // GET /api/workspaces/[id] - Get a single workspace
 export async function GET(
@@ -39,6 +41,8 @@ export async function PATCH(
     const { name, description, icon } = body;
     const dailyCap = body.cost_cap_daily;
     const monthlyCap = body.cost_cap_monthly;
+    const autopilotModelOverride = body.autopilot_model_override;
+    const planningModelOverride = body.planning_model_override;
     
     const db = getDb();
     
@@ -52,6 +56,22 @@ export async function PATCH(
     }
     if (monthlyCap !== undefined && monthlyCap !== null && (typeof monthlyCap !== 'number' || Number.isNaN(monthlyCap) || monthlyCap < 0)) {
       return NextResponse.json({ error: 'cost_cap_monthly must be a non-negative number' }, { status: 400 });
+    }
+
+    let validatedAutopilotModelOverride: string | null | undefined;
+    let validatedPlanningModelOverride: string | null | undefined;
+    try {
+      if (autopilotModelOverride !== undefined) {
+        validatedAutopilotModelOverride = await validateWorkspaceOverrideModel(autopilotModelOverride);
+      }
+      if (planningModelOverride !== undefined) {
+        validatedPlanningModelOverride = await validateWorkspaceOverrideModel(planningModelOverride);
+      }
+    } catch (validationError) {
+      const message = validationError instanceof Error
+        ? validationError.message
+        : 'Invalid workspace model override value';
+      return NextResponse.json({ error: message }, { status: 400 });
     }
     
     // Build update query dynamically
@@ -78,6 +98,14 @@ export async function PATCH(
       updates.push('cost_cap_monthly = ?');
       values.push(monthlyCap);
     }
+    if (validatedAutopilotModelOverride !== undefined) {
+      updates.push('autopilot_model_override = ?');
+      values.push(validatedAutopilotModelOverride);
+    }
+    if (validatedPlanningModelOverride !== undefined) {
+      updates.push('planning_model_override = ?');
+      values.push(validatedPlanningModelOverride);
+    }
     
     if (updates.length === 0) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
@@ -89,6 +117,8 @@ export async function PATCH(
     db.prepare(`
       UPDATE workspaces SET ${updates.join(', ')} WHERE id = ?
     `).run(...values);
+
+    reconcileBudgetStateForScope(id);
     
     const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id);
     return NextResponse.json(workspace);

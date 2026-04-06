@@ -21,6 +21,7 @@ import { buildAgentSessionKey, buildPersistentAgentSessionId } from '@/lib/openc
 import { buildTaskDispatchEnvelope } from '@/lib/openclaw/session-commands';
 import {
   buildBuilderRepoInstructions,
+  buildContractBanner,
   buildTesterInstructions,
   buildVerifierInstructions,
   buildRepoArtifactSection,
@@ -38,17 +39,18 @@ interface RouteParams {
 
 const AGENT_EXECUTING_STATUSES = ['in_progress', 'testing', 'review', 'verification', 'convoy_active'];
 
-function findBlockingActiveTask(agentId: string, taskId: string): { id: string; title: string; status: string } | null {
+function findBlockingActiveTask(agentId: string, taskId: string, workspaceId: string): { id: string; title: string; status: string } | null {
   const placeholders = AGENT_EXECUTING_STATUSES.map(() => '?').join(', ');
   return queryOne<{ id: string; title: string; status: string }>(
     `SELECT id, title, status
      FROM tasks
      WHERE assigned_agent_id = ?
        AND id != ?
+       AND workspace_id = ?
        AND status IN (${placeholders})
      ORDER BY updated_at DESC
      LIMIT 1`,
-    [agentId, taskId, ...AGENT_EXECUTING_STATUSES]
+    [agentId, taskId, workspaceId, ...AGENT_EXECUTING_STATUSES]
   ) || null;
 }
 
@@ -238,6 +240,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       run(
         `UPDATE openclaw_sessions
          SET status = 'ended',
+             active_task_id = NULL,
              ended_at = COALESCE(ended_at, ?),
              updated_at = ?
          WHERE agent_id = ?
@@ -250,9 +253,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const sessionId = uuidv4();
       
       run(
-        `INSERT INTO openclaw_sessions (id, agent_id, openclaw_session_id, channel, status, task_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [sessionId, agent.id, desiredOpenclawSessionId, 'mission-control', 'active', task.id, now, now]
+        `INSERT INTO openclaw_sessions (id, agent_id, openclaw_session_id, channel, status, task_id, active_task_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [sessionId, agent.id, desiredOpenclawSessionId, 'mission-control', 'active', task.id, task.id, now, now]
       );
 
       session = queryOne<OpenClawSession>(
@@ -279,9 +282,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // checks and session views reflect the real executing task.
     run(
       `UPDATE openclaw_sessions
-       SET task_id = ?, status = 'active', ended_at = NULL, updated_at = ?
+       SET task_id = ?, active_task_id = ?, status = 'active', ended_at = NULL, updated_at = ?
        WHERE id = ?`,
-      [task.id, now, session.id]
+      [task.id, task.id, now, session.id]
     );
 
     // Build task message for agent
@@ -325,7 +328,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         run(
           `UPDATE openclaw_sessions
-           SET status = 'ended', ended_at = COALESCE(ended_at, ?), updated_at = ?
+           SET status = 'ended', active_task_id = NULL, ended_at = COALESCE(ended_at, ?), updated_at = ?
            WHERE id = ?`,
           [now, now, session.id]
         );
@@ -456,7 +459,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    const expectedRole = task.status === 'assigned'
+    let expectedRole = task.status === 'assigned'
       ? 'builder'
       : getWorkflowOwnerRoleForStatus(workflow, task.status);
 
@@ -472,18 +475,44 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     if (workflow && currentStage && !currentStage.role) {
-      const error = `Cannot dispatch queue stage ${task.status} directly. Advance it through the workflow engine instead.`;
-      run(
-        `UPDATE tasks
-         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
-         WHERE id = ?`,
-        [error, error, now, id]
-      );
-      return NextResponse.json({ error }, { status: 409 });
+      const nextRole = (nextStage?.role || '').toLowerCase();
+      const assignedRole = (agent.role || '').toLowerCase();
+
+      if (nextStage?.status && nextRole && assignedRole === nextRole) {
+        run(
+          `UPDATE tasks
+           SET status = ?,
+               planning_dispatch_error = NULL,
+               status_reason = NULL,
+               updated_at = ?
+           WHERE id = ?`,
+          [nextStage.status, now, id],
+        );
+        run(
+          `INSERT INTO events (id, type, task_id, message, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+          [uuidv4(), 'task_status_changed', id, `Auto-advanced queue stage ${task.status} -> ${nextStage.status} for ${agent.name} dispatch`, now],
+        );
+
+        task.status = nextStage.status;
+        currentStage = nextStage;
+        const promotedStageIndex = workflow.stages.findIndex((s) => s.status === task.status);
+        nextStage = promotedStageIndex >= 0 ? workflow.stages[promotedStageIndex + 1] : undefined;
+        expectedRole = getWorkflowOwnerRoleForStatus(workflow, task.status);
+      } else {
+        const error = `Cannot dispatch queue stage ${task.status} directly. Advance it through the workflow engine instead.`;
+        run(
+          `UPDATE tasks
+           SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+           WHERE id = ?`,
+          [error, error, now, id]
+        );
+        return NextResponse.json({ error }, { status: 409 });
+      }
     }
 
     const builderOwnedDispatch = expectedRole?.toLowerCase() === 'builder';
-    const blockingTask = builderOwnedDispatch ? findBlockingActiveTask(agent.id, task.id) : null;
+    const blockingTask = builderOwnedDispatch ? findBlockingActiveTask(agent.id, task.id, task.workspace_id) : null;
 
     if (builderOwnedDispatch && blockingTask) {
       queueTaskUntilAgentIsFree({
@@ -516,8 +545,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const isRepoTask = isRepoBackedTask(task as Task);
     const nextStatus = nextStage?.status || 'review';
     const missionControlAuthInstruction = process.env.MC_API_TOKEN
-      ? `**Mission Control callback auth:** Include this header on every Mission Control API call below.\n- \`Authorization: Bearer ${process.env.MC_API_TOKEN}\`\n`
-      : '';
+      ? `**Mission Control callback auth:** Use the \`MC_API_TOKEN\` environment variable already available in this runtime for every Mission Control API call below.\n- Header: \`Authorization: Bearer $MC_API_TOKEN\`\n- Do not print, echo, or paste the token value into logs, files, or chat.\n`
+      : `**Mission Control callback auth:** If \`MC_API_TOKEN\` is unavailable in this runtime, stop and end the run with:\n- \`BLOCKED: Mission Control callback failed: missing MC_API_TOKEN | need: runtime auth token exposure | meanwhile: no authenticated callback attempted\`\n`;
     const registeredDeliverables = getTaskDispatchDeliverables(task.id);
     const repoSurfacePath = getRepoTaskSurfacePath(task as Task, taskProjectDir);
 
@@ -527,6 +556,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         taskId: task.id,
         missionControlUrl,
         nextStatus,
+        updatedByAgentId: agent.id,
         workspacePath: taskProjectDir,
         requirePullRequest: supportsPullRequestWorkflow(task.repo_url),
         authInstruction: missionControlAuthInstruction,
@@ -589,6 +619,13 @@ ${missionControlAuthInstruction}
 1. Update status: PATCH ${missionControlUrl}/api/tasks/${task.id}
    Body: {"status": "${nextStatus}", "updated_by_agent_id": "${agent.id}"}`;
     }
+
+    // Compact output-format banner prepended at the very start of the dispatch message for
+    // tester/verifier agents. This ensures the required PASS/FAIL/BLOCKED prefix contract is
+    // the FIRST thing the model reads, not just the last section buried after all task content.
+    const headerContractBanner = (isTester || isVerifier)
+      ? buildContractBanner(isTester ? 'tester' : 'verifier') + '\n\n'
+      : '';
 
     // Build image references section
     let imagesSection = '';
@@ -667,7 +704,7 @@ ${prSection}
     }
 
     const roleLabel = currentStage?.label || 'Task';
-    const taskMessage = `${priorityEmoji} **${isBuilder ? 'NEW TASK ASSIGNED' : `${roleLabel.toUpperCase()} STAGE — ${task.title}`}**
+    const taskMessage = `${headerContractBanner}${priorityEmoji} **${isBuilder ? 'NEW TASK ASSIGNED' : `${roleLabel.toUpperCase()} STAGE \u2014 ${task.title}`}**
 
 **Title:** ${task.title}
 ${task.description ? `**Description:** ${task.description}\n` : ''}

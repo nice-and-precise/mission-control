@@ -18,6 +18,7 @@ export function HealthBadge({ score, size = 44, showLabel = true }: Props) {
   const animatedScoreRef = useRef(0);
 
   useEffect(() => {
+    // Animate from current to target score
     const start = animatedScoreRef.current;
     const diff = score - start;
     const duration = 600;
@@ -26,6 +27,7 @@ export function HealthBadge({ score, size = 44, showLabel = true }: Props) {
     function animate(now: number) {
       const elapsed = now - startTime;
       const progress = Math.min(elapsed / duration, 1);
+      // Ease out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
       const nextScore = Math.round(start + diff * eased);
       animatedScoreRef.current = nextScore;
@@ -43,10 +45,10 @@ export function HealthBadge({ score, size = 44, showLabel = true }: Props) {
 
   const color =
     animatedScore >= 70
-      ? '#3fb950'
+      ? '#3fb950' // green
       : animatedScore >= 40
-      ? '#d29922'
-      : '#f85149';
+      ? '#d29922' // yellow
+      : '#f85149'; // red
 
   const bgColor =
     animatedScore >= 70
@@ -67,6 +69,7 @@ export function HealthBadge({ score, size = 44, showLabel = true }: Props) {
         viewBox={`0 0 ${size} ${size}`}
         className="transform -rotate-90"
       >
+        {/* Background circle */}
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -75,6 +78,7 @@ export function HealthBadge({ score, size = 44, showLabel = true }: Props) {
           stroke="rgba(48, 54, 61, 0.6)"
           strokeWidth={3}
         />
+        {/* Progress arc */}
         <circle
           cx={size / 2}
           cy={size / 2}

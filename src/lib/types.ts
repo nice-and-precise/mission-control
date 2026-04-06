@@ -182,6 +182,8 @@ export interface Workspace {
   slug: string;
   description?: string;
   icon: string;
+  autopilot_model_override?: string | null;
+  planning_model_override?: string | null;
   cost_cap_daily?: number;
   cost_cap_monthly?: number;
   reserved_cost_usd?: number;
@@ -263,7 +265,8 @@ export interface OpenClawSession {
   channel?: string;
   status: string;
   session_type: 'persistent' | 'subagent';
-  task_id?: string;
+  task_id?: string | null;
+  active_task_id?: string | null;
   requested_model?: string;
   bound_model?: string;
   binding_status?: 'pending' | 'bound' | 'failed' | 'unbound';
@@ -825,6 +828,8 @@ export interface CostOverview {
   this_month: number;
   total: number;
   reserved_total: number;
+  active_blocked_task_count: number;
+  active_blocked_estimated_usd: number;
   blocked_unknown_cost_count: number;
   unpriced_build_runs_count: number;
 }
@@ -836,6 +841,8 @@ export interface CostBreakdown {
   summary: {
     actual_recorded_usd: number;
     reserved_estimated_usd: number;
+    active_blocked_task_count: number;
+    active_blocked_estimated_usd: number;
     blocked_unknown_cost_count: number;
     unpriced_build_runs_count: number;
   };

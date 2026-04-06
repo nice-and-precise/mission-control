@@ -4,6 +4,7 @@ import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
 import { finalizePlanningCompletion, reconcilePlanningTranscript } from '@/lib/planning-utils';
 import { cleanupTaskScopedAgents } from '@/lib/planning-agents';
+import { resolvePlanningModelForWorkspace } from '@/lib/openclaw/workspace-model-overrides';
 // File system imports removed - using OpenClaw API instead
 
 export const dynamic = 'force-dynamic';
@@ -160,6 +161,7 @@ export async function POST(
     const basePrefix = customSessionKeyPrefix || taskWithAgent?.session_key_prefix || defaultMaster?.session_key_prefix || DEFAULT_SESSION_KEY_PREFIX;
     const planningPrefix = basePrefix + 'planning:';
     const sessionKey = `${planningPrefix}${taskId}`;
+    const planningModel = await resolvePlanningModelForWorkspace(task.workspace_id);
 
     // Build the initial planning prompt
     const planningPrompt = `PLANNING REQUEST
@@ -191,12 +193,24 @@ Respond with ONLY valid JSON in this format:
       await client.connect();
     }
 
+    let modelBoundBeforeFirstMessage = false;
+    try {
+      await client.patchSessionModel(sessionKey, planningModel);
+      modelBoundBeforeFirstMessage = true;
+    } catch (bindingError) {
+      console.warn('[Planning] Pre-bind model patch failed, retrying after first send:', bindingError);
+    }
+
     // Send planning request to the planning session
     await client.call('chat.send', {
       sessionKey: sessionKey,
       message: planningPrompt,
       idempotencyKey: `planning-start-${taskId}-${Date.now()}`,
     });
+
+    if (!modelBoundBeforeFirstMessage) {
+      await client.patchSessionModel(sessionKey, planningModel);
+    }
 
     // Store the session key and initial message
     const messages = [{ role: 'user', content: planningPrompt, timestamp: Date.now() }];
@@ -212,6 +226,7 @@ Respond with ONLY valid JSON in this format:
     return NextResponse.json({
       success: true,
       sessionKey,
+      model: planningModel,
       messages,
       note: 'Planning started. Poll GET endpoint for updates.',
     });

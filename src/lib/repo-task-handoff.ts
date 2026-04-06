@@ -18,6 +18,7 @@ interface BuilderRepoInstructionsInput {
   taskId: string;
   missionControlUrl: string;
   nextStatus: string;
+  updatedByAgentId: string;
   workspacePath: string;
   requirePullRequest?: boolean;
   authInstruction?: string;
@@ -109,6 +110,7 @@ export function buildBuilderRepoInstructions({
   taskId,
   missionControlUrl,
   nextStatus,
+  updatedByAgentId,
   workspacePath,
   requirePullRequest = true,
   authInstruction = '',
@@ -121,10 +123,10 @@ export function buildBuilderRepoInstructions({
    POST ${missionControlUrl}/api/tasks/${taskId}/deliverables
    Body: {"deliverable_type": "url", "title": "${PR_DELIVERABLE_TITLE}", "path": "<github PR url>", "description": "${PR_DELIVERABLE_DESCRIPTION}"}
 5. Update status: PATCH ${missionControlUrl}/api/tasks/${taskId}
-   Body: {"status": "${nextStatus}"}`
+   Body: {"status": "${nextStatus}", "updated_by_agent_id": "${updatedByAgentId}"}`
     : `3. This repo remote does not support GitHub PR creation. Do not block on a PR URL.
 4. Update status: PATCH ${missionControlUrl}/api/tasks/${taskId}
-   Body: {"status": "${nextStatus}"}`;
+   Body: {"status": "${nextStatus}", "updated_by_agent_id": "${updatedByAgentId}"}`;
 
   return `**IMPORTANT FINAL RESPONSE CONTRACT:** Your final response MUST begin with exactly one of these prefixes:
 - \`TASK_COMPLETE: [brief summary of what you did]\`
@@ -144,6 +146,17 @@ ${authInstruction}
 ${prInstructions}
 
 **If you are blocked and cannot finish:** Reply with the required \`BLOCKED:\` prefix so Mission Control records the blocker explicitly instead of treating the run as missing a completion callback.`;
+}
+
+// Compact one-line banner prepended at the very TOP of tester/verifier dispatch messages.
+// Purpose: ensure the model encounters the required output format BEFORE reading any task
+// content, counteracting attention-decay on the full contract buried at the end.
+export function buildContractBanner(role: 'tester' | 'verifier'): string {
+  const passPrefix = role === 'tester' ? 'TEST_PASS' : 'VERIFY_PASS';
+  const failPrefix = role === 'tester' ? 'TEST_FAIL' : 'VERIFY_FAIL';
+  return `⚠️ **OUTPUT FORMAT REQUIRED** — Your final reply MUST begin with exactly one of:
+\`${passPrefix}: [summary]\` | \`${failPrefix}: [reason]\` | \`BLOCKED: Mission Control callback failed: [details]\`
+Full callback instructions are at the bottom of this message.`;
 }
 
 function buildTerminalContractLines(options: {

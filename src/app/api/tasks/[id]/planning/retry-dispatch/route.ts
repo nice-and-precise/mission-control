@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryOne, run, getDb } from '@/lib/db';
+import { queryOne, run } from '@/lib/db';
 import { triggerAutoDispatch } from '@/lib/auto-dispatch';
+import type { Task } from '@/lib/types';
 
 /**
  * POST /api/tasks/[id]/planning/retry-dispatch
@@ -56,38 +57,40 @@ export async function POST(
       workspaceId: task.workspace_id
     });
 
-    // Use transaction to ensure atomic updates
-    const db = getDb();
-    const transaction = db.transaction(() => {
-      if (result.success) {
-        // Update task status on success
-        run(`
-          UPDATE tasks 
-          SET status = 'inbox',
-              planning_dispatch_error = NULL,
-              updated_at = datetime('now')
-          WHERE id = ?
-        `, [taskId]);
-      } else {
-        // Store the error for display, keep as 'pending_dispatch'
-        run(`
-          UPDATE tasks 
-          SET planning_dispatch_error = ?,
-              status = 'pending_dispatch',
-              updated_at = datetime('now')
-          WHERE id = ?
-        `, [result.error, taskId]);
-      }
-    });
-
-    transaction();
-
     if (result.success) {
+      const updatedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
       return NextResponse.json({ 
         success: true, 
-        message: 'Dispatch retry successful' 
+        message: 'Dispatch retry successful',
+        task: updatedTask,
+      });
+    } else if (result.queued) {
+      run(
+        `UPDATE tasks
+         SET planning_dispatch_error = NULL,
+             updated_at = datetime('now')
+         WHERE id = ?`,
+        [taskId],
+      );
+
+      const updatedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
+      return NextResponse.json({
+        success: false,
+        queued: true,
+        message: result.error || 'Dispatch queued until the assigned agent is free',
+        waiting_for_task_id: result.waitingForTaskId,
+        waiting_for_task_title: result.waitingForTaskTitle,
+        task: updatedTask,
       });
     } else {
+      run(
+        `UPDATE tasks 
+         SET planning_dispatch_error = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`,
+        [result.error || 'Dispatch retry failed', taskId],
+      );
+
       return NextResponse.json({ 
         error: 'Dispatch retry failed', 
         details: result.error 
