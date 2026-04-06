@@ -148,6 +148,17 @@ ${prInstructions}
 **If you are blocked and cannot finish:** Reply with the required \`BLOCKED:\` prefix so Mission Control records the blocker explicitly instead of treating the run as missing a completion callback.`;
 }
 
+// Compact one-line banner prepended at the very TOP of tester/verifier dispatch messages.
+// Purpose: ensure the model encounters the required output format BEFORE reading any task
+// content, counteracting attention-decay on the full contract buried at the end.
+export function buildContractBanner(role: 'tester' | 'verifier'): string {
+  const passPrefix = role === 'tester' ? 'TEST_PASS' : 'VERIFY_PASS';
+  const failPrefix = role === 'tester' ? 'TEST_FAIL' : 'VERIFY_FAIL';
+  return `⚠️ **OUTPUT FORMAT REQUIRED** — Your final reply MUST begin with exactly one of:
+\`${passPrefix}: [summary]\` | \`${failPrefix}: [reason]\` | \`BLOCKED: Mission Control callback failed: [details]\`
+Full callback instructions are at the bottom of this message.`;
+}
+
 function buildTerminalContractLines(options: {
   passPrefix: 'TEST_PASS' | 'VERIFY_PASS';
   failPrefix: 'TEST_FAIL' | 'VERIFY_FAIL';

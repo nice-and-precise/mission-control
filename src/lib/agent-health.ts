@@ -540,6 +540,43 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
         [now, task.assigned_agent_id]
       );
     }
+
+    // One-shot auto-redispatch for verification tasks: if the reviewer session ended without
+    // emitting VERIFY_PASS/VERIFY_FAIL, schedule a single redispatch so the reviewer sees
+    // the output-format contract banner at the top of the message. The
+    // verification_auto_retry activity row gates this to one attempt per task — if the
+    // activity already exists the task is left for operator intervention.
+    if (task.status === 'verification' && task.assigned_agent_id) {
+      const existingRetry = queryOne<{ id: string }>(
+        `SELECT id FROM task_activities WHERE task_id = ? AND activity_type = 'verification_auto_retry' LIMIT 1`,
+        [task.id],
+      );
+      if (!existingRetry) {
+        const retryMsg =
+          'Auto-redispatching to reviewer: session ended without VERIFY_PASS/VERIFY_FAIL verdict.';
+        run(
+          `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+           VALUES (?, ?, ?, 'verification_auto_retry', ?, ?)`,
+          [uuidv4(), task.id, task.assigned_agent_id, retryMsg, now],
+        );
+        const retryUrl = getMissionControlUrl();
+        const retryHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (process.env.MC_API_TOKEN) {
+          retryHeaders['Authorization'] = `Bearer ${process.env.MC_API_TOKEN}`;
+        }
+        void fetch(`${retryUrl}/api/tasks/${task.id}/verification/retry-dispatch`, {
+          method: 'POST',
+          headers: retryHeaders,
+          signal: AbortSignal.timeout(30_000),
+        }).catch((err: Error) => {
+          console.warn(
+            `[Health] Verification auto-redispatch failed for task ${task.id}:`,
+            err.message,
+          );
+        });
+        console.info(`[Health] Scheduled verification auto-redispatch for task ${task.id}`);
+      }
+    }
   }
 
   return recoveredCount;

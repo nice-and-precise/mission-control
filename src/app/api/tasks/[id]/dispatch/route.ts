@@ -21,6 +21,7 @@ import { buildAgentSessionKey, buildPersistentAgentSessionId } from '@/lib/openc
 import { buildTaskDispatchEnvelope } from '@/lib/openclaw/session-commands';
 import {
   buildBuilderRepoInstructions,
+  buildContractBanner,
   buildTesterInstructions,
   buildVerifierInstructions,
   buildRepoArtifactSection,
@@ -619,6 +620,13 @@ ${missionControlAuthInstruction}
    Body: {"status": "${nextStatus}", "updated_by_agent_id": "${agent.id}"}`;
     }
 
+    // Compact output-format banner prepended at the very start of the dispatch message for
+    // tester/verifier agents. This ensures the required PASS/FAIL/BLOCKED prefix contract is
+    // the FIRST thing the model reads, not just the last section buried after all task content.
+    const headerContractBanner = (isTester || isVerifier)
+      ? buildContractBanner(isTester ? 'tester' : 'verifier') + '\n\n'
+      : '';
+
     // Build image references section
     let imagesSection = '';
     if (task.images) {
@@ -696,7 +704,7 @@ ${prSection}
     }
 
     const roleLabel = currentStage?.label || 'Task';
-    const taskMessage = `${priorityEmoji} **${isBuilder ? 'NEW TASK ASSIGNED' : `${roleLabel.toUpperCase()} STAGE — ${task.title}`}**
+    const taskMessage = `${headerContractBanner}${priorityEmoji} **${isBuilder ? 'NEW TASK ASSIGNED' : `${roleLabel.toUpperCase()} STAGE \u2014 ${task.title}`}**
 
 **Title:** ${task.title}
 ${task.description ? `**Description:** ${task.description}\n` : ''}

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { queryAll, queryOne, run } from './db';
 import {
   buildBuilderRepoInstructions,
+  buildContractBanner,
   buildRepoArtifactSection,
   buildTesterInstructions,
   buildVerifierInstructions,
@@ -123,6 +124,27 @@ test('repo-backed builder instructions do not require a PR for non-GitHub remote
   assert.doesNotMatch(instructions, /"pr_url": "<github PR url>", "pr_status": "open"/);
   assert.doesNotMatch(instructions, new RegExp(`"title": "${PR_DELIVERABLE_TITLE}"`));
   assert.match(instructions, /"updated_by_agent_id": "agent-builder-2"/);
+});
+
+test('buildContractBanner returns verifier banner with VERIFY_PASS and VERIFY_FAIL prefixes', () => {
+  const banner = buildContractBanner('verifier');
+  assert.match(banner, /OUTPUT FORMAT REQUIRED/i);
+  assert.match(banner, /VERIFY_PASS/);
+  assert.match(banner, /VERIFY_FAIL/);
+  assert.match(banner, /BLOCKED/);
+  assert.match(banner, /callback instructions are at the bottom/i);
+  assert.doesNotMatch(banner, /TEST_PASS/);
+  assert.doesNotMatch(banner, /TEST_FAIL/);
+});
+
+test('buildContractBanner returns tester banner with TEST_PASS and TEST_FAIL prefixes', () => {
+  const banner = buildContractBanner('tester');
+  assert.match(banner, /OUTPUT FORMAT REQUIRED/i);
+  assert.match(banner, /TEST_PASS/);
+  assert.match(banner, /TEST_FAIL/);
+  assert.match(banner, /BLOCKED/);
+  assert.doesNotMatch(banner, /VERIFY_PASS/);
+  assert.doesNotMatch(banner, /VERIFY_FAIL/);
 });
 
 test('tester instructions require explicit callback completion and blocked fallback', () => {
