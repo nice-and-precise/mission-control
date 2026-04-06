@@ -23,13 +23,26 @@ export interface MissionControlModelPolicy {
 const OPENCODE_GO_GLM5_USD_PER_REQUEST = 12 / 1150;
 const OPENCODE_GO_KIMI_USD_PER_REQUEST = 12 / 1850;
 const OPENCODE_GO_MINIMAX_M25_USD_PER_REQUEST = 12 / 20000;
-const FREE_MODEL_USD_PER_REQUEST = 0;
+const QWEN36_PLUS_INPUT_USD_PER_MILLION = 0.50;
+const QWEN36_PLUS_OUTPUT_USD_PER_MILLION = 3.00;
+const QWEN36_PLUS_CACHE_READ_USD_PER_MILLION = 0.05;
+const QWEN36_PLUS_CACHE_WRITE_USD_PER_MILLION = 0.625;
+
+/** Single source of truth for the default autopilot model. Change here to switch globally. */
+const DEFAULT_AUTOPILOT_MODEL = 'qwen/qwen3.6-plus';
 
 const MODEL_ID_ALIASES: Record<string, string> = {
-  'qwen/qwen3.6-plus:free': 'openrouter/qwen/qwen3.6-plus:free',
-  'qwen/qwen3.6-plus-preview:free': 'openrouter/qwen/qwen3.6-plus-preview:free',
-  'qwen/qwen3.5-plus-02-15': 'openrouter/qwen/qwen3.5-plus-02-15',
-  'qwen/qwen3-max-thinking': 'openrouter/qwen/qwen3-max-thinking',
+  'qwen/qwen3.6-plus:free': 'qwen/qwen3.6-plus',
+  'qwen/qwen3.6-plus-preview:free': 'qwen/qwen3.6-plus',
+  'qwen/qwen3.5-plus-02-15': 'qwen/qwen3.6-plus',
+  'qwen/qwen3.5-35b-a3b': 'qwen/qwen3.6-plus',
+  'qwen/qwen3-max-thinking': 'qwen/qwen3.6-plus',
+  'openrouter/qwen/qwen3.6-plus:free': 'qwen/qwen3.6-plus',
+  'openrouter/qwen/qwen3.6-plus-preview:free': 'qwen/qwen3.6-plus',
+  'openrouter/qwen/qwen3.5-plus-02-15': 'qwen/qwen3.6-plus',
+  'openrouter/qwen/qwen3.5-35b-a3b': 'qwen/qwen3.6-plus',
+  'openrouter/qwen/qwen3-max-thinking': 'qwen/qwen3.6-plus',
+  'opencode/qwen3.6-plus-free': 'qwen/qwen3.6-plus',
   'nvidia/nemotron-3-super-120b-a12b:free': 'openrouter/nvidia/nemotron-3-super-120b-a12b:free',
 };
 
@@ -100,77 +113,16 @@ const DOCS_BACKED_MODEL_POLICIES: MissionControlModelPolicy[] = [
     },
   },
   {
-    id: 'opencode/qwen3.6-plus-free',
-    label: 'opencode/qwen3.6-plus-free',
+    id: 'qwen/qwen3.6-plus',
+    label: 'qwen/qwen3.6-plus',
     policy_allowed: true,
-    provider_family: 'opencode',
-    priced: true,
-    pricing: {
-      kind: 'flat_request',
-      estimatedUsdPerRequest: FREE_MODEL_USD_PER_REQUEST,
-      note: 'OpenCode Zen free lane; cost tracked as $0/request for Mission Control accounting.',
-    },
-  },
-  {
-    id: 'openrouter/qwen/qwen3.6-plus:free',
-    label: 'openrouter/qwen/qwen3.6-plus:free',
-    policy_allowed: true,
-    provider_family: 'openrouter',
-    priced: true,
-    pricing: {
-      kind: 'flat_request',
-      estimatedUsdPerRequest: FREE_MODEL_USD_PER_REQUEST,
-      note: 'OpenRouter free tier lane; cost tracked as $0/request for Mission Control accounting.',
-    },
-  },
-  {
-    id: 'openrouter/qwen/qwen3.6-plus-preview:free',
-    label: 'openrouter/qwen/qwen3.6-plus-preview:free',
-    policy_allowed: true,
-    provider_family: 'openrouter',
-    priced: true,
-    pricing: {
-      kind: 'flat_request',
-      estimatedUsdPerRequest: FREE_MODEL_USD_PER_REQUEST,
-      note: 'OpenRouter preview free lane; cost tracked as $0/request for Mission Control accounting.',
-    },
-  },
-  {
-    id: 'openrouter/nvidia/nemotron-3-super-120b-a12b:free',
-    label: 'openrouter/nvidia/nemotron-3-super-120b-a12b:free',
-    policy_allowed: true,
-    provider_family: 'openrouter',
-    priced: true,
-    pricing: {
-      kind: 'flat_request',
-      estimatedUsdPerRequest: FREE_MODEL_USD_PER_REQUEST,
-      note: 'OpenRouter Nemotron free lane; cost tracked as $0/request for Mission Control accounting.',
-    },
-  },
-  {
-    id: 'openrouter/xiaomi/mimo-v2-pro',
-    label: 'openrouter/xiaomi/mimo-v2-pro',
-    policy_allowed: true,
-    provider_family: 'openrouter',
+    provider_family: 'qwen',
     priced: true,
     pricing: {
       kind: 'token',
-      inputUsdPerMillion: 0.2,
-      outputUsdPerMillion: 0.8,
-      note: 'Mission Control accounting estimate for MiMo V2 Pro while preserving budget enforcement.',
-    },
-  },
-  {
-    id: 'openrouter/qwen/qwen3.5-plus-02-15',
-    label: 'openrouter/qwen/qwen3.5-plus-02-15',
-    policy_allowed: true,
-    provider_family: 'openrouter',
-    priced: true,
-    pricing: {
-      kind: 'token',
-      inputUsdPerMillion: 0.26,
-      outputUsdPerMillion: 1.56,
-      note: 'Mission Control accounting estimate for Qwen3.5-Plus on OpenRouter while preserving budget enforcement.',
+      inputUsdPerMillion: QWEN36_PLUS_INPUT_USD_PER_MILLION,
+      outputUsdPerMillion: QWEN36_PLUS_OUTPUT_USD_PER_MILLION,
+      note: 'Alibaba Cloud Qwen 3.6 Plus Standard international pricing (2026-04). $0.50/M input, $3.00/M output, $0.05/M cache read, $0.625/M cache write.',
     },
   },
 ];
@@ -211,18 +163,17 @@ export function getDispatchDefaultModelForRole(role?: string | null): string {
   switch ((role || '').trim().toLowerCase()) {
     case 'reviewer':
     case 'builder':
-      return 'openrouter/qwen/qwen3.6-plus:free';
+      return 'qwen/qwen3.6-plus';
     case 'tester':
       return 'opencode-go-mm/minimax-m2.5';
     case 'learner':
-      return 'opencode-go/kimi-k2.5';
     default:
-      return 'opencode-go/kimi-k2.5';
+      return getAutopilotDefaultModel();
   }
 }
 
 export function getAutopilotDefaultModel(): string {
-  return process.env.AUTOPILOT_MODEL || 'opencode-go/kimi-k2.5';
+  return process.env.AUTOPILOT_MODEL || DEFAULT_AUTOPILOT_MODEL;
 }
 
 export function supportsMissionControlAccounting(modelId: string): boolean {

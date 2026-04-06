@@ -50,3 +50,33 @@ Each build-pod handoff should include:
 - the exact next owner
 
 If those are missing, the next stage should stop and request a correction instead of guessing.
+
+## LLM Completion and JSON Parsing
+
+Mission Control's autopilot uses `completeJSON()` in `src/lib/autopilot/llm.ts` for all structured LLM responses (ideation, research, planning prompts).
+
+### Completion Transports
+
+- **session** (default for Qwen/reasoning models): Routes through the OpenClaw Gateway via `chat.send` RPC and polls `chat.history` for the assistant response. Does not pass `maxTokens` or `temperature` to the gateway — the gateway's model config controls those.
+- **http**: Direct `/v1/chat/completions` call to the gateway's OpenAI-compatible endpoint.
+- **agent-cli**: Shells out to the `openclaw` CLI binary.
+
+### JSON Extraction Pipeline
+
+`extractStructuredJSON()` handles the gap between what models return and what the pipeline needs:
+
+1. **Direct parse** — works when the model returns clean JSON
+2. **Code-fence stripping** — models like Qwen wrap output in ` ```json ... ``` `
+3. **Truncated array recovery** — collects all balanced top-level elements from arrays where the output was cut off before the closing `]`
+4. **Balanced extraction** — finds the first complete `{...}` or `[...]` in arbitrary text
+
+If the first parse attempt fails entirely, `completeJSON()` retries once with `temperature: 0` and a strict "JSON only, no markdown" system prompt.
+
+### Model Compatibility Notes
+
+Reasoning models (Qwen, DeepSeek) commonly exhibit:
+- Markdown code-fence wrapping around JSON output
+- Truncated output at model-determined stopping points (may report `finishReason: "stop"` despite incomplete content)
+- Thinking blocks interleaved with text blocks in the response content array
+
+The parsing pipeline handles all three cases. When truncated array recovery fires, it logs: `[LLM] Recovered N element(s) from truncated JSON array`.

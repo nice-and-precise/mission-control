@@ -1478,6 +1478,86 @@ test('runHealthCheckCycle keeps the generic unreconciled error when history has 
   assert.equal(zombieActivities.length, 0);
 });
 
+test('runHealthCheckCycle preserves queued builder waiting state instead of rewriting a queued task to the generic ended-session banner', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const builderId = crypto.randomUUID();
+  const activeTaskId = buildTaskId('feedbead');
+  const queuedTaskId = buildTaskId('beadfeed');
+
+  seedAgent({
+    id: builderId,
+    workspaceId,
+    name: 'Builder Agent',
+    role: 'builder',
+    status: 'working',
+    prefix: 'agent:coder:',
+  });
+  seedTask({
+    id: activeTaskId,
+    workspaceId,
+    assignedAgentId: builderId,
+    status: 'in_progress',
+  });
+  seedTask({
+    id: queuedTaskId,
+    workspaceId,
+    assignedAgentId: builderId,
+    status: 'assigned',
+    planningDispatchError: 'Run ended without completion callback or workflow handoff (ended session).',
+  });
+  run(
+    `UPDATE tasks
+     SET status_reason = 'Run ended without completion callback or workflow handoff (ended session).'
+     WHERE id = ?`,
+    [queuedTaskId],
+  );
+  seedTaskSession({
+    taskId: activeTaskId,
+    agentId: builderId,
+    openclawSessionId: 'mission-control-builder-agent',
+    status: 'active',
+  });
+  seedTaskSession({
+    taskId: queuedTaskId,
+    agentId: builderId,
+    openclawSessionId: 'mission-control-builder-agent',
+    status: 'ended',
+    activeTaskId: null,
+  });
+  setGatewaySessionsResolverForTests(async () => ({
+    sessions: [
+      {
+        key: 'agent:coder:mission-control-builder-agent',
+        sessionId: 'runtime-builder-session',
+        status: 'running',
+        channel: 'mission-control',
+        updatedAt: Date.now(),
+      },
+    ],
+  }));
+
+  await runHealthCheckCycle();
+
+  const queuedTask = queryOne<{ planning_dispatch_error: string | null; status_reason: string | null }>(
+    'SELECT planning_dispatch_error, status_reason FROM tasks WHERE id = ?',
+    [queuedTaskId],
+  );
+  const genericErrorActivities = queryAll<{ message: string }>(
+    `SELECT message
+     FROM task_activities
+     WHERE task_id = ?
+       AND message = 'Run ended without completion callback or workflow handoff (ended session).'`,
+    [queuedTaskId],
+  );
+
+  assert.equal(queuedTask?.planning_dispatch_error, null);
+  assert.equal(
+    queuedTask?.status_reason,
+    'Waiting for Builder Agent to finish "Runtime evidence task" before starting this task.',
+  );
+  assert.equal(genericErrorActivities.length, 0);
+});
+
 test('runHealthCheckCycle retries generic unreconciled errors when gateway history now contains a verifier signal', async () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;
   const taskId = buildTaskId('feedfade');

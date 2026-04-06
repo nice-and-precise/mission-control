@@ -117,6 +117,7 @@ Do not infer runtime ownership from:
 Queued is healthy when:
 
 - task status is `assigned`
+- `planning_dispatch_error` is `NULL`
 - `status_reason` says it is waiting for another task
 - no active session exists for the queued task
 - the blocking task does have the active session
@@ -126,6 +127,19 @@ Broken is real when:
 - task is in an executing stage and has no active session
 - task shows `Run ended without completion callback or workflow handoff ...`
 - task has a session attached to the wrong lane or wrong task
+
+### Queue and session invariant
+
+For builder-owned work, the dispatch route must decide whether the builder is busy before it touches root-session ownership.
+
+Required invariant:
+
+- queued builder work remains `assigned`
+- queued builder work gets a waiting `status_reason`
+- queued builder work does not create or rebind an active root `openclaw_sessions` row
+- the generic unreconciled-run banner belongs only to work that actually started and then lost its completion signal
+
+If any queued builder card violates that invariant, treat it as a control-plane bug or stale pre-fix state, not as a normal operator condition.
 
 ### Treat HTTP 200 carefully
 
@@ -156,6 +170,12 @@ Expected good result:
 - `success: true`
 - `queued: true`
 - waiting message names the actually active blocking task
+- the queued task still has no active root session after the redispatch
+
+Post-fix note:
+
+- `POST /api/tasks/{id}/dispatch` now performs the builder-busy check before any root-session create-or-rebind work
+- `agent-health` now preserves or restores the waiting state for legitimately queued builder cards instead of overwriting them with the generic ended-session banner
 
 ### If a tester pass moves a task to review with the tester still attached
 
@@ -175,7 +195,7 @@ The board can lag or show stale lane placement. Root sessions are the real owner
 
 ### False unreconciled-run errors exist
 
-Some generic ended-session errors can be stale while a streaming root session still exists. Health reconciliation must clear those instead of preserving them forever.
+Some generic ended-session errors can be stale while a streaming root session still exists, or while the card is only queued behind another builder task. Health reconciliation must clear or restore those states instead of preserving them forever.
 
 ### Persistent session reuse needs authoritative selection
 
@@ -238,3 +258,37 @@ The correct pattern is:
 4. Treat queued cards as waiting, not stalled.
 5. Route every stage change through the workflow engine.
 6. Recover individual broken cards before considering full control-plane restarts.
+
+## Ideation-Level Failure Diagnosis
+
+When ideation cycles produce fewer ideas than expected (typically 1 instead of 8-12), the problem is upstream of card creation.
+
+### Diagnosis steps
+
+```bash
+# 1. Check recent ideation cycles
+sqlite3 mission-control.db \
+  "SELECT id, product_id, ideas_generated, status, current_phase FROM ideation_cycles ORDER BY created_at DESC LIMIT 5;"
+
+# 2. For a suspect cycle, check the raw LLM response length
+sqlite3 mission-control.db \
+  "SELECT length(json_extract(phase_data, '$.raw_content')) as raw_len, ideas_generated FROM ideation_cycles WHERE id = '<cycle-id>';"
+
+# 3. Check server logs for truncated array recovery
+grep "Recovered.*truncated JSON array" <server-log-file>
+```
+
+### Interpretation
+
+| raw_len | ideas_generated | Meaning |
+|---------|----------------|---------|
+| >5000   | 1              | Parser collapsed multi-idea response → check if truncated recovery fired |
+| >5000   | 5-12           | Normal — recovery worked, or response was clean JSON |
+| <2000   | 1              | Model genuinely produced 1 idea — may need prompt tuning |
+| null    | 0              | LLM call failed entirely — check `phase_data` for error |
+
+### Common causes
+
+- **Code-fence wrapping + truncated array**: Reasoning models (Qwen, DeepSeek) wrap JSON in markdown fences and may truncate long arrays. Fixed in `extractStructuredJSON()` with `stripCodeFences()` and `recoverTruncatedArray()`.
+- **Prompt too large**: If the product program + research report + swipe history exceeds the model's effective context, the response may be short. Check `usage.promptTokens` in the cycle's activity log.
+- **Model misconfiguration**: Verify the model target in `GET /api/openclaw/models`. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) section 8 and 13.

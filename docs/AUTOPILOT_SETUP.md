@@ -63,3 +63,24 @@ After deleting a mistaken product:
 - `GET /api/products/{id}` should return `404`
 - if the product had a dedicated workspace, that workspace should also be gone
 - if the product used `default` or another shared workspace, that workspace should remain
+
+## Model Compatibility
+
+Autopilot uses `completeJSON()` for all structured LLM interactions (ideation, research, planning). The JSON parsing pipeline handles common model behaviors, but some models work better than others.
+
+### Verified models
+
+- **qwen/qwen3.6-plus** — reasoning model with `reasoning: true`. Works well. May wrap JSON in markdown code fences and occasionally truncate long arrays, but the parser recovers both cases automatically.
+- **openclaw** — default routing target. Works when the gateway has a compatible default model configured.
+
+### Known behaviors with reasoning models
+
+Reasoning models (Qwen, DeepSeek) may:
+
+1. **Wrap JSON in code fences** — ` ```json ... ``` `. Handled by `stripCodeFences()` in `extractStructuredJSON()`.
+2. **Truncate long arrays** — output stops mid-element with `finishReason: "stop"`. Handled by `recoverTruncatedArray()`, which collects all balanced elements. A warning is logged when this occurs.
+3. **Include thinking blocks** — the response content array contains `thinking` entries alongside `text` entries. The session history parser (`extractContentText()`) correctly extracts only the text block.
+
+### If ideation produces too few ideas
+
+Check the server logs for `[LLM] Recovered N element(s) from truncated JSON array`. If this warning is absent and only 1 idea was generated, the raw response may genuinely contain only 1 idea. Inspect the phase_data in the `ideation_cycles` table. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) section 13 for diagnosis steps.

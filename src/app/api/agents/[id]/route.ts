@@ -1,7 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryOne, run } from '@/lib/db';
+import { canonicalMissionControlModelId } from '@/lib/openclaw/model-policy';
+import { isOpenClawAgentTarget, validateProviderModelOverride } from '@/lib/openclaw/model-catalog';
 import type { Agent, UpdateAgentRequest } from '@/lib/types';
+
+async function validateAgentModelOverride(value: unknown): Promise<string | null> {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    throw new Error('Agent model must be a string or null.');
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  await validateProviderModelOverride(trimmed);
+  return isOpenClawAgentTarget(trimmed) ? trimmed : canonicalMissionControlModelId(trimmed);
+}
 
 // GET /api/agents/[id] - Get a single agent
 export async function GET(
@@ -35,6 +55,18 @@ export async function PATCH(
     const existing = queryOne<Agent>('SELECT * FROM agents WHERE id = ?', [id]);
     if (!existing) {
       return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
+    }
+
+    let validatedModel: string | null | undefined;
+    try {
+      if (body.model !== undefined) {
+        validatedModel = await validateAgentModelOverride(body.model);
+      }
+    } catch (validationError) {
+      const message = validationError instanceof Error
+        ? validationError.message
+        : 'Invalid agent model override value';
+      return NextResponse.json({ error: message }, { status: 400 });
     }
 
     const updates: string[] = [];
@@ -84,9 +116,9 @@ export async function PATCH(
       updates.push('agents_md = ?');
       values.push(body.agents_md);
     }
-    if (body.model !== undefined) {
+    if (validatedModel !== undefined) {
       updates.push('model = ?');
-      values.push(body.model);
+      values.push(validatedModel);
     }
 
     if (updates.length === 0) {

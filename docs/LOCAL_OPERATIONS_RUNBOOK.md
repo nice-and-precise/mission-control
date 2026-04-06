@@ -76,6 +76,51 @@ Expected result: HTTP `200` with JSON like `{"status":"ok",...}`.
 
 If `MC_API_TOKEN` is set in `.env.local`, direct `curl` requests to `/api/*` must include the bearer token. The browser UI still works without manual headers because same-origin browser requests are allowed by the auth middleware.
 
+## Pinned Node Runtime
+
+Use the repo-pinned runtime before `npm ci`, test runs, or local repair work that touches native modules:
+
+```bash
+cd /Users/jordan/.openclaw/workspace/mission-control
+source ~/.nvm/nvm.sh
+nvm use 24.13.0
+node --version
+npm ci
+```
+
+Why this matters:
+
+- Node native addons are ABI-sensitive; see the official Node docs at <https://nodejs.org/en/learn/modules/abi-stability>
+- this checkout uses `better-sqlite3`, and current Node 25 failures are tracked at <https://github.com/WiseLibs/better-sqlite3/issues/1411>
+
+If `node --version` is not `v24.13.0`, treat native-module test failures as an environment problem first.
+
+## Queued Builder Card Repair
+
+Use this when a builder-owned task should be queued but instead shows a generic ended-session banner, or when you need to re-drive a recently repaired queued card through the API.
+
+```bash
+cd /Users/jordan/.openclaw/workspace/mission-control
+
+TOKEN="$(python3 -c 'from dotenv import dotenv_values; print(dotenv_values(\".env.local\").get(\"MC_API_TOKEN\",\"\"))')"
+
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/tasks/<TASK_ID>/dispatch | jq
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/tasks/<TASK_ID> | jq '{status,status_reason,planning_dispatch_error,assigned_agent_name}'
+
+sqlite3 mission-control.db \
+  "select task_id, active_task_id, session_key, status from openclaw_sessions where task_id = '<TASK_ID>' order by updated_at desc limit 5;"
+```
+
+Expected result:
+
+- queued builder work stays `assigned` with a waiting `status_reason`
+- active builder work moves to `in_progress`
+- only the actually running task owns an active builder root session
+
 ## Autopilot Surface Check
 
 Use this after restoring or changing Product Autopilot routes:
@@ -276,9 +321,25 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 PY
 ```
 
-If that direct call succeeds but Mission Control still fails, restart `npm run dev` so the updated server code is loaded.
+If that direct call succeeds but Mission Control still fails, restart `npm run dev` so the updated server code is loaded. Route-level and server-only changes are not always picked up cleanly by the already-running dev process.
 
-Keep `AUTOPILOT_MODEL=openclaw` in `mission-control/.env.local` on this machine. Do not hardcode provider model IDs like `anthropic/claude-sonnet-4-6` in local Autopilot routes unless the current OpenClaw agent policy explicitly allows that override.
+Keep `AUTOPILOT_MODEL=openclaw` and `OPENCLAW_AUTOPILOT_COMPLETION_MODE=session` in `mission-control/.env.local` on this machine. Provider-model Autopilot lanes such as `qwen/qwen3.6-plus` should flow through session-backed completion, not the local `agent-cli` shortcut. Do not hardcode provider model IDs like `anthropic/claude-sonnet-4-6` in local Autopilot routes unless the current OpenClaw agent policy explicitly allows that override.
+
+Current local routing policy:
+
+- Codex work stays on `openai-codex/*`
+- planning, research, ideation, and any explicit Qwen lane use `qwen/qwen3.6-plus`
+- everything else falls back to OpenCode Go (`opencode-go/*`, `opencode-go-mm/*`)
+
+Autopilot JSON recovery note:
+
+- research, planning, and ideation now retry once with a stricter JSON-only system prompt before surfacing a parse failure
+- if the first model reply is truncated or wrapped in extra text, Mission Control will try to recover locally before issuing that retry
+
+Qwen onboarding note:
+
+- official OpenClaw docs describe the bundled Qwen Standard/global path and canonical model id `qwen/qwen3.6-plus`
+- this local CLI build can still surface the legacy onboarding flag name `modelstudio-standard-api-key`; treat that as a compatibility alias, not a different provider contract
 
 ## OpenClaw Operator Surfaces
 

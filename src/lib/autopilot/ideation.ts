@@ -11,6 +11,72 @@ import { batchCheckSimilarity, storeEmbedding, checkSimilarity } from './similar
 import { getResearchPrograms } from './ab-testing';
 import type { Product, Idea, ResearchCycle, SwipeHistoryEntry } from '@/lib/types';
 
+function isIdeaLikeRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value)
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && (
+      'title' in (value as Record<string, unknown>)
+      || 'description' in (value as Record<string, unknown>)
+      || 'category' in (value as Record<string, unknown>)
+      || 'technical_approach' in (value as Record<string, unknown>)
+    );
+}
+
+function extractIdeaArray(value: unknown, depth = 0): unknown[] | null {
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return value;
+    }
+    return value.every(isIdeaLikeRecord) ? value : null;
+  }
+
+  if (!value || typeof value !== 'object' || depth > 3) {
+    return null;
+  }
+
+  if (isIdeaLikeRecord(value)) {
+    return [value];
+  }
+
+  const record = value as Record<string, unknown>;
+
+  for (const key of ['ideas', 'items', 'results', 'output']) {
+    const candidate = record[key];
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const key of ['data', 'result', 'response', 'output', 'content']) {
+    const nested = extractIdeaArray(record[key], depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  for (const nested of Object.values(record)) {
+    const extracted = extractIdeaArray(nested, depth + 1);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return null;
+}
+
+function describeTopLevelShape(value: unknown): string {
+  if (Array.isArray(value)) {
+    return 'array';
+  }
+  if (!value || typeof value !== 'object') {
+    return typeof value;
+  }
+
+  const keys = Object.keys(value as Record<string, unknown>);
+  return keys.length > 0 ? `object keys=${keys.join(',')}` : 'object keys=<none>';
+}
+
 function buildIdeationPrompt(
   product: Product,
   researchReport: string | null,
@@ -184,20 +250,27 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
         });
         broadcast({ type: 'ideation_phase', payload: { productId, ideationId, phase: 'llm_polling' } });
 
-        const { data: rawIdeas, model: responseModel, usage } = await completeJSON<unknown[]>(prompt, {
+        const {
+          data: rawIdeas,
+          model: responseModel,
+          usage,
+          transport,
+          requestedModel,
+          resolvedModel,
+          finishReason,
+        } = await completeJSON<unknown>(prompt, {
           model,
           systemPrompt: 'You are a product ideation agent. Respond with a JSON array of idea objects only.',
           timeoutMs: 300_000,
         });
 
-        // Normalize: handle { ideas: [...] } wrapper
-        let ideasData: unknown[];
-        if (Array.isArray(rawIdeas)) {
-          ideasData = rawIdeas;
-        } else if (rawIdeas && typeof rawIdeas === 'object' && 'ideas' in (rawIdeas as Record<string, unknown>)) {
-          ideasData = (rawIdeas as Record<string, unknown>).ideas as unknown[];
-        } else {
-          throw new Error(`Ideation response was not an array of ideas${variantLabel}`);
+        const ideasData = extractIdeaArray(rawIdeas);
+        if (!ideasData) {
+          const finishDetail = finishReason ? ` finish_reason=${finishReason}` : '';
+          throw new Error(
+            `Ideation response was not an array of ideas${variantLabel} ` +
+            `(transport=${transport} requested=${requestedModel} resolved=${resolvedModel}${finishDetail} shape=${describeTopLevelShape(rawIdeas)})`,
+          );
         }
 
         if (ideasData.length === 0) {

@@ -123,6 +123,7 @@ function seedSession(args: {
   agentId: string;
   taskId: string;
   openclawSessionId?: string;
+  sessionKey?: string | null;
   status?: string;
   sessionType?: string;
   activeTaskId?: string | null;
@@ -133,14 +134,15 @@ function seedSession(args: {
     ? (status === 'active' && sessionType !== 'subagent' ? args.taskId : null)
     : args.activeTaskId;
   run(
-    `INSERT INTO openclaw_sessions (id, agent_id, task_id, active_task_id, openclaw_session_id, channel, status, session_type, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'mission-control', ?, ?, datetime('now'), datetime('now'))`,
+    `INSERT INTO openclaw_sessions (id, agent_id, task_id, active_task_id, openclaw_session_id, session_key, channel, status, session_type, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'mission-control', ?, ?, datetime('now'), datetime('now'))`,
     [
       crypto.randomUUID(),
       args.agentId,
       args.taskId,
       activeTaskId,
       args.openclawSessionId || `mission-control-builder-agent-${args.agentId.slice(0, 8)}`,
+      args.sessionKey || null,
       status,
       sessionType,
     ],
@@ -478,6 +480,7 @@ test('dispatch keeps a second builder task queued instead of stealing the active
   const activeTaskId = crypto.randomUUID();
   const queuedTaskId = crypto.randomUUID();
   const builderSessionId = buildPersistentAgentSessionId({ id: builderId, name: 'Builder Agent' });
+  const builderSessionKey = `agent:coder:${builderSessionId}`;
 
   ensureWorkspace(workspaceId);
   const templateId = seedStrictWorkflowTemplate(workspaceId);
@@ -490,6 +493,7 @@ test('dispatch keeps a second builder task queued instead of stealing the active
     agentId: builderId,
     taskId: activeTaskId,
     openclawSessionId: builderSessionId,
+    sessionKey: builderSessionKey,
     status: 'active',
   });
   stubGatewayClient({ allowDispatch: true });
@@ -510,7 +514,101 @@ test('dispatch keeps a second builder task queued instead of stealing the active
   );
   assert.equal(queuedTask?.status, 'assigned');
   assert.match(queuedTask?.status_reason || '', /Waiting for Builder Agent to finish "Current builder task"/);
+  assert.equal(queuedTask?.status, 'assigned');
 
+  const builderSession = queryOne<{ task_id: string | null; active_task_id: string | null; session_key: string | null }>(
+    `SELECT task_id, active_task_id, session_key
+     FROM openclaw_sessions
+     WHERE agent_id = ?
+       AND openclaw_session_id = ?
+     LIMIT 1`,
+    [builderId, builderSessionId],
+  );
+  const queuedTaskSessions = queryOne<{ count: number }>(
+    'SELECT COUNT(*) AS count FROM openclaw_sessions WHERE task_id = ?',
+    [queuedTaskId],
+  );
+
+  assert.equal(builderSession?.task_id, activeTaskId);
+  assert.equal(builderSession?.active_task_id, activeTaskId);
+  assert.equal(builderSession?.session_key, builderSessionKey);
+  assert.equal(queuedTaskSessions?.count || 0, 0);
+});
+
+test('dispatch restores a corrupted queued builder task to waiting state without creating a root session', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const builderId = crypto.randomUUID();
+  const activeTaskId = crypto.randomUUID();
+  const queuedTaskId = crypto.randomUUID();
+  const builderSessionId = buildPersistentAgentSessionId({ id: builderId, name: 'Builder Agent' });
+  const builderSessionKey = `agent:coder:${builderSessionId}`;
+
+  ensureWorkspace(workspaceId);
+  const templateId = seedStrictWorkflowTemplate(workspaceId);
+  seedAgent({ id: builderId, workspaceId, name: 'Builder Agent', role: 'builder', status: 'working' });
+  seedTask({ id: activeTaskId, workspaceId, templateId, status: 'in_progress', assignedAgentId: builderId, title: 'Current builder task' });
+  seedTask({ id: queuedTaskId, workspaceId, templateId, status: 'assigned', assignedAgentId: builderId, title: 'Corrupted queued task' });
+  seedTaskRole(activeTaskId, 'builder', builderId);
+  seedTaskRole(queuedTaskId, 'builder', builderId);
+  seedSession({
+    agentId: builderId,
+    taskId: activeTaskId,
+    openclawSessionId: builderSessionId,
+    sessionKey: builderSessionKey,
+    status: 'active',
+  });
+  run(
+    `UPDATE tasks
+     SET planning_dispatch_error = 'Run ended without completion callback or workflow handoff (ended session).',
+         status_reason = 'Run ended without completion callback or workflow handoff (ended session).'
+     WHERE id = ?`,
+    [queuedTaskId],
+  );
+  run(
+    `INSERT INTO openclaw_sessions
+      (id, agent_id, task_id, active_task_id, openclaw_session_id, channel, status, session_type, created_at, updated_at)
+     VALUES (?, ?, ?, NULL, ?, 'mission-control', 'ended', 'persistent', datetime('now'), datetime('now'))`,
+    [crypto.randomUUID(), builderId, queuedTaskId, builderSessionId],
+  );
+  stubGatewayClient({ allowDispatch: true });
+
+  const response = await dispatchTaskRoute(
+    new NextRequest(`http://localhost/api/tasks/${queuedTaskId}/dispatch`, { method: 'POST' }),
+    { params: Promise.resolve({ id: queuedTaskId }) },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.queued, true);
+  assert.equal(body.waiting_for_task_id, activeTaskId);
+
+  const queuedTask = queryOne<{ planning_dispatch_error: string | null; status_reason: string | null }>(
+    'SELECT planning_dispatch_error, status_reason FROM tasks WHERE id = ?',
+    [queuedTaskId],
+  );
+  const builderSession = queryOne<{ task_id: string | null; active_task_id: string | null; session_key: string | null }>(
+    `SELECT task_id, active_task_id, session_key
+     FROM openclaw_sessions
+     WHERE agent_id = ?
+       AND openclaw_session_id = ?
+       AND status = 'active'
+     LIMIT 1`,
+    [builderId, builderSessionId],
+  );
+  const queuedActiveSessionCount = queryOne<{ count: number }>(
+    `SELECT COUNT(*) AS count
+     FROM openclaw_sessions
+     WHERE task_id = ?
+       AND status = 'active'`,
+    [queuedTaskId],
+  );
+
+  assert.equal(queuedTask?.planning_dispatch_error, null);
+  assert.match(queuedTask?.status_reason || '', /Waiting for Builder Agent to finish "Current builder task"/);
+  assert.equal(builderSession?.task_id, activeTaskId);
+  assert.equal(builderSession?.active_task_id, activeTaskId);
+  assert.equal(builderSession?.session_key, builderSessionKey);
+  assert.equal(queuedActiveSessionCount?.count || 0, 0);
 });
 
 test('planning approval queues a busy builder task instead of starting a second in-progress build', async () => {

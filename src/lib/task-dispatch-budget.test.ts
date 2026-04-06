@@ -184,7 +184,7 @@ test('dispatch records confirmed runtime model binding before chat.send', async 
 
   ensureWorkspace(workspaceId);
   seedProduct(productId, workspaceId);
-  seedAgent(agentId, workspaceId, 'openrouter/qwen/qwen3.6-plus:free');
+  seedAgent(agentId, workspaceId, 'qwen/qwen3.6-plus');
   seedTask(taskId, workspaceId, productId, agentId);
 
   const client = getOpenClawClient() as unknown as {
@@ -200,12 +200,12 @@ test('dispatch records confirmed runtime model binding before chat.send', async 
   client.listAgents = async () => [];
   client.patchSessionModel = async (sessionKey: string, model: string) => ({
     key: sessionKey,
-    resolved: { model: 'qwen/qwen3.6-plus:free' },
+    resolved: { model: 'qwen/qwen3.6-plus' },
   });
   client.getSessionByKey = async (sessionKey: string) => ({
     key: sessionKey,
     sessionId: 'runtime-session-2',
-    model: 'qwen/qwen3.6-plus:free',
+    model: 'qwen/qwen3.6-plus',
     inputTokens: 120,
     outputTokens: 24,
     cacheRead: 6,
@@ -224,8 +224,8 @@ test('dispatch records confirmed runtime model binding before chat.send', async 
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.binding_status, 'bound');
-  assert.equal(body.bound_model, 'openrouter/qwen/qwen3.6-plus:free');
-  assert.equal(body.requested_model, 'openrouter/qwen/qwen3.6-plus:free');
+  assert.equal(body.bound_model, 'qwen/qwen3.6-plus');
+  assert.equal(body.requested_model, 'qwen/qwen3.6-plus');
   assert.deepEqual(sentMethods.filter((method) => method === 'chat.send'), ['chat.send']);
 
   const session = queryOne<{
@@ -242,7 +242,7 @@ test('dispatch records confirmed runtime model binding before chat.send', async 
     [agentId],
   );
   assert.equal(session?.binding_status, 'bound');
-  assert.equal(session?.bound_model, 'openrouter/qwen/qwen3.6-plus:free');
+  assert.equal(session?.bound_model, 'qwen/qwen3.6-plus');
   assert.match(session?.session_key || '', /^agent:coder:/);
   assert.equal(session?.usage_start_input_tokens, 120);
   assert.equal(session?.usage_start_output_tokens, 24);

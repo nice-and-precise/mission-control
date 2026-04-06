@@ -8,11 +8,11 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Snapshot
 
-- Date verified: `2026-04-05` (session 2)
+- Date verified: `2026-04-05` (session 3)
 - Upstream base: `v2.4.0`
-- Local checkout state: `E2E recovery + reviewer callback gap fix; LLI SaaS unblocked`
-- Git ref: `work/e2e-recovery`
-- Baseline commit: `6bb7904` (reviewer callback fix on top of `fce29d9` E2E recovery)
+- Local checkout state: `queue/session hijack fix + live squti repair; LLI SaaS unblocked`
+- Git ref: `main`
+- Baseline commit: `ca1d88d` (queue/session hijack fix on top of origin/main)
 - GitHub PR state:
   - PR `#1` remains the earlier repo-reconciliation merge into `origin/main`
   - this restore work is local branch state on top of `origin/main`; local `HEAD` does not currently equal `origin/main`
@@ -35,7 +35,7 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Verified Runtime Behavior
 
-The following facts were re-verified against the live local runtime on `2026-04-03`:
+The following facts were re-verified against the live local runtime on `2026-04-05`:
 
 - `npm run dev` is the default local operating mode on `localhost:4000`
   - authenticated `GET /api/health` now returns HTTP `200` with JSON like `{"status":"ok","uptime_seconds":...,"version":"2.4.0"}` during this stabilization pass
@@ -56,7 +56,7 @@ The following facts were re-verified against the live local runtime on `2026-04-
   - the reusable smoke product remains present and empty
   - real `LLI SaaS` planning tasks were preserved
   - orphan learner-session rows were removed
-  - after cleanup, there are `0` live tasks in `assigned|in_progress|testing|review|verification`
+  - after the earlier cleanup there were `0` live tasks in `assigned|in_progress|testing|review|verification`, but the current active local set now includes the repaired `squti` tasks `c06d980e-3845-4d2f-b051-a3c3c5ad1560` (`in_progress`) and `ddea3a70-ad4c-4380-99ae-3327388a0110` (`assigned`, queued behind the active builder task)
 - Runtime evidence and transcript fallback now have separate roles
   - Sessions, Deliverables, and Agent Live can recover visibility after a broken run
   - workflow advancement still depends on explicit markers such as `TASK_COMPLETE`, `BLOCKED`, `TEST_PASS`, `TEST_FAIL`, `VERIFY_PASS`, or `VERIFY_FAIL`
@@ -79,16 +79,32 @@ The following facts were re-verified against the live local runtime on `2026-04-
 - Session history, model discovery, and detached work are now separated into explicit operator surfaces
   - authenticated `GET /api/openclaw/sessions/{id}/history` resolves either a session key or runtime session ID into a normalized Mission Control transcript payload
   - `GET /api/openclaw/models` now separates `agentTargets` from `providerModels`, and local Autopilot defaults to `openclaw`
+  - provider-model Autopilot requests now force session-backed completion when a workspace override asks for `qwen/qwen3.6-plus`, rather than relying on `agent-cli` to honor provider overrides implicitly
   - `GET /api/openclaw/background-tasks` exposes the OpenClaw task ledger as read-only observability and correlates known session keys back to Mission Control task sessions when possible
   - the detached-work route now also surfaces `status`, `sourceChannel`, and `warning` so operators can see degraded ledger reads instead of treating them as a silent empty state
   - a timed-out empty ledger is currently surfaced truthfully as `status: "degraded"` with a warning, which is acceptable operator behavior for this baseline
+- Local provider-family routing is now normalized around three active families
+  - Codex work stays on `openai-codex/*`
+  - planning, research, ideation, and any explicit Qwen lane use `qwen/qwen3.6-plus`
+  - non-Qwen live lanes stay on OpenCode Go (`opencode-go/*`, `opencode-go-mm/*`)
+- Autopilot JSON parsing now includes one strict retry before surfacing a failure
+  - if a research/planning/ideation reply is wrapped in prose, fenced JSON, or otherwise recoverable text, Mission Control attempts local extraction first
+  - if the first reply is still not valid JSON, Mission Control retries once with `temperature: 0` and a stricter JSON-only instruction before marking the cycle failed
 - The session detail route no longer crashes on `sessions.list` payload shape differences
   - authenticated `GET /api/openclaw/sessions/{id}` now returns a normal `404` for a missing session instead of a `500`
 - Static error-page build regression is not reproducible on the current checkout
   - `npm run build` completed successfully on this `v2.4.0-local-baseline` worktree after compile, typecheck, static generation, and route optimization
 - Node.js runtime is now pinned to an exact version to prevent native addon mismatch on upgrade
   - `.nvmrc` pinned from `24` (major-only) to `24.13.0` (exact patch), enforced by `check-runtime.js` preflight
-  - `npm run test:runtime-targeted` runs the focused callback / evidence / repair test suite (47 tests, 0 fail)
+  - `npm run test:runtime-targeted` runs the focused callback / evidence / repair test suite (49 tests, 0 fail)
+- Queued builder dispatch now preserves root-session ownership correctly
+  - `POST /api/tasks/[id]/dispatch` now performs the builder-busy / queue decision before any root-session create-or-rebind work
+  - legitimately queued builder tasks stay in `assigned`, keep `planning_dispatch_error = NULL`, receive a waiting `status_reason`, and do not own an active root session
+  - `recoverUnreconciledTaskRunsInternal()` now restores that waiting state instead of overwriting queued builder tasks with the generic ended-session banner
+- Live `squti` task repair was completed through the authenticated local API on `2026-04-05`
+  - `ddea3a70-ad4c-4380-99ae-3327388a0110` was re-dispatched on its current `testing` stage, returned a real `TEST_FAIL` callback, and then cleanly re-entered the builder queue with `status = assigned`, `planning_dispatch_error = NULL`, and `status_reason = Waiting for Builder Agent to finish "Exam Blueprint to Question Bank Traceability Matrix" before starting this task.`
+  - `c06d980e-3845-4d2f-b051-a3c3c5ad1560` was re-dispatched on its builder stage and now owns the active builder session `agent:coder:mission-control-builder-agent-105ceb56`
+  - the final live state matches the intended invariant: one active builder task, one queued builder task, and no generic unreconciled-run banner on either card
 - Stale "run ended without completion callback" error strings on done tasks have been repaired
   - `npm run tasks:repair-successful-run-errors` (dry-run) and `-- --apply` let operators inspect and clear stale error prefixes on completed tasks
   - applied against the live DB on `2026-04-05`; cleared 2 stale rows
@@ -174,6 +190,8 @@ ls -ld .next .next-dev
 | Static error-page build regression is currently reproducible from source | local status note from earlier session | `not reproducible` | current `npm run build` exits `0` on this worktree | Only reopen if a fresh failing revision or exact repro is captured |
 | Current test and build gate succeeds on the pinned Node runtime | [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md), [../README.md](../README.md) | `verified` | `nvm use 24.13.0`, `npm test`, and `npm run build` all exited `0` on `2026-03-29` | Keep `.nvmrc`, runtime preflight, and verification checklist aligned |
 | `.nvmrc` pins the exact Node patch version so native addons never silently break | `.nvmrc`, `scripts/check-runtime.js` | `verified` | `node --version` returns `v24.13.0` after `nvm use` on `2026-04-05` | Keep both `.nvmrc` and preflight script in sync on every Node upgrade |
+| Queued builder dispatch does not steal the active builder root session before returning a queued response | `src/app/api/tasks/[id]/dispatch/route.ts`, `src/lib/task-queue.ts`, `src/lib/task-route-workflow.test.ts` | `verified` | focused Node `24.13.0` test run plus live `squti` re-dispatch left only `c06d980e-3845-4d2f-b051-a3c3c5ad1560` owning the active builder session on `2026-04-05` | Keep queue decision ahead of root-session mutation and re-check this invariant after any dispatch-route refactor |
+| Health recovery restores queued builder waiting state instead of rewriting it to the generic ended-session banner | `src/lib/agent-health.ts`, `src/lib/task-evidence.test.ts` | `verified` | focused Node `24.13.0` test run passed after adding queued-builder recovery coverage on `2026-04-05` | Keep queue-state repair ahead of the generic unreconciled-run fallback |
 | Stale unreconciled-run error strings on done tasks can be repaired non-destructively | `scripts/repair-successful-run-errors.ts`, `src/lib/task-run-error-repair.ts` | `verified` | dry-run showed 2 rows; apply cleared them with `changes() = 2` on `2026-04-05` | Use `npm run tasks:repair-successful-run-errors -- --apply` after any batch of stuck-then-recovered tasks |
 | SSE connection is whitelisted for same-origin browser clients without a bearer token | `src/middleware.ts` | `verified` | curl with `Sec-Fetch-Site: same-origin` + `Accept: text/event-stream` returns `HTTP 200` + `: connected` on `2026-04-05` | Keep `isSameOriginEventStreamRequest()` guard and confirm ONLINE badge after any middleware change |
 | `/api/tasks/unread` returns `[]` and does not generate 404 server log noise | `src/app/api/tasks/unread/route.ts` | `verified` | authenticated GET returns `[]` on `2026-04-05` | Keep stub aligned with any future unread-count feature work |
