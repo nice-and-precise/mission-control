@@ -1948,15 +1948,17 @@ function createPreMigrationBackup(db: Database.Database): void {
 
   // Build a timestamp string that is valid in filenames on all platforms.
   // ISO 8601 with colons replaced — colons are illegal in Windows filenames.
-  // Milliseconds are stripped for a cleaner, more readable filename.
+  // Milliseconds are kept to avoid filename collision when multiple test-suite
+  // DB instances are created within the same wall-clock second.
   const timestamp = new Date().toISOString()
     .replace(/:/g, '-')   // colons → hyphens (Windows compatibility)
-    .replace(/\..+$/, ''); // strip fractional seconds: "2026-03-14T16-32-00"
+    .replace(/\./g, '-')  // dot before ms → hyphen: "2026-03-14T16-32-00-123Z"
+    .replace(/Z$/, '');   // strip trailing Z for cleaner filenames
 
   // Full original filename (e.g. "mission-control.db") becomes the prefix so
   // the backup is clearly associated with its source database.
   const dbBasename = path.basename(dbPath);                  // "mission-control.db"
-  const backupFilename = `${dbBasename}.backup.${timestamp}`; // "mission-control.db.backup.2026-03-14T16-32-00"
+  const backupFilename = `${dbBasename}.backup.${timestamp}`; // "mission-control.db.backup.2026-03-14T16-32-00-123"
   const backupPath = path.join(backupDir, backupFilename);
 
   // VACUUM INTO creates a consistent, compacted snapshot of the open database.

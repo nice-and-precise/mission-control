@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 test('gateway HTTP completions send the required OpenClaw scopes header', async () => {
   process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
+  // Pin to an openclaw agent target so no x-openclaw-model header is added.
+  process.env.AUTOPILOT_MODEL = 'openclaw';
 
   const originalFetch = globalThis.fetch;
   let capturedInit: RequestInit | undefined;
@@ -35,6 +37,7 @@ test('gateway HTTP completions send the required OpenClaw scopes header', async 
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.AUTOPILOT_MODEL;
   }
 });
 
