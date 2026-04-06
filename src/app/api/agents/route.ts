@@ -1,7 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryAll, queryOne, run } from '@/lib/db';
+import { canonicalMissionControlModelId } from '@/lib/openclaw/model-policy';
+import { isOpenClawAgentTarget, validateProviderModelOverride } from '@/lib/openclaw/model-catalog';
 import type { Agent, CreateAgentRequest } from '@/lib/types';
+
+async function validateAgentModelOverride(value: unknown): Promise<string | null> {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    throw new Error('Agent model must be a string or null.');
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  await validateProviderModelOverride(trimmed);
+  return isOpenClawAgentTarget(trimmed) ? trimmed : canonicalMissionControlModelId(trimmed);
+}
 
 // GET /api/agents - List all agents
 export async function GET(request: NextRequest) {
@@ -53,6 +73,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Name and role are required' }, { status: 400 });
     }
 
+    let validatedModel: string | null;
+    try {
+      validatedModel = await validateAgentModelOverride(body.model);
+    } catch (validationError) {
+      const message = validationError instanceof Error
+        ? validationError.message
+        : 'Invalid agent model override value';
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+
     const id = uuidv4();
     const now = new Date().toISOString();
 
@@ -70,7 +100,7 @@ export async function POST(request: NextRequest) {
         body.soul_md || null,
         body.user_md || null,
         body.agents_md || null,
-        body.model || null,
+        validatedModel,
         now,
         now,
       ]

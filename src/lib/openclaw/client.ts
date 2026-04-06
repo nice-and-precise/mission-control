@@ -451,8 +451,12 @@ export class OpenClawClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve: resolve as (value: unknown) => void, reject });
 
-      // Some gateway operations (notably sessions.patch) can legitimately take longer.
-      const timeoutMs = method === 'sessions.patch' ? 60000 : 30000;
+      // Some gateway operations can legitimately take longer under local load.
+      const timeoutMs = method === 'sessions.patch'
+        ? 60000
+        : method === 'chat.history'
+          ? 120000
+          : 30000;
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);

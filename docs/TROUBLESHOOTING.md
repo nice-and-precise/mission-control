@@ -1,6 +1,6 @@
 # Troubleshooting Quick Reference
 
-Ten common local problems and their fixes. For deeper runtime evidence and verified claim history, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
+Common local problems and their fixes. For deeper runtime evidence and verified claim history, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).
 
 ---
 
@@ -119,6 +119,36 @@ If the history shows a completed spec, use `POST /api/tasks/{id}/planning/retry-
 
 ---
 
+## 8. Planning/research is still hitting an old Qwen or OpenRouter model
+
+**Symptom:** Mission Control planning, research, or ideation reports an old Qwen model id such as `openrouter/qwen/...` or `qwen3.5-plus-02-15`.
+
+**Cause:** The host OpenClaw routing config, workspace override, or explicit agent model row was not normalized to the current local policy.
+
+**Current expected policy:**
+
+- local `AUTOPILOT_MODEL` stays `openclaw`
+- local `OPENCLAW_AUTOPILOT_COMPLETION_MODE` stays `session`
+- Codex work uses `openai-codex/*`
+- planning, research, ideation, and other Qwen lanes use `qwen/qwen3.6-plus`
+- non-Qwen lanes use OpenCode Go
+
+**Fix:**
+
+```bash
+TOKEN="$(python3 -c 'from dotenv import dotenv_values; print(dotenv_values(\".env.local\").get(\"MC_API_TOKEN\",\"\"))')"
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/openclaw/models | jq '{defaultProviderModel, providerModels}'
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/workspaces/e37d91ec-3f15-4b54-985f-b9daadde88de | jq '{autopilot_model_override,planning_model_override}'
+```
+
+If the model catalog is stale, restart the gateway and `npm run dev`, then start a fresh `/new` conversation before retrying the workflow. If research/planning still fails on JSON parse, note that Mission Control now retries once automatically with a strict JSON-only prompt; a repeated failure after that usually means the provider reply itself was incomplete rather than lightly malformed.
+
+---
+
 ## 8. Tester or reviewer dispatch returns 400 "Wrong stage owner"
 
 **Symptom:** Manually triggering a test or review dispatch via the API returns `400` with a message about stage ownership.
@@ -162,3 +192,89 @@ To enable real fixer capability, manually seed a fixer-role agent with a model, 
 - Patch the task back to `inbox` and redispatch with a corrected prompt.
 - Seed a real fixer agent if you want automatic escalation handling.
 - Treat it as a manual escalation trigger and handle it directly.
+
+---
+
+## 11. Queued builder card shows `Run ended without completion callback...`
+
+**Symptom:** A builder-owned task in `assigned` shows the generic ended-session banner instead of a waiting message, usually while another builder task is already active.
+
+**Cause:** Before the `2026-04-05` queue/session fix, the builder root session could be rebound before the dispatch route decided to queue the task. The queued task then carried stale session history, and health recovery later misclassified it as a broken ended run.
+
+**Correct invariant:**
+
+- queued builder tasks stay in `assigned`
+- `planning_dispatch_error` stays `NULL`
+- `status_reason` says `Waiting for Builder Agent to finish "..."`
+- the queued task does not own an active root session
+
+**Fix:** Re-dispatch the queued task through the normal dispatch route so Mission Control can restore the waiting state or start it cleanly if the builder is free.
+
+```bash
+TOKEN="$(python3 -c 'from dotenv import dotenv_values; print(dotenv_values(\".env.local\").get(\"MC_API_TOKEN\",\"\"))')"
+
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/tasks/<TASK_ID>/dispatch | jq
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4000/api/tasks/<TASK_ID> | jq '{status,status_reason,planning_dispatch_error}'
+
+sqlite3 mission-control.db \
+  "select task_id, active_task_id, session_key, status from openclaw_sessions where task_id = '<TASK_ID>' order by updated_at desc limit 3;"
+```
+
+Expected result:
+
+- if the builder is busy, the response returns `queued: true` and the task gets the waiting message
+- if the builder is free, the task moves to `in_progress`
+- no queued card should show the generic ended-session banner
+
+---
+
+## 12. `npm ci` or tests fail after switching to a newer Node major
+
+**Symptom:** Native-module tests fail after a Node upgrade, often with `better-sqlite3` ABI/build errors.
+
+**Cause:** Native addons are compiled against a Node ABI. The repo now pins `.nvmrc` to `24.13.0`, and this checkout should be verified on that exact runtime. See the official Node ABI notes at <https://nodejs.org/en/learn/modules/abi-stability> and the current `better-sqlite3` Node 25 incompatibility report at <https://github.com/WiseLibs/better-sqlite3/issues/1411>.
+
+**Fix:**
+
+```bash
+cd /Users/jordan/.openclaw/workspace/mission-control
+source ~/.nvm/nvm.sh
+nvm use 24.13.0
+npm ci
+npm run test:runtime-targeted
+```
+
+If `node --version` is not `v24.13.0`, treat any native-module test failure as an environment mismatch first.
+
+---
+
+## 13. Ideation produces only 1 idea per cycle
+
+**Symptom:** Autopilot ideation consistently generates exactly 1 idea/card instead of the expected 8-12.
+
+**Root cause (fixed 2026-04-xx):** Two interacting problems in the JSON parsing layer (`src/lib/autopilot/llm.ts`):
+
+1. **Code-fence wrapping:** Reasoning models (Qwen, DeepSeek) wrap JSON output in ` ```json ... ``` ` markdown fences. The old `extractStructuredJSON` tried balanced-brace extraction *before* code-fence stripping, so it found the first balanced `{}` object inside the array and returned it as a single idea.
+2. **Truncated arrays:** The model's JSON array was truncated mid-element (the closing `]` never appeared, despite `finishReason: "stop"`). The old parser had no recovery path for truncated arrays — it could only find complete balanced structures.
+
+**Fix applied:** `extractStructuredJSON` now:
+- Strips code fences before attempting balanced extraction
+- Recovers truncated arrays by collecting all balanced top-level elements
+- Logs a warning: `[LLM] Recovered N element(s) from truncated JSON array`
+
+**Diagnosing if this recurs:**
+```bash
+# Check how many ideas a recent cycle generated
+sqlite3 mission-control.db \
+  "SELECT id, ideas_generated, status FROM ideation_cycles ORDER BY created_at DESC LIMIT 5;"
+
+# If ideas_generated = 1, check the phase_data for the raw LLM content length
+sqlite3 mission-control.db \
+  "SELECT length(json_extract(phase_data, '$.raw_content')) as raw_len FROM ideation_cycles WHERE id = '<cycle-id>';"
+```
+
+If `raw_len` is large (>5000) but `ideas_generated` is 1, the parser is likely collapsing a multi-idea response again. Check server logs for the `[LLM] Recovered` warning — its absence means the truncated recovery path isn't firing.

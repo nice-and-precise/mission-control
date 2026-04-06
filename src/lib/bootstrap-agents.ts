@@ -63,8 +63,8 @@ interface AgentDef {
 }
 
 const ROLE_MODEL_FALLBACKS: Record<string, string[]> = {
-  builder: ['openrouter/qwen/qwen3.6-plus:free', 'opencode/qwen3.6-plus-free', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
-  reviewer: ['openrouter/qwen/qwen3.6-plus:free', 'opencode/qwen3.6-plus-free', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
+  builder: ['qwen/qwen3.6-plus', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
+  reviewer: ['qwen/qwen3.6-plus', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
   tester: ['opencode-go-mm/minimax-m2.5', 'opencode-go/kimi-k2.5', 'opencode-go/glm-5'],
   learner: ['opencode-go/kimi-k2.5', 'opencode-go/glm-5', 'opencode-go-mm/minimax-m2.5'],
 };

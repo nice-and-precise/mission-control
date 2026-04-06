@@ -12,6 +12,7 @@ import { getRelevantKnowledge, formatKnowledgeForDispatch } from '@/lib/learner'
 import { getTaskWorkflow, getWorkflowOwnerRoleForStatus } from '@/lib/workflow-engine';
 import { syncGatewayAgentsToCatalog } from '@/lib/agent-catalog-sync';
 import { pickDynamicAgent } from '@/lib/task-governance';
+import { buildQueuedTaskWaitingMessage, findBlockingActiveTask } from '@/lib/task-queue';
 import { buildCheckpointContext } from '@/lib/checkpoint';
 import { formatMailForDispatch } from '@/lib/mailbox';
 import { getPendingNotesForDispatch } from '@/lib/task-notes';
@@ -37,23 +38,6 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-const AGENT_EXECUTING_STATUSES = ['in_progress', 'testing', 'review', 'verification', 'convoy_active'];
-
-function findBlockingActiveTask(agentId: string, taskId: string, workspaceId: string): { id: string; title: string; status: string } | null {
-  const placeholders = AGENT_EXECUTING_STATUSES.map(() => '?').join(', ');
-  return queryOne<{ id: string; title: string; status: string }>(
-    `SELECT id, title, status
-     FROM tasks
-     WHERE assigned_agent_id = ?
-       AND id != ?
-       AND workspace_id = ?
-       AND status IN (${placeholders})
-     ORDER BY updated_at DESC
-     LIMIT 1`,
-    [agentId, taskId, workspaceId, ...AGENT_EXECUTING_STATUSES]
-  ) || null;
-}
-
 function queueTaskUntilAgentIsFree(args: {
   taskId: string;
   agentId: string;
@@ -61,7 +45,7 @@ function queueTaskUntilAgentIsFree(args: {
   blockingTask: { id: string; title: string; status: string };
   now: string;
 }): void {
-  const message = `Waiting for ${args.agentName} to finish "${args.blockingTask.title}" before starting this task.`;
+  const message = buildQueuedTaskWaitingMessage(args.agentName, args.blockingTask.title);
   run(
     `UPDATE tasks
      SET status = 'assigned',
@@ -213,7 +197,115 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Connect to OpenClaw Gateway
+    if (task.status === 'inbox') {
+      const error = 'Cannot dispatch an inbox task. Assign it first so workflow ownership is explicit.';
+      run(
+        `UPDATE tasks
+         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+         WHERE id = ?`,
+        [error, error, now, id]
+      );
+      return NextResponse.json({ error }, { status: 409 });
+    }
+
+    // Determine role-specific instructions based on workflow template before doing any
+    // session, workspace, or runtime work so queued builder tasks can return early.
+    const workflow = getTaskWorkflow(id);
+    let currentStage: WorkflowStage | undefined;
+    let nextStage: WorkflowStage | undefined;
+    if (workflow) {
+      let stageIndex = workflow.stages.findIndex(s => s.status === task.status);
+      // 'assigned' isn't a workflow stage — resolve to the 'build' stage (in_progress)
+      if (stageIndex < 0 && task.status === 'assigned') {
+        stageIndex = workflow.stages.findIndex(s => s.role === 'builder');
+      }
+      if (stageIndex >= 0) {
+        currentStage = workflow.stages[stageIndex];
+        nextStage = workflow.stages[stageIndex + 1];
+      }
+    }
+
+    let expectedRole = task.status === 'assigned'
+      ? 'builder'
+      : getWorkflowOwnerRoleForStatus(workflow, task.status);
+
+    if (expectedRole && (agent.role || '').toLowerCase() !== expectedRole.toLowerCase()) {
+      const error = `Workflow mismatch: status ${task.status} is ${expectedRole}-owned but assigned agent ${agent.name} has role ${agent.role || 'unknown'}.`;
+      run(
+        `UPDATE tasks
+         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+         WHERE id = ?`,
+        [error, error, now, id]
+      );
+      return NextResponse.json({ error }, { status: 409 });
+    }
+
+    if (workflow && currentStage && !currentStage.role) {
+      const nextRole = (nextStage?.role || '').toLowerCase();
+      const assignedRole = (agent.role || '').toLowerCase();
+
+      if (nextStage?.status && nextRole && assignedRole === nextRole) {
+        run(
+          `UPDATE tasks
+           SET status = ?,
+               planning_dispatch_error = NULL,
+               status_reason = NULL,
+               updated_at = ?
+           WHERE id = ?`,
+          [nextStage.status, now, id],
+        );
+        run(
+          `INSERT INTO events (id, type, task_id, message, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+          [uuidv4(), 'task_status_changed', id, `Auto-advanced queue stage ${task.status} -> ${nextStage.status} for ${agent.name} dispatch`, now],
+        );
+
+        task.status = nextStage.status;
+        currentStage = nextStage;
+        const promotedStageIndex = workflow.stages.findIndex((s) => s.status === task.status);
+        nextStage = promotedStageIndex >= 0 ? workflow.stages[promotedStageIndex + 1] : undefined;
+        expectedRole = getWorkflowOwnerRoleForStatus(workflow, task.status);
+      } else {
+        const error = `Cannot dispatch queue stage ${task.status} directly. Advance it through the workflow engine instead.`;
+        run(
+          `UPDATE tasks
+           SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
+           WHERE id = ?`,
+          [error, error, now, id]
+        );
+        return NextResponse.json({ error }, { status: 409 });
+      }
+    }
+
+    const builderOwnedDispatch = expectedRole?.toLowerCase() === 'builder';
+    const blockingTask = builderOwnedDispatch ? findBlockingActiveTask(agent.id, task.id, task.workspace_id) : null;
+
+    if (builderOwnedDispatch && blockingTask) {
+      queueTaskUntilAgentIsFree({
+        taskId: task.id,
+        agentId: agent.id,
+        agentName: agent.name,
+        blockingTask,
+        now,
+      });
+
+      const queuedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+      if (queuedTask) {
+        broadcast({ type: 'task_updated', payload: queuedTask });
+      }
+
+      return NextResponse.json({
+        success: true,
+        queued: true,
+        task_id: task.id,
+        agent_id: agent.id,
+        message: `Task queued for ${agent.name}; agent is still busy with another active task.`,
+        waiting_for_task_id: blockingTask.id,
+        waiting_for_task_title: blockingTask.title,
+      });
+    }
+
+    // Connect to OpenClaw Gateway only after the queue/ownership checks have passed.
     const client = getOpenClawClient();
     if (!client.isConnected()) {
       try {
@@ -230,7 +322,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const desiredOpenclawSessionId = buildPersistentAgentSessionId(agent);
 
-    // Get or create OpenClaw session for this agent
     let session = queryOne<OpenClawSession>(
       'SELECT * FROM openclaw_sessions WHERE agent_id = ? AND status = ? AND openclaw_session_id = ?',
       [agent.id, 'active', desiredOpenclawSessionId]
@@ -249,9 +340,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         [now, now, agent.id, desiredOpenclawSessionId]
       );
 
-      // Create session record
       const sessionId = uuidv4();
-      
+
       run(
         `INSERT INTO openclaw_sessions (id, agent_id, openclaw_session_id, channel, status, task_id, active_task_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -263,7 +353,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         [sessionId]
       );
 
-      // Log session creation
       run(
         `INSERT INTO events (id, type, agent_id, message, created_at)
          VALUES (?, ?, ?, ?, ?)`,
@@ -278,8 +367,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Always bind the active session to the task being dispatched so health
-    // checks and session views reflect the real executing task.
     run(
       `UPDATE openclaw_sessions
        SET task_id = ?, active_task_id = ?, status = 'active', ended_at = NULL, updated_at = ?
@@ -430,113 +517,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       } catch {
         // Skills injection is best-effort
       }
-    }
-
-    if (task.status === 'inbox') {
-      const error = 'Cannot dispatch an inbox task. Assign it first so workflow ownership is explicit.';
-      run(
-        `UPDATE tasks
-         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
-         WHERE id = ?`,
-        [error, error, now, id]
-      );
-      return NextResponse.json({ error }, { status: 409 });
-    }
-
-    // Determine role-specific instructions based on workflow template
-    const workflow = getTaskWorkflow(id);
-    let currentStage: WorkflowStage | undefined;
-    let nextStage: WorkflowStage | undefined;
-    if (workflow) {
-      let stageIndex = workflow.stages.findIndex(s => s.status === task.status);
-      // 'assigned' isn't a workflow stage — resolve to the 'build' stage (in_progress)
-      if (stageIndex < 0 && task.status === 'assigned') {
-        stageIndex = workflow.stages.findIndex(s => s.role === 'builder');
-      }
-      if (stageIndex >= 0) {
-        currentStage = workflow.stages[stageIndex];
-        nextStage = workflow.stages[stageIndex + 1];
-      }
-    }
-
-    let expectedRole = task.status === 'assigned'
-      ? 'builder'
-      : getWorkflowOwnerRoleForStatus(workflow, task.status);
-
-    if (expectedRole && (agent.role || '').toLowerCase() !== expectedRole.toLowerCase()) {
-      const error = `Workflow mismatch: status ${task.status} is ${expectedRole}-owned but assigned agent ${agent.name} has role ${agent.role || 'unknown'}.`;
-      run(
-        `UPDATE tasks
-         SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
-         WHERE id = ?`,
-        [error, error, now, id]
-      );
-      return NextResponse.json({ error }, { status: 409 });
-    }
-
-    if (workflow && currentStage && !currentStage.role) {
-      const nextRole = (nextStage?.role || '').toLowerCase();
-      const assignedRole = (agent.role || '').toLowerCase();
-
-      if (nextStage?.status && nextRole && assignedRole === nextRole) {
-        run(
-          `UPDATE tasks
-           SET status = ?,
-               planning_dispatch_error = NULL,
-               status_reason = NULL,
-               updated_at = ?
-           WHERE id = ?`,
-          [nextStage.status, now, id],
-        );
-        run(
-          `INSERT INTO events (id, type, task_id, message, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
-          [uuidv4(), 'task_status_changed', id, `Auto-advanced queue stage ${task.status} -> ${nextStage.status} for ${agent.name} dispatch`, now],
-        );
-
-        task.status = nextStage.status;
-        currentStage = nextStage;
-        const promotedStageIndex = workflow.stages.findIndex((s) => s.status === task.status);
-        nextStage = promotedStageIndex >= 0 ? workflow.stages[promotedStageIndex + 1] : undefined;
-        expectedRole = getWorkflowOwnerRoleForStatus(workflow, task.status);
-      } else {
-        const error = `Cannot dispatch queue stage ${task.status} directly. Advance it through the workflow engine instead.`;
-        run(
-          `UPDATE tasks
-           SET planning_dispatch_error = ?, status_reason = ?, updated_at = ?
-           WHERE id = ?`,
-          [error, error, now, id]
-        );
-        return NextResponse.json({ error }, { status: 409 });
-      }
-    }
-
-    const builderOwnedDispatch = expectedRole?.toLowerCase() === 'builder';
-    const blockingTask = builderOwnedDispatch ? findBlockingActiveTask(agent.id, task.id, task.workspace_id) : null;
-
-    if (builderOwnedDispatch && blockingTask) {
-      queueTaskUntilAgentIsFree({
-        taskId: task.id,
-        agentId: agent.id,
-        agentName: agent.name,
-        blockingTask,
-        now,
-      });
-
-      const queuedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
-      if (queuedTask) {
-        broadcast({ type: 'task_updated', payload: queuedTask });
-      }
-
-      return NextResponse.json({
-        success: true,
-        queued: true,
-        task_id: task.id,
-        agent_id: agent.id,
-        message: `Task queued for ${agent.name}; agent is still busy with another active task.`,
-        waiting_for_task_id: blockingTask.id,
-        waiting_for_task_title: blockingTask.title,
-      });
     }
 
     const isBuilder = !currentStage || currentStage.role === 'builder' || task.status === 'assigned';

@@ -6,6 +6,7 @@ import { buildCheckpointContext } from '@/lib/checkpoint';
 import { processAgentSignal } from '@/lib/agent-signals';
 import { resolveTaskRunOutcomeFromGatewayHistory } from '@/lib/openclaw/session-history';
 import { syncOpenClawBuildUsage } from '@/lib/openclaw/session-runtime';
+import { buildQueuedTaskWaitingMessage, findBlockingActiveTask } from '@/lib/task-queue';
 import {
   buildStoredSessionKey,
   getAuthoritativeStoredTaskSession,
@@ -401,7 +402,7 @@ export async function runHealthCheckCycle(): Promise<AgentHealth[]> {
 }
 
 function clearFalseUnreconciledRunError(
-  task: Pick<Task, 'id' | 'planning_dispatch_error' | 'status_reason'>,
+  task: Pick<Task, 'id' | 'status' | 'workspace_id' | 'assigned_agent_id' | 'planning_dispatch_error' | 'status_reason'>,
   streamState: Pick<Awaited<ReturnType<typeof reconcileTaskRuntimeEvidence>>, 'status'>,
   now: string,
 ): boolean {
@@ -413,6 +414,10 @@ function clearFalseUnreconciledRunError(
     return false;
   }
 
+  if (restoreQueuedBuilderWaitState(task, now)) {
+    return true;
+  }
+
   run(
     `UPDATE tasks
      SET planning_dispatch_error = NULL,
@@ -421,6 +426,65 @@ function clearFalseUnreconciledRunError(
      WHERE id = ?`,
     [now, task.id],
   );
+
+  return true;
+}
+
+function restoreQueuedBuilderWaitState(
+  task: Pick<Task, 'id' | 'status' | 'workspace_id' | 'assigned_agent_id' | 'planning_dispatch_error' | 'status_reason'>,
+  now: string,
+): boolean {
+  if (task.status !== 'assigned' || !task.assigned_agent_id) return false;
+
+  const assignedAgent = queryOne<Pick<Agent, 'name' | 'role'>>(
+    'SELECT name, role FROM agents WHERE id = ?',
+    [task.assigned_agent_id],
+  );
+  if (!assignedAgent || (assignedAgent.role || '').toLowerCase() !== 'builder') return false;
+
+  const activeRootSessionCount = queryOne<{ count: number }>(
+    `SELECT COUNT(*) AS count
+     FROM openclaw_sessions
+     WHERE active_task_id = ?
+       AND COALESCE(session_type, 'persistent') != 'subagent'
+       AND status = 'active'`,
+    [task.id],
+  )?.count || 0;
+  if (activeRootSessionCount > 0) return false;
+
+  const blockingTask = findBlockingActiveTask(task.assigned_agent_id, task.id, task.workspace_id);
+  if (!blockingTask) return false;
+
+  const waitingMessage = buildQueuedTaskWaitingMessage(assignedAgent.name, blockingTask.title);
+  if (task.planning_dispatch_error === null && task.status_reason === waitingMessage) {
+    return true;
+  }
+
+  run(
+    `UPDATE tasks
+     SET planning_dispatch_error = NULL,
+         status_reason = ?,
+         updated_at = ?
+     WHERE id = ?`,
+    [waitingMessage, now, task.id],
+  );
+
+  const latestActivity = queryOne<{ message: string | null }>(
+    `SELECT message
+     FROM task_activities
+     WHERE task_id = ?
+       AND activity_type = 'status_changed'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [task.id],
+  );
+  if (latestActivity?.message !== waitingMessage) {
+    run(
+      `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+       VALUES (?, ?, ?, 'status_changed', ?, ?)`,
+      [uuidv4(), task.id, task.assigned_agent_id, waitingMessage, now],
+    );
+  }
 
   return true;
 }
@@ -447,7 +511,12 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
       continue;
     }
 
-    const authoritativeSession = getAuthoritativeStoredTaskSession(task.id, task.assigned_agent_id);
+    const latestTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]) || task;
+    if (restoreQueuedBuilderWaitState(latestTask, now)) {
+      continue;
+    }
+
+    const authoritativeSession = getAuthoritativeStoredTaskSession(task.id, latestTask.assigned_agent_id);
     if (!authoritativeSession || authoritativeSession.status === 'active') {
       continue;
     }
@@ -513,11 +582,11 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
       [task.id, error, authoritativeSession.created_at || null, authoritativeSession.updated_at || null]
     );
 
-    if (existingRunError && task.planning_dispatch_error === error) {
-      if (task.assigned_agent_id) {
+    if (existingRunError && latestTask.planning_dispatch_error === error) {
+      if (latestTask.assigned_agent_id) {
         run(
           `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
-          [now, task.assigned_agent_id]
+          [now, latestTask.assigned_agent_id]
         );
       }
       continue;
@@ -532,12 +601,12 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
     run(
       `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
        VALUES (?, ?, ?, 'status_changed', ?, ?)`,
-      [uuidv4(), task.id, task.assigned_agent_id, error, now]
+      [uuidv4(), task.id, latestTask.assigned_agent_id, error, now]
     );
-    if (task.assigned_agent_id) {
+    if (latestTask.assigned_agent_id) {
       run(
         `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
-        [now, task.assigned_agent_id]
+        [now, latestTask.assigned_agent_id]
       );
     }
 
@@ -546,7 +615,7 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
     // the output-format contract banner at the top of the message. The
     // verification_auto_retry activity row gates this to one attempt per task — if the
     // activity already exists the task is left for operator intervention.
-    if (task.status === 'verification' && task.assigned_agent_id) {
+    if (task.status === 'verification' && latestTask.assigned_agent_id) {
       const existingRetry = queryOne<{ id: string }>(
         `SELECT id FROM task_activities WHERE task_id = ? AND activity_type = 'verification_auto_retry' LIMIT 1`,
         [task.id],
@@ -557,7 +626,7 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
         run(
           `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
            VALUES (?, ?, ?, 'verification_auto_retry', ?, ?)`,
-          [uuidv4(), task.id, task.assigned_agent_id, retryMsg, now],
+          [uuidv4(), task.id, latestTask.assigned_agent_id, retryMsg, now],
         );
         const retryUrl = getMissionControlUrl();
         const retryHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
