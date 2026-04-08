@@ -84,6 +84,8 @@ test('dispatch budget policy reserves task spend and reconciles when actual buil
     event_type: 'build_task',
     model: 'openai-codex/gpt-5.4',
     cost_usd: 10,
+    ledger_type: 'provider_actual',
+    pricing_basis: 'token_priced',
   });
 
   const reconciled = queryOne<{
@@ -167,9 +169,9 @@ test('dispatch budget policy explains estimated reserve blocks and clears cap st
 
   assert.equal(blocked.ok, false);
   assert.equal(blocked.reasonCode, 'workspace_daily_cap_exceeded');
-  assert.match(blocked.message || '', /Mission Control estimated reserve block/i);
-  assert.match(blocked.message || '', /Recorded spend \$0\.00 \+ reserved spend \$0\.00 \+ requested estimated reserve \$60\.00/i);
-  assert.match(blocked.message || '', /not recorded spend or provider quota usage/i);
+  assert.match(blocked.message || '', /Mission Control provider reserve block/i);
+  assert.match(blocked.message || '', /Provider-priced recorded spend \$0\.00 \+ provider-priced reserved spend \$0\.00 \+ requested provider-priced reserve \$60\.00/i);
+  assert.match(blocked.message || '', /not subscription quota usage or imported billing snapshots/i);
 
   run(
     `UPDATE tasks
@@ -201,4 +203,38 @@ test('dispatch budget policy explains estimated reserve blocks and clears cap st
   assert.equal(reconciled?.workspace_reason, null);
   assert.equal(reconciled?.product_status, 'clear');
   assert.equal(reconciled?.product_reason, null);
+});
+
+test('flat-request models do not reserve against provider budget caps', () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const productId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+
+  seedWorkspace(workspaceId, 1, 1);
+  seedProduct(productId, workspaceId, 1, 1);
+  seedTask(taskId, workspaceId, productId, 999);
+
+  const result = enforceBudgetPolicy({
+    action: 'dispatch',
+    workspaceId,
+    productId,
+    taskId,
+    model: 'opencode-go-mm/minimax-m2.5',
+    reserveCostUsd: 999,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reserveCostUsd, 0);
+
+  const reserved = queryOne<{ task_reserved: number; product_reserved: number; workspace_reserved: number }>(
+    `SELECT
+       (SELECT reserved_cost_usd FROM tasks WHERE id = ?) AS task_reserved,
+       (SELECT reserved_cost_usd FROM products WHERE id = ?) AS product_reserved,
+       (SELECT reserved_cost_usd FROM workspaces WHERE id = ?) AS workspace_reserved`,
+    [taskId, productId, workspaceId],
+  );
+
+  assert.equal(reserved?.task_reserved, 0);
+  assert.equal(reserved?.product_reserved, 0);
+  assert.equal(reserved?.workspace_reserved, 0);
 });

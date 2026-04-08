@@ -30,7 +30,7 @@ function seedProduct(productId: string, workspaceId: string) {
   );
 }
 
-test('cost reporting separates active blocked estimated demand from unpriced history', () => {
+test('cost reporting separates provider actual, mission estimate, and legacy mixed totals', () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;
   const productId = crypto.randomUUID();
 
@@ -56,23 +56,34 @@ test('cost reporting separates active blocked estimated demand from unpriced his
 
   run(
     `INSERT INTO cost_events (
-       id, product_id, workspace_id, event_type, provider, model, tokens_input, tokens_output, cost_usd, created_at
-     ) VALUES (?, ?, ?, 'build_task', 'openai-codex', 'openai-codex/gpt-5.4', 100, 40, 4.5, datetime('now'))`,
-    [crypto.randomUUID(), productId, workspaceId],
+       id, product_id, workspace_id, event_type, provider, model, tokens_input, tokens_output, cost_usd, ledger_type, pricing_basis, created_at
+     ) VALUES
+       (?, ?, ?, 'build_task', 'qwen', 'qwen/qwen3.6-plus', 100, 40, 4.5, 'provider_actual', 'token_priced', datetime('now')),
+       (?, ?, ?, 'build_task', 'opencode-go-mm', 'opencode-go-mm/minimax-m2.5', 0, 0, 1.2, 'mission_estimate', 'request_estimate', datetime('now')),
+       (?, ?, ?, 'research_cycle', 'qwen', 'qwen/qwen3.6-plus', 0, 0, 9.9, 'legacy_mixed', 'legacy', datetime('now'))`,
+    [crypto.randomUUID(), productId, workspaceId, crypto.randomUUID(), productId, workspaceId, crypto.randomUUID(), productId, workspaceId],
   );
 
   const overview = getCostOverview(workspaceId, productId);
   const breakdown = getCostBreakdown(workspaceId, productId);
 
-  assert.equal(overview.total, 4.5);
-  assert.equal(overview.reserved_total, 12);
+  assert.equal(overview.provider_actual.total, 4.5);
+  assert.equal(overview.mission_estimate.total, 1.2);
+  assert.equal(overview.legacy_mixed.total, 9.9);
+  assert.equal(overview.provider_reserved_total, 12);
   assert.equal(overview.active_blocked_task_count, 1);
-  assert.equal(overview.active_blocked_estimated_usd, 60);
+  assert.equal(overview.active_blocked_provider_estimated_usd, 60);
   assert.equal(overview.blocked_unknown_cost_count, 1);
 
-  assert.equal(breakdown.summary.actual_recorded_usd, 4.5);
-  assert.equal(breakdown.summary.reserved_estimated_usd, 12);
+  assert.equal(breakdown.summary.provider_actual_usd, 4.5);
+  assert.equal(breakdown.summary.mission_estimate_usd, 1.2);
+  assert.equal(breakdown.summary.legacy_mixed_usd, 9.9);
+  assert.equal(breakdown.summary.provider_reserved_usd, 12);
   assert.equal(breakdown.summary.active_blocked_task_count, 1);
-  assert.equal(breakdown.summary.active_blocked_estimated_usd, 60);
+  assert.equal(breakdown.summary.active_blocked_provider_estimated_usd, 60);
   assert.equal(breakdown.summary.blocked_unknown_cost_count, 1);
+  assert.deepEqual(
+    breakdown.by_ledger.map(item => item.ledger_type).sort(),
+    ['legacy_mixed', 'mission_estimate', 'provider_actual'],
+  );
 });

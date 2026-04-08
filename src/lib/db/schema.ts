@@ -570,9 +570,28 @@ CREATE TABLE IF NOT EXISTS cost_events (
   tokens_input INTEGER DEFAULT 0,
   tokens_output INTEGER DEFAULT 0,
   cost_usd REAL DEFAULT 0,
+  ledger_type TEXT NOT NULL DEFAULT 'legacy_mixed' CHECK (ledger_type IN ('provider_actual', 'mission_estimate', 'legacy_mixed')),
+  pricing_basis TEXT NOT NULL DEFAULT 'legacy' CHECK (pricing_basis IN ('token_priced', 'request_estimate', 'manual_estimate', 'legacy')),
   metadata TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS provider_billing_snapshots (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  product_id TEXT REFERENCES products(id),
+  provider TEXT NOT NULL,
+  provider_account_label TEXT,
+  billing_period TEXT NOT NULL,
+  imported_total_usd REAL NOT NULL DEFAULT 0,
+  source TEXT,
+  notes TEXT,
+  imported_at TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_billing_snapshots_scope_period
+ON provider_billing_snapshots(workspace_id, product_id, provider, billing_period, imported_at DESC);
 
 -- Cost caps: spending limits per workspace/product
 CREATE TABLE IF NOT EXISTS cost_caps (

@@ -1912,6 +1912,46 @@ const migrations: Migration[] = [
         console.log('[Migration 037] Added planning_model_override to workspaces');
       }
     }
+  },
+  {
+    id: '038',
+    name: 'add_cost_ledgers_and_provider_billing_snapshots',
+    up: (db) => {
+      console.log('[Migration 038] Adding dual-ledger accounting columns and provider billing snapshots...');
+
+      const costEventsInfo = db.prepare("PRAGMA table_info(cost_events)").all() as { name: string }[];
+      if (!costEventsInfo.some(col => col.name === 'ledger_type')) {
+        db.exec(`ALTER TABLE cost_events ADD COLUMN ledger_type TEXT NOT NULL DEFAULT 'legacy_mixed' CHECK (ledger_type IN ('provider_actual', 'mission_estimate', 'legacy_mixed'))`);
+        console.log('[Migration 038] Added ledger_type to cost_events');
+      }
+      if (!costEventsInfo.some(col => col.name === 'pricing_basis')) {
+        db.exec(`ALTER TABLE cost_events ADD COLUMN pricing_basis TEXT NOT NULL DEFAULT 'legacy' CHECK (pricing_basis IN ('token_priced', 'request_estimate', 'manual_estimate', 'legacy'))`);
+        console.log('[Migration 038] Added pricing_basis to cost_events');
+      }
+
+      db.exec(`UPDATE cost_events SET ledger_type = COALESCE(NULLIF(trim(ledger_type), ''), 'legacy_mixed')`);
+      db.exec(`UPDATE cost_events SET pricing_basis = COALESCE(NULLIF(trim(pricing_basis), ''), 'legacy')`);
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS provider_billing_snapshots (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+          product_id TEXT REFERENCES products(id),
+          provider TEXT NOT NULL,
+          provider_account_label TEXT,
+          billing_period TEXT NOT NULL,
+          imported_total_usd REAL NOT NULL DEFAULT 0,
+          source TEXT,
+          notes TEXT,
+          imported_at TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_provider_billing_snapshots_scope_period
+        ON provider_billing_snapshots(workspace_id, product_id, provider, billing_period, imported_at DESC)
+      `);
+    }
   }
 ];
 

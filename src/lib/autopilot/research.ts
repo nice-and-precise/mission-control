@@ -163,6 +163,8 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
           tokens_input: usage.promptTokens,
           tokens_output: usage.completionTokens,
           cost_usd: estimatedCostUsd || 0,
+          ledger_type: 'mission_estimate',
+          pricing_basis: 'manual_estimate',
           metadata: JSON.stringify({
             accounting_state: estimatedCostUsd == null ? 'blocked_unpriced' : 'estimated',
             policy_model: budgetModel,

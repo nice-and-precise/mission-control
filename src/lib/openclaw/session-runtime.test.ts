@@ -68,8 +68,8 @@ function seedWorkspaceProductTask(agentModel: string) {
   return { workspaceId, productId, agentId, taskId, sessionId, sessionKey, openclawSessionId };
 }
 
-test('syncOpenClawBuildUsage records one priced build_task event and is idempotent', async () => {
-  const seeded = seedWorkspaceProductTask('deepinfra/meta-llama/Llama-3.3-70B-Instruct-Turbo');
+test('syncOpenClawBuildUsage records provider-actual build usage and is idempotent', async () => {
+  const seeded = seedWorkspaceProductTask('qwen/qwen3.6-plus');
   const client = getOpenClawClient() as unknown as {
     isConnected: () => boolean;
     connect: () => Promise<void>;
@@ -82,8 +82,8 @@ test('syncOpenClawBuildUsage records one priced build_task event and is idempote
   client.listSessions = async () => [{
     key: seeded.sessionKey,
     sessionId: 'runtime-session-usage-1',
-    modelProvider: 'deepinfra',
-    model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    modelProvider: 'qwen',
+    model: 'qwen3.6-plus',
     inputTokens: 2500,
     outputTokens: 800,
     cacheRead: 100,
@@ -95,11 +95,11 @@ test('syncOpenClawBuildUsage records one priced build_task event and is idempote
     config: {
       models: {
         providers: {
-          deepinfra: {
+          qwen: {
             models: [
               {
-                id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-                cost: { input: 0.1, output: 0.32, cacheRead: 0, cacheWrite: 0 },
+                id: 'qwen3.6-plus',
+                cost: { input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0.625 },
               },
             ],
           },
@@ -111,15 +111,17 @@ test('syncOpenClawBuildUsage records one priced build_task event and is idempote
   const first = await syncOpenClawBuildUsage({ taskId: seeded.taskId });
   assert.equal(first.priced, 1);
 
-  const event = queryOne<{ tokens_input: number; tokens_output: number; cost_usd: number }>(
-    `SELECT tokens_input, tokens_output, cost_usd
+  const event = queryOne<{ tokens_input: number; tokens_output: number; cost_usd: number; ledger_type: string; pricing_basis: string }>(
+    `SELECT tokens_input, tokens_output, cost_usd, ledger_type, pricing_basis
      FROM cost_events
      WHERE task_id = ? AND event_type = 'build_task'`,
     [seeded.taskId],
   );
   assert.equal(event?.tokens_input, 1500);
   assert.equal(event?.tokens_output, 600);
-  assert.ok((event?.cost_usd || 0) > 0.00034 && (event?.cost_usd || 0) < 0.00035);
+  assert.equal(event?.ledger_type, 'provider_actual');
+  assert.equal(event?.pricing_basis, 'token_priced');
+  assert.ok((event?.cost_usd || 0) > 0.00255 && (event?.cost_usd || 0) < 0.00256);
 
   const task = queryOne<{ reserved_cost_usd: number; actual_cost_usd: number }>(
     'SELECT reserved_cost_usd, actual_cost_usd FROM tasks WHERE id = ?',
@@ -136,6 +138,46 @@ test('syncOpenClawBuildUsage records one priced build_task event and is idempote
     [seeded.taskId],
   );
   assert.equal(eventCount?.count, 1);
+});
+
+test('syncOpenClawBuildUsage records mission-estimate build usage for flat-request models', async () => {
+  const seeded = seedWorkspaceProductTask('opencode-go-mm/minimax-m2.5');
+  const client = getOpenClawClient() as unknown as {
+    isConnected: () => boolean;
+    connect: () => Promise<void>;
+    listSessions: () => Promise<unknown[]>;
+    getConfig: () => Promise<unknown>;
+  };
+
+  client.isConnected = () => true;
+  client.connect = async () => undefined;
+  client.listSessions = async () => [{
+    key: seeded.sessionKey,
+    sessionId: 'runtime-session-usage-flat-request',
+    modelProvider: 'opencode-go-mm',
+    model: 'minimax-m2.5',
+    inputTokens: 2200,
+    outputTokens: 400,
+    updatedAt: 150,
+    status: 'ended',
+  }];
+  client.getConfig = async () => ({ config: { models: { providers: {} } } });
+
+  const result = await syncOpenClawBuildUsage({ taskId: seeded.taskId });
+  assert.equal(result.priced, 1);
+
+  const event = queryOne<{ cost_usd: number; ledger_type: string; pricing_basis: string; tokens_input: number; tokens_output: number }>(
+    `SELECT cost_usd, ledger_type, pricing_basis, tokens_input, tokens_output
+     FROM cost_events
+     WHERE task_id = ? AND event_type = 'build_task'`,
+    [seeded.taskId],
+  );
+
+  assert.equal(event?.ledger_type, 'mission_estimate');
+  assert.equal(event?.pricing_basis, 'request_estimate');
+  assert.equal(event?.tokens_input, 0);
+  assert.equal(event?.tokens_output, 0);
+  assert.ok((event?.cost_usd || 0) > 0);
 });
 
 test('syncOpenClawBuildUsage releases reserved spend and marks unpriced runs explicitly', async () => {

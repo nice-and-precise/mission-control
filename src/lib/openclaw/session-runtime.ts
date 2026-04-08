@@ -2,7 +2,13 @@ import { queryAll, run } from '@/lib/db';
 import { syncReservedSpendTotals } from '@/lib/costs/budget-policy';
 import { recordCostEvent } from '@/lib/costs/tracker';
 import { getOpenClawClient, type OpenClawClient } from './client';
-import { canonicalMissionControlModelId } from './model-policy';
+import {
+  canonicalMissionControlModelId,
+  estimateMissionControlModelCost,
+  getMissionControlPricingKind,
+  supportsMissionEstimateAccounting,
+  supportsProviderActualAccounting,
+} from './model-policy';
 import { buildAgentSessionKey } from './routing';
 import type { GatewayConfigSnapshot } from './model-catalog';
 import type { OpenClawSession, OpenClawSessionInfo } from '@/lib/types';
@@ -22,6 +28,15 @@ interface ProviderCostMetadata {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+}
+
+interface SessionCostRecord {
+  costUsd: number;
+  tokensInput: number;
+  tokensOutput: number;
+  pricingBasis: 'token_priced' | 'request_estimate';
+  ledgerType: 'provider_actual' | 'mission_estimate';
+  provider: string;
 }
 
 interface UsageSnapshot {
@@ -534,15 +549,28 @@ export async function syncOpenClawBuildUsage(filters: {
     }
 
     const effectiveModel = session.bound_model || snapshot.modelId || session.requested_model || undefined;
-    const pricing = findProviderCostMetadata(config, effectiveModel, snapshot.modelProvider);
-    if (!pricing || !effectiveModel) {
+    const costRecord = buildSessionCostRecord(config, session, snapshot, effectiveModel);
+    if (!costRecord || !effectiveModel) {
       markUsageUnpriced(session, now, 'usage_missing_accountable_pricing', snapshot.externalId);
       summary.unpriced += 1;
       continue;
     }
 
-    const usage = computeUsageCostUsd(snapshot, session, pricing);
-    if (usage.inputTokens === 0 && usage.outputTokens === 0 && usage.cacheReadTokens === 0 && usage.cacheWriteTokens === 0) {
+    const usage = computeUsageCostUsd(snapshot, session, costRecord.ledgerType === 'provider_actual'
+      ? findProviderCostMetadata(config, effectiveModel, snapshot.modelProvider)!
+      : {
+          provider: costRecord.provider,
+          modelId: effectiveModel,
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        });
+    if (costRecord.ledgerType === 'provider_actual'
+      && usage.inputTokens === 0
+      && usage.outputTokens === 0
+      && usage.cacheReadTokens === 0
+      && usage.cacheWriteTokens === 0) {
       markZeroUsageReconciled(session, now, snapshot.externalId);
       summary.skipped += 1;
       continue;
@@ -554,17 +582,20 @@ export async function syncOpenClawBuildUsage(filters: {
       task_id: session.task_id || null,
       agent_id: session.agent_id || null,
       event_type: 'build_task',
-      provider: pricing.provider,
+      provider: costRecord.provider,
       model: effectiveModel,
-      tokens_input: usage.inputTokens,
-      tokens_output: usage.outputTokens,
-      cost_usd: usage.costUsd,
+      tokens_input: costRecord.ledgerType === 'provider_actual' ? usage.inputTokens : 0,
+      tokens_output: costRecord.ledgerType === 'provider_actual' ? usage.outputTokens : 0,
+      cost_usd: costRecord.costUsd,
+      ledger_type: costRecord.ledgerType,
+      pricing_basis: costRecord.pricingBasis,
       metadata: JSON.stringify({
         session_key: sessionKey,
         usage_external_id: snapshot.externalId,
         run_id: session.last_run_id || null,
-        cache_read_tokens: usage.cacheReadTokens,
-        cache_write_tokens: usage.cacheWriteTokens,
+        cache_read_tokens: costRecord.ledgerType === 'provider_actual' ? usage.cacheReadTokens : 0,
+        cache_write_tokens: costRecord.ledgerType === 'provider_actual' ? usage.cacheWriteTokens : 0,
+        usage_accounting: costRecord.ledgerType,
       }),
     });
 
@@ -584,4 +615,51 @@ export async function syncOpenClawBuildUsage(filters: {
   }
 
   return summary;
+}
+
+function buildSessionCostRecord(
+  snapshot: GatewayConfigSnapshot | Record<string, unknown> | null | undefined,
+  session: SessionRoutingRow,
+  usageSnapshot: UsageSnapshot,
+  effectiveModel?: string,
+): SessionCostRecord | null {
+  const normalizedModel = (effectiveModel || '').trim();
+  if (!normalizedModel) {
+    return null;
+  }
+
+  if (supportsProviderActualAccounting(normalizedModel)) {
+    const pricing = findProviderCostMetadata(snapshot, normalizedModel, usageSnapshot.modelProvider);
+    if (!pricing) {
+      return null;
+    }
+    const usage = computeUsageCostUsd(usageSnapshot, session, pricing);
+    return {
+      costUsd: usage.costUsd,
+      tokensInput: usage.inputTokens,
+      tokensOutput: usage.outputTokens,
+      pricingBasis: 'token_priced',
+      ledgerType: 'provider_actual',
+      provider: pricing.provider,
+    };
+  }
+
+  if (supportsMissionEstimateAccounting(normalizedModel)) {
+    const estimatedCostUsd = estimateMissionControlModelCost(normalizedModel, { requestCount: 1 });
+    if (estimatedCostUsd == null) {
+      return null;
+    }
+    return {
+      costUsd: estimatedCostUsd,
+      tokensInput: 0,
+      tokensOutput: 0,
+      pricingBasis: 'request_estimate',
+      ledgerType: 'mission_estimate',
+      provider: getMissionControlPricingKind(normalizedModel) === 'flat_request'
+        ? canonicalMissionControlModelId(normalizedModel).split('/')[0]
+        : usageSnapshot.modelProvider || normalizedModel.split('/')[0],
+    };
+  }
+
+  return null;
 }
