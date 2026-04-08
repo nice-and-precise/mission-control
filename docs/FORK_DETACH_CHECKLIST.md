@@ -1,3 +1,14 @@
+---
+doc_id: MC-FORK-DETACH-001
+title: Fork Detach Checklist
+doc_type: how-to
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+---
+
 # Fork Detach Checklist
 
 This checklist records the admin sequence that turned `nice-and-precise/mission-control` from a GitHub fork into a standalone product repository.

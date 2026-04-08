@@ -4,6 +4,7 @@ This guide walks you through setting up Mission Control for production use with 
 
 > [!NOTE]
 > This guide uses generic setup examples. For the verified state of this local checkout, including the current machine-specific project-root override, see [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md).
+> Use [docs/README.md](docs/README.md) when you need the current docs authority map.
 
 ## ⚠️ Security First
 
@@ -32,7 +33,9 @@ nvm use
 npm ci
 ```
 
-For local development, `nvm use` defaults this repo to Node 24. Node 20 is also supported, and is the better choice when you want Docker/runtime parity.
+For local development, `nvm use` defaults this repo to the pinned Node `24.13.0` runtime. Treat that exact patch version as the Mission Control runtime contract for install, test, build, and local app boot.
+
+This is intentionally separate from the OpenClaw gateway LaunchAgent, which may use the OpenClaw-managed Node `22.22.0` toolchain under `~/.openclaw/tools/` on `2026.4.8`.
 
 ### 3. Configure Environment Variables
 
@@ -192,7 +195,7 @@ npm run build
 npm run start
 ```
 
-For containerized and production-like runtime parity, keep using Node 20 to match the existing Docker image baseline.
+For containerized and production-like runtime parity, keep the runtime aligned with the same pinned Node `24.13.0` contract unless and until the repo explicitly ships a different deployment baseline.
 
 ### Environment Variables for Production
 

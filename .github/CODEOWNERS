@@ -1,0 +1,8 @@
+# Documentation governance
+/docs/ @nice-and-precise
+/README.md @nice-and-precise
+/VERIFICATION_CHECKLIST.md @nice-and-precise
+/PRODUCTION_SETUP.md @nice-and-precise
+/ORCHESTRATION.md @nice-and-precise
+/scripts/docs-sanity.sh @nice-and-precise
+/scripts/docs_policy.py @nice-and-precise

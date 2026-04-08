@@ -1,26 +1,49 @@
+---
+doc_id: MC-STATUS-LOCAL-001
+title: Mission Control Local Status
+doc_type: runbook
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: machine-local
+version-reviewed: OpenClaw 2026.4.8; Mission Control Node 24.13.0
+---
+
 # Mission Control Local Status
 
 This is the canonical current-state document for the local checkout at [the repo root](../).
 
 Use this page when you need the truth about this machine and this worktree. Treat the top-level [README.md](../README.md) and [CHANGELOG.md](../CHANGELOG.md) as product-facing docs, then use this page for local deviations, verified runtime evidence, and known gaps.
 
+## Section Guide
+
+- `Snapshot` captures the current machine-local checkpoint.
+- `Verified Runtime Behavior` lists facts rechecked against the live runtime.
+- `Known Gaps` lists real local limitations that still remain.
+- `Historical Snapshots` routes older dated notes out of the active path.
+
 For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md). For the docs map, use [docs/README.md](README.md).
 
 ## Snapshot
 
-- Date verified: `2026-04-05` (session 3)
+- Date verified: `2026-04-08` (OpenClaw `2026.4.8` upgrade pass)
 - Upstream base: `v2.4.0`
-- Local checkout state: `queue/session hijack fix + live squti repair; LLI SaaS unblocked`
-- Git ref: `main`
-- Baseline commit: `ca1d88d` (queue/session hijack fix on top of origin/main)
+- Local checkout state: `OpenClaw 2026.4.8 upgrade + documentation foundation reset`
+- Git ref: `chore/mission-control-openclaw-2026-4-8-runtime-audit`
+- Baseline commit: `5a31d2d` (foundation-reset worktree base on top of `origin/main`)
 - GitHub PR state:
-  - PR `#1` remains the earlier repo-reconciliation merge into `origin/main`
-  - this restore work is local branch state on top of `origin/main`; local `HEAD` does not currently equal `origin/main`
+  - the current work is isolated in a clean upgrade worktree and has not been merged yet
+  - `origin/main` remains the canonical trunk
 - Git remote model on this machine:
   - `origin` -> `nice-and-precise/mission-control`
   - `source` -> `crshdn/mission-control` (optional read-only comparison remote, with push disabled locally)
 - Canonical product trunk:
   - `origin/main`
+- Foundation checkpoint:
+  - documentation reset baseline `2026-04-08`
+  - OpenClaw local runtime `2026.4.8`
+  - Mission Control Node contract `24.13.0`
 - Repository policy:
   - day-to-day work branches must be based on `origin/main`
   - `source/main` is for comparison and selective import work only when the `source` remote is present
@@ -35,7 +58,22 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Verified Runtime Behavior
 
-The following facts were re-verified against the live local runtime on `2026-04-05`:
+The following facts were re-verified against the live local runtime on `2026-04-08` unless otherwise noted:
+
+- OpenClaw local runtime and managed gateway are now aligned on `2026.4.8`
+  - `openclaw --version` reports `OpenClaw 2026.4.8`
+  - `openclaw update status --json` keeps the install root under `~/.openclaw/lib/node_modules/openclaw`
+  - `openclaw gateway status --require-rpc --deep` now reports the managed LaunchAgent command under `~/.openclaw/tools/node-v22.22.0/bin/node`, which is expected for the service surface on this release
+  - `openclaw tasks list --json` completes locally, but the command currently takes roughly `20-30s` and may emit the valid JSON payload on `stderr`; Mission Control now treats that as a successful ledger read instead of a degraded empty failure
+- Mission Control's Node contract remains pinned to `24.13.0`
+  - OpenClaw's current docs recommend Node `24` and allow Node `22.14+`
+  - Mission Control keeps `.nvmrc` and runtime preflight pinned to exact `24.13.0` so native addons stay reproducible
+- OpenClaw memory and dreaming are now enabled on the local runtime
+  - `memory-core` remains the active memory slot
+  - dreaming is enabled with cadence `0 3 * * *` and timezone `America/Chicago`
+  - `openclaw memory rem-harness --json` runs successfully
+  - `memory/.dreams/` now exists as machine-managed state
+  - `cron-worker` needed a forced `openclaw memory index --agent cron-worker --force` repair during this pass
 
 - `npm run dev` is the default local operating mode on `localhost:4000`
   - authenticated `GET /api/health` now returns HTTP `200` with JSON like `{"status":"ok","uptime_seconds":...,"version":"2.4.0"}` during this stabilization pass
@@ -88,7 +126,9 @@ The following facts were re-verified against the live local runtime on `2026-04-
   - authenticated `GET /api/openclaw/sessions/{id}/history` resolves either a session key or runtime session ID into a normalized Mission Control transcript payload
   - `GET /api/openclaw/models` now separates `agentTargets` from `providerModels`, and local Autopilot defaults to `openclaw`
   - provider-model Autopilot requests now force session-backed completion when a workspace override asks for `qwen/qwen3.6-plus`, rather than relying on `agent-cli` to honor provider overrides implicitly
-  - `GET /api/openclaw/background-tasks` exposes the OpenClaw task ledger as read-only observability and correlates known session keys back to Mission Control task sessions when possible
+- `GET /api/openclaw/background-tasks` exposes the OpenClaw task ledger as read-only observability and correlates known session keys back to Mission Control task sessions when possible
+  - valid ledger JSON recovered from `stderr` is now treated as `status: "ok"` on this machine
+  - the command timeout budget is now configurable with `OPENCLAW_TASKS_LIST_TIMEOUT_MS` and defaults to `30000`
   - the detached-work route now also surfaces `status`, `sourceChannel`, and `warning` so operators can see degraded ledger reads instead of treating them as a silent empty state
   - a timed-out empty ledger is currently surfaced truthfully as `status: "degraded"` with a warning, which is acceptable operator behavior for this baseline
 - Local provider-family routing is now normalized around three active families

@@ -11,10 +11,20 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const OPENCLAW_CLI_PATH = process.env.OPENCLAW_CLI_PATH || join(homedir(), '.openclaw', 'bin', 'openclaw');
-const OPENCLAW_TASKS_LIST_TIMEOUT_MS = 8000;
-const STDERR_JSON_WARNING = 'OpenClaw returned the task ledger JSON on stderr instead of stdout.';
+const DEFAULT_OPENCLAW_TASKS_LIST_TIMEOUT_MS = 30000;
+const OPENCLAW_TASKS_LIST_TIMEOUT_MS = resolveOpenClawTasksListTimeoutMs();
+const SESSION_KEY_FIELDS = [
+  'sessionKey',
+  'session_key',
+  'childSessionKey',
+  'child_session_key',
+  'requesterSessionKey',
+  'requester_session_key',
+  'ownerKey',
+  'owner_key',
+] as const;
 
-type TaskLedgerAdapterStatus = 'ok' | 'degraded_stderr_json' | 'degraded_timeout_or_empty';
+type TaskLedgerAdapterStatus = 'ok' | 'degraded_timeout_or_empty';
 
 interface TaskLedgerPayload {
   tasks?: unknown[];
@@ -76,7 +86,7 @@ export function normalizeOpenClawBackgroundTask(
   if (!raw || typeof raw !== 'object') return null;
   const record = raw as Record<string, unknown>;
 
-  const sessionKey = pickString(record, ['sessionKey', 'session_key']);
+  const sessionKey = pickString(record, [...SESSION_KEY_FIELDS]);
   const runId = pickString(record, ['runId', 'run_id']);
   const taskId = pickString(record, ['taskId', 'task_id']);
   const id = pickString(record, ['id', 'taskId', 'task_id', 'runId', 'run_id', 'sessionKey', 'session_key']);
@@ -89,9 +99,17 @@ export function normalizeOpenClawBackgroundTask(
     id,
     taskId,
     runId,
+    sourceId: pickString(record, ['sourceId', 'source_id']),
     sessionKey,
+    requesterSessionKey: pickString(record, ['requesterSessionKey', 'requester_session_key']),
+    ownerKey: pickString(record, ['ownerKey', 'owner_key']),
+    childSessionKey: pickString(record, ['childSessionKey', 'child_session_key']),
+    scopeKind: pickString(record, ['scopeKind', 'scope_kind']),
     runtimeKind: pickString(record, ['runtimeKind', 'runtime', 'kind']),
     status: pickString(record, ['status']),
+    deliveryStatus: pickString(record, ['deliveryStatus', 'delivery_status']),
+    notifyPolicy: pickString(record, ['notifyPolicy', 'notify_policy']),
+    progressSummary: pickString(record, ['progressSummary', 'progress_summary']),
     createdAt: pickString(record, ['createdAt', 'created_at']),
     startedAt: pickString(record, ['startedAt', 'started_at']),
     updatedAt: pickString(record, ['updatedAt', 'updated_at']),
@@ -137,7 +155,7 @@ export async function listOpenClawBackgroundTasks(taskId?: string): Promise<Open
   const tasks = rawTasks
     .map((raw) => {
       const record = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
-      const sessionKey = record ? pickString(record, ['sessionKey', 'session_key']) : null;
+      const sessionKey = record ? pickString(record, [...SESSION_KEY_FIELDS]) : null;
       const normalized = normalizeOpenClawBackgroundTask(raw, sessionKey ? (sessionByOpenClawId.get(sessionKey) || null) : null);
       if (!normalized) return null;
       if (taskId && normalized.correlatedSession?.taskId && normalized.correlatedSession.taskId !== taskId) {
@@ -156,6 +174,20 @@ export async function listOpenClawBackgroundTasks(taskId?: string): Promise<Open
     sourceChannel: parsed.sourceChannel,
     warning: parsed.warning,
   };
+}
+
+function resolveOpenClawTasksListTimeoutMs(): number {
+  const raw = process.env.OPENCLAW_TASKS_LIST_TIMEOUT_MS;
+  if (!raw) {
+    return DEFAULT_OPENCLAW_TASKS_LIST_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1000) {
+    return DEFAULT_OPENCLAW_TASKS_LIST_TIMEOUT_MS;
+  }
+
+  return parsed;
 }
 
 async function runOpenClawTasksList(): Promise<TaskLedgerCommandOutput> {
@@ -198,9 +230,9 @@ export function parseTaskLedgerPayload(result: TaskLedgerCommandOutput): TaskLed
   if (exactStderr) {
     return {
       payload: exactStderr,
-      status: 'degraded_stderr_json',
+      status: 'ok',
       sourceChannel: 'stderr',
-      warning: STDERR_JSON_WARNING,
+      warning: null,
     };
   }
 
@@ -214,12 +246,11 @@ export function parseTaskLedgerPayload(result: TaskLedgerCommandOutput): TaskLed
     const recovered = tryParseTaskLedgerPayload(extractLastJsonObject(candidate.text));
     if (!recovered) continue;
 
-    const degraded = candidate.origin !== 'stdout';
     return {
       payload: recovered,
-      status: degraded ? 'degraded_stderr_json' : 'ok',
+      status: 'ok',
       sourceChannel: 'fallback',
-      warning: degraded ? STDERR_JSON_WARNING : null,
+      warning: null,
     };
   }
 

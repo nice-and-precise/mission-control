@@ -1,3 +1,15 @@
+---
+doc_id: MC-ORCH-WORKFLOW-001
+title: Task Orchestration Workflow
+doc_type: reference
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+version-reviewed: OpenClaw 2026.4.8
+---
+
 # Task Orchestration Workflow
 
 This guide explains how the master agent should orchestrate sub-agents to properly integrate with Mission Control.

@@ -1,3 +1,14 @@
+---
+doc_id: MC-USER-GUIDE-001
+title: User Guide
+doc_type: how-to
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+---
+
 # User Guide
 
 Start here if you want the shortest path to the right Mission Control doc.

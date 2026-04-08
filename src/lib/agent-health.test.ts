@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { checkAgentHealth, runHealthCheckCycle, setHealthCheckImplementationForTests } from './agent-health';
 import { closeDb, queryOne, run } from './db';
 
-const TEST_DB_PATH = process.env.DATABASE_PATH || join(tmpdir(), `mission-control-agent-health-tests-${process.pid}.sqlite`);
+const TEST_DB_PATH = join(tmpdir(), `mission-control-agent-health-tests-${process.pid}.sqlite`);
 process.env.DATABASE_PATH = TEST_DB_PATH;
 
 afterEach(() => {

@@ -473,9 +473,17 @@ export interface OpenClawBackgroundTask {
   id: string;
   taskId?: string | null;
   runId?: string | null;
+  sourceId?: string | null;
   sessionKey?: string | null;
+  requesterSessionKey?: string | null;
+  ownerKey?: string | null;
+  childSessionKey?: string | null;
+  scopeKind?: string | null;
   runtimeKind?: string | null;
   status?: string | null;
+  deliveryStatus?: string | null;
+  notifyPolicy?: string | null;
+  progressSummary?: string | null;
   createdAt?: string | null;
   startedAt?: string | null;
   updatedAt?: string | null;

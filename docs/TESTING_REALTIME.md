@@ -1,3 +1,15 @@
+---
+doc_id: MC-TESTING-REALTIME-001
+title: Real-Time Integration Testing Guide
+doc_type: runbook
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+version-reviewed: Mission Control Node 24.13.0
+---
+
 # Real-Time Integration Testing Guide
 
 > [!NOTE]
@@ -13,7 +25,7 @@ npm run test:runtime-targeted
 npm run dev
 ```
 
-`nvm use` defaults the repo to the pinned `.nvmrc` runtime (`24.13.0`) for local testing. Node 20 is also supported, but switching between Node 20 and Node 24 requires a fresh `npm ci`.
+`nvm use` defaults the repo to the pinned `.nvmrc` runtime (`24.13.0`) for local testing. Treat that exact patch version as required for reproducible local testing; if you drift from it, rerun `nvm use` and `npm ci` before trusting failures.
 
 Open http://localhost:4000 (production server) or http://localhost:4000 (local)
 

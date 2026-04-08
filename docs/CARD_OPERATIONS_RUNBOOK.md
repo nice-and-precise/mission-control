@@ -1,3 +1,14 @@
+---
+doc_id: MC-CARD-RUNBOOK-001
+title: Mission Control Card Operations Runbook
+doc_type: runbook
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+---
+
 # Mission Control Card Operations Runbook
 
 This document records the failure patterns seen during the BoreReady curriculum card rollout on 2026-04-05 and defines the correct operating method for creating, dispatching, and recovering cards.

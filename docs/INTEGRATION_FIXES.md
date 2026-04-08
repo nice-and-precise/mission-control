@@ -1,3 +1,15 @@
+---
+doc_id: MC-INTEGRATION-FIXES-001
+title: Mission Control Integration Fixes
+doc_type: reference
+status: deprecated
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: false
+applies-to: mission-control
+replaced-by: docs/README.md
+---
+
 # Mission Control Integration Fixes
 
 > [!NOTE]

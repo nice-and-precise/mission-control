@@ -9,7 +9,7 @@ required_files=(
   "docs/CURRENT_LOCAL_STATUS.md"
   "docs/LOCAL_OPERATIONS_RUNBOOK.md"
   "docs/REPOSITORY_POLICY.md"
-  "docs/OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-02.md"
+  "docs/OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-08.md"
 )
 
 for file in "${required_files[@]}"; do
@@ -33,7 +33,10 @@ assert_contains 'GET /api/health' README.md VERIFICATION_CHECKLIST.md docs/LOCAL
 assert_contains 'Authorization: Bearer' README.md VERIFICATION_CHECKLIST.md docs/LOCAL_OPERATIONS_RUNBOOK.md
 assert_contains '`origin/main`' docs/REPOSITORY_POLICY.md docs/LOCAL_OPERATIONS_RUNBOOK.md docs/CURRENT_LOCAL_STATUS.md
 assert_contains '`source/main`' docs/REPOSITORY_POLICY.md docs/LOCAL_OPERATIONS_RUNBOOK.md docs/CURRENT_LOCAL_STATUS.md
-assert_contains 'sourceChannel' docs/OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-02.md
-assert_contains 'warning' docs/OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-02.md
+assert_contains 'sourceChannel' docs/OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-08.md
+assert_contains 'warning' docs/OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-08.md
+assert_contains 'OpenClaw Release Impact Audit 2026-04-08' docs/README.md
+
+python3 scripts/docs_policy.py
 
 echo "docs sanity check passed"

@@ -1,3 +1,15 @@
+---
+doc_id: MC-TROUBLESHOOTING-001
+title: Troubleshooting Quick Reference
+doc_type: runbook
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: machine-local
+version-reviewed: OpenClaw 2026.4.8; Mission Control Node 24.13.0
+---
+
 # Troubleshooting Quick Reference
 
 Common local problems and their fixes. For deeper runtime evidence and verified claim history, see [CURRENT_LOCAL_STATUS.md](CURRENT_LOCAL_STATUS.md).

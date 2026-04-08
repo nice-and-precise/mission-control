@@ -1,3 +1,15 @@
+---
+doc_id: MC-REALTIME-SPEC-001
+title: Real-Time Integration Specification
+doc_type: reference
+status: deprecated
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: false
+applies-to: mission-control
+replaced-by: docs/HOW-THE-PIPELINE-WORKS.md
+---
+
 # Real-Time Integration Specification
 
 > [!NOTE]

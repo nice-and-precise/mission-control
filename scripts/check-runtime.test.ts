@@ -3,26 +3,19 @@ import assert from 'node:assert/strict';
 
 import runtimeGuard from './check-runtime.js';
 
-test('checkNodeVersion accepts Node 20.x', () => {
-  const result = runtimeGuard.checkNodeVersion('20.20.0');
-
-  assert.equal(result.ok, true);
-});
-
-test('checkNodeVersion accepts Node 24.x', () => {
+test('checkNodeVersion accepts the pinned Node version', () => {
   const result = runtimeGuard.checkNodeVersion('24.13.0');
 
   assert.equal(result.ok, true);
 });
 
 test('checkNodeVersion rejects unsupported runtimes with actionable guidance', () => {
-  const result = runtimeGuard.checkNodeVersion('25.6.0');
+  const result = runtimeGuard.checkNodeVersion('24.12.0');
 
   assert.equal(result.ok, false);
   assert.match(runtimeGuard.formatNodeVersionError(result.actual), /nvm use/);
   assert.match(runtimeGuard.formatNodeVersionError(result.actual), /npm ci/);
-  assert.match(runtimeGuard.formatNodeVersionError(result.actual), /Node 24/);
-  assert.match(runtimeGuard.formatNodeVersionError(result.actual), /Node 20/);
+  assert.match(runtimeGuard.formatNodeVersionError(result.actual), /24\.13\.0/);
 });
 
 test('isNativeAddonMismatchError detects stale native addon failures', () => {

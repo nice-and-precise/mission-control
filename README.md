@@ -341,10 +341,24 @@ Your task data, research results, ideas, swipe history, and product programs sta
 
 ## 🚀 Quick Start
 
+Need the right authority doc first?
+
+- Public/operator docs map: [docs/README.md](docs/README.md)
+- Machine-local current truth: [docs/CURRENT_LOCAL_STATUS.md](docs/CURRENT_LOCAL_STATUS.md)
+- Shareable verification contract: [VERIFICATION_CHECKLIST.md](VERIFICATION_CHECKLIST.md)
+
+```mermaid
+flowchart LR
+    A[Need docs] --> B{What kind of truth?}
+    B -->|Public or operator| C[docs/README.md]
+    B -->|Machine-local current state| D[docs/CURRENT_LOCAL_STATUS.md]
+    B -->|Repeatable verification| E[VERIFICATION_CHECKLIST.md]
+```
+
 ### Prerequisites
 
-- **Node.js** `20.x` or `24.x` ([download](https://nodejs.org/))
-- **OpenClaw** `2026.4.1` or newer on the `stable` channel
+- **Node.js** `24.13.0` via `.nvmrc` ([download](https://nodejs.org/))
+- **OpenClaw** `2026.4.8` or newer on the `stable` channel
 - **AI API Key** — Anthropic (recommended), OpenAI, Google, or others via OpenRouter
 
 ### Install
@@ -374,6 +388,8 @@ OPENCLAW_GATEWAY_TOKEN=your-token-here
 
 `nvm use` reads `.nvmrc`, which is pinned to the same Node `24.13.0` runtime used in CI. If you switch Node majors, run a fresh `npm ci` before testing or starting the app.
 
+OpenClaw's managed LaunchAgent may still run its gateway service from `~/.openclaw/tools/node-v22.22.0/bin/node` on `2026.4.8`. That is expected and separate from Mission Control's repo-local Node ABI contract.
+
 ### Run
 
 ```bash
@@ -381,10 +397,12 @@ OPENCLAW_GATEWAY_TOKEN=your-token-here
 cd ..
 ./scripts/update_openclaw_local_runtime.sh
 cd mission-control
-openclaw doctor
+openclaw update status --json
+openclaw doctor --fix --yes --non-interactive
 openclaw gateway restart
 sleep 8
 openclaw gateway status --require-rpc --deep
+openclaw status --json
 
 # Start Autensa
 npm run dev

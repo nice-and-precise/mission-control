@@ -22,7 +22,7 @@ On Jordan's machine, this checkout uses the standard remote model:
 
 Use `git fetch source` when you need to compare this checkout against source Mission Control instead of blindly assuming `origin/main` is the source of truth.
 
-`nvm use` defaults this repo to Node 24 for local work. Node 20 is also supported when you need Docker or CI parity, but switching between them requires another `npm ci`.
+`nvm use` defaults this repo to the pinned Node `24.13.0` runtime for local work. Treat that exact patch as the runtime contract and rerun `npm ci` after any drift.
 
 ### 2. Start Development Server
 

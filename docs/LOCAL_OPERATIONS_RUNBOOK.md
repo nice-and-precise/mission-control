@@ -1,3 +1,15 @@
+---
+doc_id: MC-RUNBOOK-LOCAL-001
+title: Local Operations Runbook
+doc_type: runbook
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: machine-local
+version-reviewed: OpenClaw 2026.4.8; Mission Control Node 24.13.0
+---
+
 # Local Operations Runbook
 
 Short local commands for this checkout.
@@ -7,17 +19,35 @@ For Product Autopilot workspace setup and reset behavior, use [AUTOPILOT_SETUP.m
 
 For updates on this Mac's local-prefix install, use `../scripts/update_openclaw_local_runtime.sh` from the workspace root instead of `openclaw update`. The helper reruns the official `install-cli.sh` flow against `~/.openclaw`.
 
+Mission Control's repo runtime and the OpenClaw gateway service intentionally use different Node surfaces:
+
+- Mission Control app/test/build runtime: pinned to `24.13.0` via `.nvmrc`
+- OpenClaw managed gateway service: may run from `~/.openclaw/tools/node-v22.22.0/bin/node`
+
+That split is expected on `2026.4.8`. The important invariants are that `openclaw update status --json` keeps `root` under `~/.openclaw/lib/node_modules/openclaw` and `openclaw gateway status --require-rpc --deep` reports a managed service command under `~/.openclaw`.
+
 After `openclaw gateway restart`, allow a short warm-up window before treating a failed RPC probe as a real outage. The LaunchAgent can report running a few seconds before the gateway has rebound `127.0.0.1:18789`.
+
+## Section Guide
+
+- `Start / Restart` covers the local app lifecycle.
+- `Git Remote Model` defines the branch and remote policy.
+- `Health Check` and `Pinned Node Runtime` are the baseline environment gates.
+- Later sections cover queue repair, Autopilot smoke checks, and runtime-owner diagnostics.
 
 Recommended local check:
 
 ```bash
 cd /Users/jordan/.openclaw/workspace
 ./scripts/update_openclaw_local_runtime.sh
-~/.openclaw/bin/openclaw doctor
+~/.openclaw/bin/openclaw update status --json
+~/.openclaw/bin/openclaw doctor --fix --yes --non-interactive
 ~/.openclaw/bin/openclaw gateway restart
 sleep 8
 ~/.openclaw/bin/openclaw gateway status --require-rpc --deep
+~/.openclaw/bin/openclaw status --json
+~/.openclaw/bin/openclaw secrets audit --json
+~/.openclaw/bin/openclaw health
 ```
 
 ## Start / Restart
@@ -94,6 +124,8 @@ Why this matters:
 - this checkout uses `better-sqlite3`, and current Node 25 failures are tracked at <https://github.com/WiseLibs/better-sqlite3/issues/1411>
 
 If `node --version` is not `v24.13.0`, treat native-module test failures as an environment problem first.
+
+Do not treat the gateway service's managed Node `22.22.0` toolchain as a Mission Control mismatch. OpenClaw `2026.4.8` officially supports Node `22.14+` and recommends Node `24` for user-facing runtimes; the service's pinned managed toolchain is separate from the repo ABI contract.
 
 ## Queued Builder Card Repair
 
@@ -369,7 +401,56 @@ What to expect:
 - models response includes `agentTargets`, `providerModels`, `defaultAgentTarget`, and `defaultProviderModel`
 - history response includes `sessionRef`, `resolvedSessionKey`, `resolvedSessionId`, `items`, `hasMore`, and `source`
 - background-task response includes top-level `status`, `sourceChannel`, and `warning` plus detached task `id`, `runId`, `sessionKey`, `runtimeKind`, `status`, and any correlated Mission Control session metadata
-- use `status: "degraded"` to distinguish OpenClaw CLI contract issues from a true empty detached-work ledger
+- use `status: "degraded"` only for real timeout/empty-payload failures
+- a valid ledger payload recovered from `stderr` is now treated as `status: "ok"` with `sourceChannel: "stderr"` or `sourceChannel: "fallback"`
+- the detached-ledger timeout budget is configurable with `OPENCLAW_TASKS_LIST_TIMEOUT_MS` and defaults to `30000`
+
+## Detached Task Ledger Incident Runbook
+
+Use this sequence when detached work looks empty or inconsistent:
+
+```bash
+~/.openclaw/bin/openclaw tasks audit
+~/.openclaw/bin/openclaw tasks maintenance --json
+~/.openclaw/bin/openclaw tasks maintenance --apply --json
+~/.openclaw/bin/openclaw tasks flow list --json
+~/.openclaw/bin/openclaw tasks list --json
+```
+
+Interpretation rules:
+
+- if `tasks audit` only shows historical `delivery_failed` warnings and no task-flow restore errors, the ledger is structurally healthy
+- if `tasks list --json` succeeds but the JSON arrives on `stderr`, Mission Control should still treat it as a successful read
+- if the command times out or yields no JSON at all, treat that as degraded and inspect the gateway/runtime before blaming Mission Control
+- do not run `tasks audit`, `tasks maintenance`, and `tasks flow list` in parallel during diagnosis; concurrent probes can create transient SQLite lock noise in the flow registry
+
+API verification:
+
+```bash
+TOKEN="${MC_API_TOKEN:-your-token}"
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:4000/api/openclaw/background-tasks?taskId=<TASK_ID>" | jq
+```
+
+## Memory And Dreaming Verification Runbook
+
+Use this sequence to verify the current `2026.4.8` memory surface:
+
+```bash
+~/.openclaw/bin/openclaw memory status --deep
+~/.openclaw/bin/openclaw memory status --fix
+~/.openclaw/bin/openclaw memory index --agent cron-worker --force
+~/.openclaw/bin/openclaw memory rem-harness --json
+~/.openclaw/bin/openclaw memory promote
+```
+
+What to expect:
+
+- `Dreaming:` should report the enabled cadence instead of `off`
+- `memory/.dreams/` should exist after the repair/index pass
+- `rem-harness` should return reflections and deep-candidate structure even when the current candidate count is `0`
+- `memory promote` may legitimately report no candidates when the short-term recall store is still empty
+- `DREAMS.md` remains optional and should not be treated as missing or broken until a real sweep has something to write
 
 ## Immediate Ended-Run Recovery
 

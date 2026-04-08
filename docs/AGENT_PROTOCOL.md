@@ -1,3 +1,15 @@
+---
+doc_id: MC-AGENT-PROTOCOL-001
+title: Agent Protocol
+doc_type: reference
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+version-reviewed: OpenClaw 2026.4.8
+---
+
 # Agent Protocol
 
 This document describes how OpenClaw agents interact with Mission Control.

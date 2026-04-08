@@ -1,3 +1,15 @@
+---
+doc_id: MC-AUTOPILOT-SETUP-001
+title: Autopilot Setup
+doc_type: how-to
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+version-reviewed: OpenClaw 2026.4.8
+---
+
 # Autopilot Setup
 
 Use this when creating a new Product Autopilot product or resetting one that was pointed at the wrong workspace.

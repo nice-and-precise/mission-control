@@ -6,14 +6,14 @@ Deploy Mission Control as a live, read-only demo at `missioncontrol.ghray.com`.
 
 **SSH:** `ssh small-sites` (or `ssh root@178.156.199.255 -p 10100`)
 
-This guide keeps the demo server on Node 20 to match Mission Control's Docker and production runtime baseline. For local development on your laptop, `nvm use` now defaults this repo to Node 24. Node 20 and Node 24 are both supported locally, but switching between them requires a fresh `npm ci` before you start the app again.
+This guide keeps the demo server aligned with Mission Control's pinned Node `24.13.0` runtime contract. For local development on your laptop, `nvm use` should resolve to that same version, and any runtime drift should be followed by a fresh `npm ci` before you start the app again.
 
 ---
 
 ## Step 1: Install Node.js (if not installed)
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 node --version  # Should be v20+
 ```

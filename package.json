@@ -3,7 +3,7 @@
   "version": "2.4.0",
   "private": true,
   "engines": {
-    "node": "20.x || 24.x"
+    "node": "24.13.0"
   },
   "devEngines": {
     "runtime": {

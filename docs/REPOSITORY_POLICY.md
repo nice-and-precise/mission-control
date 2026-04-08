@@ -1,3 +1,14 @@
+---
+doc_id: MC-REPO-POLICY-001
+title: Repository Policy
+doc_type: how-to
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+---
+
 # Repository Policy
 
 This checkout is a product repo, not an upstream-contribution fork workflow.

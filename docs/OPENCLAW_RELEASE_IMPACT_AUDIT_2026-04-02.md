@@ -1,4 +1,20 @@
+---
+doc_id: MC-OPENCLAW-AUDIT-2026-04-02
+title: OpenClaw Release Impact Audit 2026-04-02
+doc_type: reference
+status: deprecated
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: false
+applies-to: machine-local
+version-reviewed: OpenClaw 2026.4.1
+replaced-by: docs/OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-08.md
+---
+
 # OpenClaw Release Impact Audit — 2026-04-02
+
+> [!NOTE]
+> Historical dated audit for the `2026.4.1` checkpoint. Use [OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-08.md](OPENCLAW_RELEASE_IMPACT_AUDIT_2026-04-08.md) for the current `2026.4.8` baseline.
 
 This audit records the Mission Control surfaces that were rechecked after the local OpenClaw runtime moved to `2026.4.1` on `2026-04-01`.
 

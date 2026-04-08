@@ -1,3 +1,15 @@
+---
+doc_id: MC-PIPELINE-EXPLAINER-001
+title: How The Pipeline Works
+doc_type: explanation
+status: active
+owner: nice-and-precise
+last-reviewed: 2026-04-08
+canonical: true
+applies-to: mission-control
+version-reviewed: OpenClaw 2026.4.8
+---
+
 # How the Pipeline Works
 
 Plain-language walkthrough of the current Mission Control repo-backed workflow.
