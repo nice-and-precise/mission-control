@@ -105,7 +105,7 @@ function buildIdeationPrompt(
    - estimated_effort_hours: number
    - technical_approach: how to build it
    - risks: array of risk strings
-   - tags: array of tag strings
+   - tags: array of tag strings (MUST include exactly one tier tag like "tier-1", "tier-2", "tier-3", "tier-4", or "tier-5", plus any topic tags)
    - competitive_analysis: comparison with competitors (optional)
    - target_user_segment: who benefits (optional)
    - revenue_potential: money impact (optional)

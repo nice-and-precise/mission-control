@@ -5,6 +5,7 @@ import { Plus, ChevronRight, GripVertical, ArrowRightLeft, AlertTriangle, Messag
 import { useMissionControl } from '@/lib/store';
 import { getConfig } from '@/lib/config';
 import { resolveEditingTaskById } from '@/lib/planning-ui-state';
+import { getTierBadgeInfo } from '@/lib/task-ideas';
 import { useUnreadCounts } from '@/hooks/useUnreadCounts';
 import type { Task, TaskStatus } from '@/lib/types';
 import { TaskModal } from './TaskModal';
@@ -400,6 +401,7 @@ interface TaskCardProps {
   unreadCount?: number;
 }
 function TaskCard({ task, onDragStart, onClick, onMoveStatus, isDragging, mobileMode, portraitMode = true, unreadCount = 0 }: TaskCardProps) {
+  const tierInfo = getTierBadgeInfo(task.idea_tags);
   const priorityStyles = {
     low: 'text-mc-text-secondary',
     normal: 'text-mc-accent',
@@ -518,7 +520,14 @@ function TaskCard({ task, onDragStart, onClick, onMoveStatus, isDragging, mobile
             <div className={`w-1.5 h-1.5 rounded-full ${priorityDots[task.priority]}`} />
             <span className={`text-xs capitalize ${priorityStyles[task.priority]}`}>{task.priority}</span>
           </div>
-          <span className="text-[10px] text-mc-text-secondary/60">{formatDistanceToNow(new Date(task.created_at), { addSuffix: true })}</span>
+          <div className="flex items-center gap-2">
+            {tierInfo && (
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${tierInfo.bgClass} ${tierInfo.textClass} ${tierInfo.borderClass}`}>
+                {tierInfo.label}
+              </span>
+            )}
+            <span className="text-[10px] text-mc-text-secondary/60">{formatDistanceToNow(new Date(task.created_at), { addSuffix: true })}</span>
+          </div>
         </div>
 
         {mobileMode && (
