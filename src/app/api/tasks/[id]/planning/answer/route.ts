@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
-import { extractJSON } from '@/lib/planning-utils';
 
 // POST /api/tasks/[id]/planning/answer - Submit an answer and get next question
 export async function POST(
@@ -9,6 +8,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: taskId } = await params;
+  const startedAt = Date.now();
 
   try {
     const body = await request.json();
@@ -96,12 +96,16 @@ If planning is complete, respond with JSON:
     console.log('[Planning Answer] Answer text:', answerText);
 
     try {
+      const sendStartedAt = Date.now();
       const sendResult = await client.call('chat.send', {
         sessionKey: task.planning_session_key,
         message: answerPrompt,
         idempotencyKey: `planning-answer-${taskId}-${Date.now()}`,
       });
-      console.log('[Planning Answer] Send successful, result:', sendResult);
+      console.log(
+        `[Planning Answer] Send successful for ${taskId} in ${Date.now() - sendStartedAt}ms, session=${task.planning_session_key}`,
+        sendResult,
+      );
     } catch (sendError) {
       console.error('[Planning Answer] Failed to send to OpenClaw:', sendError);
       return NextResponse.json({ error: 'Failed to send answer to orchestrator: ' + (sendError as Error).message }, { status: 500 });
@@ -125,5 +129,7 @@ If planning is complete, respond with JSON:
   } catch (error) {
     console.error('Failed to submit answer:', error);
     return NextResponse.json({ error: 'Failed to submit answer: ' + (error as Error).message }, { status: 500 });
+  } finally {
+    console.log(`[Planning Answer] Request completed for ${taskId} in ${Date.now() - startedAt}ms`);
   }
 }

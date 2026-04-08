@@ -398,3 +398,47 @@ test('planning poll surfaces transcript issues instead of silently idling', asyn
     message: 'OpenClaw omitted one or more oversized transcript entries.',
   });
 });
+
+test('planning poll returns a structured warning when transcript refresh times out', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+  const messages: PlanningMessage[] = [
+    { role: 'user', content: 'Start', timestamp: 1 },
+    planningQuestion('What should this do?'),
+  ];
+
+  seedTask({ id: taskId, workspaceId, messages });
+  setOpenClawMessagesResolverForTests(async () => {
+    throw new Error('Request timeout: chat.history');
+  });
+
+  const response = await getPlanningPollRoute(
+    new NextRequest(`http://localhost/api/tasks/${taskId}/planning/poll`),
+    { params: Promise.resolve({ id: taskId }) },
+  );
+  const payload = await response.json() as {
+    hasUpdates: boolean;
+    complete: boolean;
+    transcriptIssue: { code: string; message: string } | null;
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.hasUpdates, true);
+  assert.equal(payload.complete, false);
+  assert.deepEqual(payload.transcriptIssue, {
+    code: 'gateway_timeout',
+    message: 'Timed out while waiting for OpenClaw transcript history — showing cached messages and retrying automatically.',
+  });
+
+  const timeoutActivity = queryOne<{ activity_type: string; message: string }>(
+    `SELECT activity_type, message
+       FROM task_activities
+      WHERE task_id = ?
+        AND activity_type = 'planning_poll_timeout'
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [taskId],
+  );
+  assert.equal(timeoutActivity?.activity_type, 'planning_poll_timeout');
+  assert.match(timeoutActivity?.message || '', /Timed out while waiting for OpenClaw transcript history/);
+});

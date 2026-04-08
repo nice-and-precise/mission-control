@@ -126,8 +126,12 @@ export const useMissionControl = create<MissionControlState>((set) => ({
       const tasks = state.tasks.map((task) =>
         task.id === taskId ? { ...task, status } : task
       );
+      const selectedTask = state.selectedTask?.id === taskId
+        ? tasks.find((task) => task.id === taskId) || null
+        : state.selectedTask;
       return {
         tasks,
+        selectedTask,
         agents: reconcileAgentStatuses(state.agents, tasks),
       };
     });
@@ -148,8 +152,12 @@ export const useMissionControl = create<MissionControlState>((set) => ({
       const tasks = state.tasks.map((task) =>
         task.id === updatedTask.id ? updatedTask : task
       );
+      const selectedTask = state.selectedTask?.id === updatedTask.id
+        ? updatedTask
+        : state.selectedTask;
       return {
         tasks,
+        selectedTask,
         agents: reconcileAgentStatuses(state.agents, tasks),
       };
     });

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CheckCircle, Circle, Lock, AlertCircle, Loader2, X } from 'lucide-react';
+import { shouldReleasePlanningSubmission } from '@/lib/planning-ui-state';
 import type { SuggestedPlanningAgent } from '@/lib/types';
 
 interface PlanningOption {
@@ -76,8 +77,6 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
   const currentQuestionRef = useRef<string | undefined>(undefined);
 
   const transcriptIssue = state?.transcriptIssue || null;
-  
-
 
   // Load planning state (initial load only)
   const loadState = useCallback(async () => {
@@ -144,14 +143,25 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           setStalePlanning(false);
           setNoNewMessageCount(0);
 
-          const newQuestion = data.currentQuestion?.question;
-          const questionChanged = newQuestion && currentQuestionRef.current !== newQuestion;
-
-          // Force a full state reload from server to avoid stale state issues
-          const freshRes = await fetch(`/api/tasks/${taskId}/planning`);
+          // Force a full state reload from server to avoid stale state issues.
+          // The GET endpoint re-fetches from OpenClaw which may succeed even if
+          // the poll's fetch had issues, so prefer the fresh data.
+          let effectiveQuestion = data.currentQuestion;
+          let effectiveComplete = data.complete;
+          let effectiveTaskStatus = state?.taskStatus || null;
+          let effectiveIsApproved = state?.isApproved || false;
+          let effectiveDispatchError = data.dispatchError || state?.dispatchError || null;
+          let effectiveTranscriptIssue = data.transcriptIssue || state?.transcriptIssue || null;
+          const freshRes = await fetch(`/api/tasks/${taskId}/planning`, { cache: 'no-store' });
           if (freshRes.ok) {
             const freshData = await freshRes.json();
             setState(freshData);
+            effectiveQuestion = freshData.currentQuestion || effectiveQuestion;
+            effectiveComplete = freshData.isComplete || effectiveComplete;
+            effectiveTaskStatus = freshData.taskStatus ?? effectiveTaskStatus;
+            effectiveIsApproved = freshData.isApproved ?? effectiveIsApproved;
+            effectiveDispatchError = freshData.dispatchError ?? effectiveDispatchError;
+            effectiveTranscriptIssue = freshData.transcriptIssue || effectiveTranscriptIssue;
           } else {
             setState(prev => ({
               ...prev!,
@@ -165,11 +175,24 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
             }));
           }
 
+          const newQuestion = effectiveQuestion?.question;
+          const questionChanged = newQuestion && currentQuestionRef.current !== newQuestion;
+
           if (questionChanged) {
             currentQuestionRef.current = newQuestion;
+          }
+          if (shouldReleasePlanningSubmission({
+            effectiveQuestion,
+            effectiveComplete,
+            taskStatus: effectiveTaskStatus,
+            isApproved: effectiveIsApproved,
+            dispatchError: effectiveDispatchError,
+            transcriptIssue: effectiveTranscriptIssue,
+          })) {
             setSelectedOption(null);
             setOtherText('');
             setIsSubmittingAnswer(false);
+            setSubmitting(false);
           }
           // Always clear submitting state when we have a question
           if (data.currentQuestion) {
@@ -198,7 +221,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
     } finally {
       isPollingRef.current = false;
     }
-  }, [taskId, stopPolling, setState, setError, setIsSubmittingAnswer, setSelectedOption, setOtherText, isWaitingForResponse]);
+  }, [taskId, stopPolling, state, isWaitingForResponse]);
 
   // Start polling when waiting for response
   const startPolling = useCallback(() => {
@@ -303,6 +326,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
         // Start polling for the next question or completion
         // Don't clear selection yet - keep it visible while waiting for response
         startPolling();
+        await pollForUpdates();
       } else {
         setError(data.error || 'Failed to submit answer');
         setIsSubmittingAnswer(false); // Clear submitting state on error
@@ -342,6 +366,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
 
       if (res.ok) {
         startPolling();
+        await pollForUpdates();
       } else {
         setError(data.error || 'Failed to submit answer');
         // Clear submission state and selection on error so user can retry

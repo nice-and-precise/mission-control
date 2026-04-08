@@ -21,7 +21,8 @@ const ActivityType = z.enum([
   'updated',
   'completed',
   'file_created',
-  'status_changed'
+  'status_changed',
+  'planning_poll_timeout',
 ]);
 
 const DeliverableType = z.enum(['file', 'url', 'artifact']);

@@ -60,6 +60,7 @@ export interface GatewayRunWindowInspection {
 type GatewaySessionHistoryResolver = (
   sessionKeyOrId: string,
   limit: number,
+  options?: { timeoutMs?: number },
 ) => Promise<GatewaySessionHistoryPayload | NormalizedGatewaySessionHistory>;
 
 let gatewaySessionHistoryResolverForTests: GatewaySessionHistoryResolver | null = null;
@@ -73,10 +74,14 @@ export function setGatewaySessionHistoryResolverForTests(
 export async function loadGatewaySessionHistory(
   sessionKeyOrId: string,
   limit = DEFAULT_HISTORY_LIMIT,
-  options?: { includeTools?: boolean },
+  options?: { includeTools?: boolean; timeoutMs?: number },
 ): Promise<NormalizedGatewaySessionHistory> {
   if (gatewaySessionHistoryResolverForTests) {
-    const payload = await gatewaySessionHistoryResolverForTests(sessionKeyOrId, limit);
+    const payload = await withOptionalTimeout(
+      gatewaySessionHistoryResolverForTests(sessionKeyOrId, limit, { timeoutMs: options?.timeoutMs }),
+      options?.timeoutMs,
+      `chat.history:${sessionKeyOrId}`,
+    );
     const normalized = normalizeGatewaySessionHistoryPayload(sessionKeyOrId, payload);
     return {
       ...normalized,
@@ -90,10 +95,18 @@ export async function loadGatewaySessionHistory(
   }
 
   const resolvedSession = await resolveGatewaySessionForHistory(sessionKeyOrId);
-  const payload = await client.call<unknown>('chat.history', {
-    sessionKey: resolvedSession.sessionKey,
-    limit,
-  });
+  const payload = await withOptionalTimeout(
+    client.call<unknown>(
+      'chat.history',
+      {
+        sessionKey: resolvedSession.sessionKey,
+        limit,
+      },
+      options?.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
+    ),
+    options?.timeoutMs,
+    `chat.history:${resolvedSession.sessionKey}`,
+  );
   const normalized = normalizeGatewaySessionHistoryPayload(sessionKeyOrId, payload);
   const items = options?.includeTools ? normalized.items : stripToolEvents(normalized.items);
 
@@ -103,6 +116,32 @@ export async function loadGatewaySessionHistory(
     resolvedSessionId: resolvedSession.sessionId,
     items,
   };
+}
+
+async function withOptionalTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number | undefined,
+  label: string,
+): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return promise;
+  }
+
+  let timeoutHandle: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new Error(`Request timeout: ${label}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 export function normalizeGatewaySessionHistoryPayload(
