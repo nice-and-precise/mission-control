@@ -1,3 +1,5 @@
+import type { CostLedgerType, CostPricingBasis, CostLedgerWindowTotals } from '@/lib/costs/ledger';
+
 // Core types for Mission Control
 
 export type AgentStatus = 'standby' | 'working' | 'offline';
@@ -824,34 +826,73 @@ export interface CostEvent {
   tokens_input: number;
   tokens_output: number;
   cost_usd: number;
+  ledger_type: CostLedgerType;
+  pricing_basis: CostPricingBasis;
   metadata?: string; // JSON
   created_at: string;
 }
 
 export interface CostOverview {
-  today: number;
-  this_week: number;
-  this_month: number;
-  total: number;
-  reserved_total: number;
+  provider_actual: CostLedgerWindowTotals;
+  mission_estimate: CostLedgerWindowTotals;
+  legacy_mixed: CostLedgerWindowTotals;
+  provider_reserved_total: number;
   active_blocked_task_count: number;
-  active_blocked_estimated_usd: number;
+  active_blocked_provider_estimated_usd: number;
   blocked_unknown_cost_count: number;
   unpriced_build_runs_count: number;
 }
 
 export interface CostBreakdown {
-  by_event_type: Array<{ event_type: string; total: number; count: number }>;
+  by_event_type: Array<{ event_type: string; ledger_type: CostLedgerType; total: number; count: number }>;
+  by_ledger: Array<{ ledger_type: CostLedgerType; total: number; count: number }>;
   by_product: Array<{ product_id: string; product_name: string; total: number; count: number }>;
   by_agent: Array<{ agent_id: string; agent_name: string; total: number; count: number }>;
   summary: {
-    actual_recorded_usd: number;
-    reserved_estimated_usd: number;
+    provider_actual_usd: number;
+    mission_estimate_usd: number;
+    legacy_mixed_usd: number;
+    provider_reserved_usd: number;
     active_blocked_task_count: number;
-    active_blocked_estimated_usd: number;
+    active_blocked_provider_estimated_usd: number;
     blocked_unknown_cost_count: number;
     unpriced_build_runs_count: number;
   };
+}
+
+export interface ProviderBillingSnapshot {
+  id: string;
+  workspace_id: string;
+  product_id?: string | null;
+  provider: string;
+  provider_account_label?: string | null;
+  billing_period: string;
+  imported_total_usd: number;
+  source?: string | null;
+  notes?: string | null;
+  imported_at: string;
+  created_at: string;
+}
+
+export interface ProviderBillingReconciliationItem {
+  provider: string;
+  billing_period: string;
+  imported_total_usd: number;
+  provider_actual_total_usd: number;
+  delta_usd: number;
+  imported_at: string;
+  product_id?: string | null;
+  provider_account_label?: string | null;
+  source?: string | null;
+  notes?: string | null;
+}
+
+export interface ProviderBillingReconciliation {
+  scope: {
+    workspace_id: string;
+    product_id?: string;
+  };
+  items: ProviderBillingReconciliationItem[];
 }
 
 export interface CostCap {

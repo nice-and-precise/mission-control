@@ -1,5 +1,10 @@
 import { queryOne, run } from '@/lib/db';
-import { estimateMissionControlModelCost, getMissionControlModelPolicy, supportsMissionControlAccounting } from '@/lib/openclaw/model-policy';
+import {
+  estimateMissionControlModelCost,
+  getMissionControlModelPolicy,
+  supportsMissionControlAccounting,
+  supportsProviderActualAccounting,
+} from '@/lib/openclaw/model-policy';
 import type { BudgetStatus, Product, Task, Workspace } from '@/lib/types';
 
 type BudgetEntity = 'workspaces' | 'products' | 'tasks';
@@ -78,7 +83,9 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
 
   const requestedReserve = Math.max(input.reserveCostUsd || 0, 0);
   const currentTaskReserve = task?.reserved_cost_usd || 0;
-  const additionalReserve = Math.max(requestedReserve - currentTaskReserve, 0);
+  const providerPricedModel = supportsProviderActualAccounting(input.model);
+  const effectiveRequestedReserve = providerPricedModel ? requestedReserve : 0;
+  const additionalReserve = Math.max(effectiveRequestedReserve - currentTaskReserve, 0);
 
   if (!supportsMissionControlAccounting(input.model)) {
     return blockBudgetState(
@@ -86,6 +93,26 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
       'model_unpriced',
       `Model ${input.model} does not have accountable pricing metadata for Mission Control.`,
     );
+  }
+
+  if (!providerPricedModel) {
+    if (input.taskId) {
+      run(
+        `UPDATE tasks
+         SET budget_status = ?,
+             budget_block_reason = NULL,
+             reserved_cost_usd = 0,
+             updated_at = ?
+         WHERE id = ?`,
+        [CLEAR_STATUS, new Date().toISOString(), input.taskId],
+      );
+    }
+    syncReservedSpendTotals(input.workspaceId, input.productId || undefined);
+    return {
+      ok: true,
+      model: input.model,
+      reserveCostUsd: 0,
+    };
   }
 
   if (workspace.cost_cap_daily == null) {
@@ -101,11 +128,11 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
     return blockBudgetState(input, 'missing_task_cap', 'Product per-task cap is required for dispatch.');
   }
 
-  if (input.action === 'dispatch' && product?.cost_cap_per_task != null && requestedReserve > product.cost_cap_per_task) {
+  if (input.action === 'dispatch' && product?.cost_cap_per_task != null && effectiveRequestedReserve > product.cost_cap_per_task) {
     return blockBudgetState(
       input,
       'task_cap_exceeded',
-      `Mission Control estimated reserve block: requested estimated reserve $${requestedReserve.toFixed(2)} exceeds the product per-task cap of $${product.cost_cap_per_task.toFixed(2)}. This is a local Mission Control planning limit, not recorded spend or provider quota usage.`,
+      `Mission Control provider reserve block: requested provider-priced reserve $${effectiveRequestedReserve.toFixed(2)} exceeds the product per-task cap of $${product.cost_cap_per_task.toFixed(2)}. This is a local Mission Control planning limit tied to provider-priced usage, not subscription quota usage or imported billing snapshots.`,
     );
   }
 
@@ -167,7 +194,7 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
            reserved_cost_usd = ?,
            updated_at = ?
        WHERE id = ?`,
-      [CLEAR_STATUS, Math.max(currentTaskReserve, requestedReserve), new Date().toISOString(), input.taskId],
+      [CLEAR_STATUS, Math.max(currentTaskReserve, effectiveRequestedReserve), new Date().toISOString(), input.taskId],
     );
   }
 
@@ -181,7 +208,7 @@ export function enforceBudgetPolicy(input: BudgetGuardInput): BudgetGuardResult 
   return {
     ok: true,
     model: input.model,
-    reserveCostUsd: Math.max(currentTaskReserve, requestedReserve),
+    reserveCostUsd: Math.max(currentTaskReserve, effectiveRequestedReserve),
   };
 }
 
@@ -308,7 +335,11 @@ function clearEntityBudgetState(entity: BudgetEntity, id: string): void {
 
 function getWorkspaceSpendTotals(workspaceId: string, periodStart: string): SpendTotals {
   const actual = queryOne<{ total: number }>(
-    `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_events WHERE workspace_id = ? AND created_at >= ?`,
+    `SELECT COALESCE(SUM(cost_usd), 0) AS total
+     FROM cost_events
+     WHERE workspace_id = ?
+       AND ledger_type = 'provider_actual'
+       AND created_at >= ?`,
     [workspaceId, periodStart],
   )?.total || 0;
   const reserved = queryOne<{ total: number }>(
@@ -320,7 +351,11 @@ function getWorkspaceSpendTotals(workspaceId: string, periodStart: string): Spen
 
 function getProductSpendTotals(productId: string, periodStart: string): SpendTotals {
   const actual = queryOne<{ total: number }>(
-    `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_events WHERE product_id = ? AND created_at >= ?`,
+    `SELECT COALESCE(SUM(cost_usd), 0) AS total
+     FROM cost_events
+     WHERE product_id = ?
+       AND ledger_type = 'provider_actual'
+       AND created_at >= ?`,
     [productId, periodStart],
   )?.total || 0;
   const reserved = queryOne<{ total: number }>(
@@ -375,5 +410,5 @@ function buildCapExceededMessage(input: {
   total: number;
   limit: number;
 }): string {
-  return `Mission Control estimated reserve block: ${input.label} would be exceeded. Recorded spend $${input.actual.toFixed(2)} + reserved spend $${input.reserved.toFixed(2)} + requested estimated reserve $${input.requestedReserve.toFixed(2)} = $${input.total.toFixed(2)} against a cap of $${input.limit.toFixed(2)}. This is a local Mission Control planning limit, not recorded spend or provider quota usage.`;
+  return `Mission Control provider reserve block: ${input.label} would be exceeded. Provider-priced recorded spend $${input.actual.toFixed(2)} + provider-priced reserved spend $${input.reserved.toFixed(2)} + requested provider-priced reserve $${input.requestedReserve.toFixed(2)} = $${input.total.toFixed(2)} against a cap of $${input.limit.toFixed(2)}. This is a local Mission Control planning limit tied to provider-priced usage, not subscription quota usage or imported billing snapshots.`;
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { COST_LEDGER_TYPES, COST_PRICING_BASES } from '@/lib/costs/ledger';
 
 // Task status and priority enums from types
 const TaskStatus = z.enum([
@@ -173,7 +174,21 @@ export const CreateCostEventSchema = z.object({
   tokens_input: z.number().int().min(0).optional(),
   tokens_output: z.number().int().min(0).optional(),
   cost_usd: z.number().min(0),
+  ledger_type: z.enum(COST_LEDGER_TYPES),
+  pricing_basis: z.enum(COST_PRICING_BASES),
   metadata: z.string().optional(),
+});
+
+export const CreateProviderBillingSnapshotSchema = z.object({
+  workspace_id: z.string(),
+  product_id: z.string().optional().nullable(),
+  provider: z.string().min(1),
+  provider_account_label: z.string().optional().nullable(),
+  billing_period: z.string().regex(/^\d{4}-\d{2}$/, 'Billing period must be YYYY-MM'),
+  imported_total_usd: z.number().min(0),
+  source: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  imported_at: z.string().optional(),
 });
 
 export const CreateScheduleSchema = z.object({
@@ -206,5 +221,6 @@ export type CreateIdeaInput = z.infer<typeof CreateIdeaSchema>;
 export type CreateCostCapInput = z.infer<typeof CreateCostCapSchema>;
 export type UpdateCostCapInput = z.infer<typeof UpdateCostCapSchema>;
 export type CreateCostEventInput = z.infer<typeof CreateCostEventSchema>;
+export type CreateProviderBillingSnapshotInput = z.infer<typeof CreateProviderBillingSnapshotSchema>;
 export type CreateScheduleInput = z.infer<typeof CreateScheduleSchema>;
 export type UpdateScheduleInput = z.infer<typeof UpdateScheduleSchema>;

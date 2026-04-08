@@ -4,6 +4,7 @@ import { broadcast } from '@/lib/events';
 import { recalculateAndBroadcast } from '@/lib/autopilot/health-score';
 import { syncReservedSpendTotals } from './budget-policy';
 import type { CostEvent } from '@/lib/types';
+import type { CostLedgerType, CostPricingBasis } from './ledger';
 
 export function recordCostEvent(input: {
   product_id?: string | null;
@@ -17,8 +18,14 @@ export function recordCostEvent(input: {
   tokens_input?: number;
   tokens_output?: number;
   cost_usd: number;
+  ledger_type: CostLedgerType;
+  pricing_basis: CostPricingBasis;
   metadata?: string;
 }): CostEvent {
+  if (!input.ledger_type || !input.pricing_basis) {
+    throw new Error('Cost events now require both ledger_type and pricing_basis.');
+  }
+
   const id = uuidv4();
   const workspaceId = input.workspace_id || 'default';
   const taskContext = input.task_id
@@ -29,14 +36,17 @@ export function recordCostEvent(input: {
     : null;
 
   run(
-    `INSERT INTO cost_events (id, product_id, workspace_id, task_id, cycle_id, agent_id, event_type, provider, model, tokens_input, tokens_output, cost_usd, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO cost_events (
+       id, product_id, workspace_id, task_id, cycle_id, agent_id, event_type, provider, model,
+       tokens_input, tokens_output, cost_usd, ledger_type, pricing_basis, metadata
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id, input.product_id || null, workspaceId, input.task_id || null,
       input.cycle_id || null, input.agent_id || null, input.event_type,
       input.provider || null, input.model || null,
       input.tokens_input || 0, input.tokens_output || 0,
-      input.cost_usd, input.metadata || null
+      input.cost_usd, input.ledger_type, input.pricing_basis, input.metadata || null
     ]
   );
 

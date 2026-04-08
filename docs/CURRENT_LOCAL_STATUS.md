@@ -66,6 +66,14 @@ The following facts were re-verified against the live local runtime on `2026-04-
   - invalid manual workflow moves now fail closed with `409` instead of dispatching the wrong prompt to the wrong persistent agent session
 - Protected callback instructions are aligned with runtime auth
   - when `MC_API_TOKEN` is configured, builder/tester/verifier dispatch prompts include the required `Authorization: Bearer <token>` header for localhost callback requests
+- Dispatch failures can be policy failures even when the gateway path is healthy
+  - authenticated dispatch replay on `2026-04-07` reached OpenClaw successfully and then failed closed in Mission Control with `Product monthly cap is required`
+  - an earlier higher-cost dispatch hit `Mission Control estimated reserve block ... exceeds the product per-task cap`
+  - treat `409` as Mission Control validation first; reserve gateway triage for transport errors like `fetch failed`, `502`, or `503`
+- Local cost accounting repair is staged on top of this checkout
+  - cost events are now split into `provider_actual`, `mission_estimate`, and `legacy_mixed`
+  - BoreReady historical blended spend was preserved as legacy history instead of continuing to drive caps
+  - new cap enforcement is intended to use provider-priced spend only, while provider reconciliation imports remain read-only comparison data
 - Fresh reruns intentionally reuse the stable OpenClaw routing key
   - Mission Control prepends `/new` to dispatches on the existing session key
   - seeing the same `sessionKey` with a new `sessionId` is expected OpenClaw behavior, not evidence of stale task context by itself

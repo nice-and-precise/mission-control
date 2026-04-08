@@ -1,6 +1,6 @@
 import type { OpenClawProviderModel } from '@/lib/types';
 
-type PricingKind = 'token' | 'flat_request' | 'none';
+export type PricingKind = 'token' | 'flat_request' | 'none';
 
 interface ModelPricing {
   kind: PricingKind;
@@ -178,6 +178,20 @@ export function getAutopilotDefaultModel(): string {
 
 export function supportsMissionControlAccounting(modelId: string): boolean {
   return getMissionControlModelPolicy(modelId).priced;
+}
+
+export function getMissionControlPricingKind(modelId: string): PricingKind {
+  return getMissionControlModelPolicy(modelId).pricing.kind;
+}
+
+export function supportsProviderActualAccounting(modelId: string): boolean {
+  const policy = getMissionControlModelPolicy(modelId);
+  return policy.priced && policy.pricing.kind === 'token';
+}
+
+export function supportsMissionEstimateAccounting(modelId: string): boolean {
+  const policy = getMissionControlModelPolicy(modelId);
+  return policy.priced && policy.pricing.kind === 'flat_request';
 }
 
 export function estimateMissionControlModelCost(
