@@ -655,9 +655,7 @@ function buildSessionCostRecord(
       tokensOutput: 0,
       pricingBasis: 'request_estimate',
       ledgerType: 'mission_estimate',
-      provider: getMissionControlPricingKind(normalizedModel) === 'flat_request'
-        ? canonicalMissionControlModelId(normalizedModel).split('/')[0]
-        : usageSnapshot.modelProvider || normalizedModel.split('/')[0],
+      provider: canonicalMissionControlModelId(normalizedModel).split('/')[0],
     };
   }
 

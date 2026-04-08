@@ -91,8 +91,9 @@ export function getCostOverview(workspaceId: string, productId?: string): CostOv
      FROM tasks
      WHERE ${taskScope.clause}
        AND budget_status = 'blocked'
-       AND status NOT IN ('done', 'cancelled')`,
-    taskScope.params
+       AND status NOT IN ('done', 'cancelled')
+       AND (budget_block_reason IS NULL OR budget_block_reason NOT IN (${UNKNOWN_COST_REASONS.map(() => '?').join(', ')}))`,
+    [...taskScope.params, ...UNKNOWN_COST_REASONS]
   );
   const blockedUnknownCostCount = queryOne<{ count: number }>(
     `SELECT COUNT(*) as count
@@ -200,8 +201,9 @@ export function getCostBreakdown(workspaceId: string, productId?: string): CostB
        FROM tasks
        WHERE ${taskScope.clause}
          AND budget_status = 'blocked'
-         AND status NOT IN ('done', 'cancelled')`,
-      taskScope.params,
+         AND status NOT IN ('done', 'cancelled')
+         AND (budget_block_reason IS NULL OR budget_block_reason NOT IN (${UNKNOWN_COST_REASONS.map(() => '?').join(', ')}))`,
+      [...taskScope.params, ...UNKNOWN_COST_REASONS],
     )?.total || 0,
     blocked_unknown_cost_count: queryOne<{ count: number }>(
       `SELECT COUNT(*) as count

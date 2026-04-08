@@ -55,3 +55,41 @@ test('provider reconciliation compares imported totals against provider_actual s
   assert.equal(reconciliation.items[0]?.imported_total_usd, 14);
   assert.equal(reconciliation.items[0]?.delta_usd, 1.5);
 });
+
+test('provider reconciliation uses UTC month boundaries', () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const productId = crypto.randomUUID();
+
+  run(
+    `INSERT INTO workspaces (
+       id, name, slug, cost_cap_daily, cost_cap_monthly, reserved_cost_usd, budget_status, created_at, updated_at
+     ) VALUES (?, ?, ?, 20, 100, 0, 'clear', datetime('now'), datetime('now'))`,
+    [workspaceId, `Workspace ${workspaceId}`, workspaceId],
+  );
+  run(
+    `INSERT INTO products (
+       id, workspace_id, name, icon, cost_cap_per_task, cost_cap_monthly, reserved_cost_usd, budget_status, created_at, updated_at
+     ) VALUES (?, ?, 'Recon Product', '🚀', 10, 50, 0, 'clear', datetime('now'), datetime('now'))`,
+    [productId, workspaceId],
+  );
+  run(
+    `INSERT INTO cost_events (
+       id, product_id, workspace_id, event_type, provider, model, cost_usd, ledger_type, pricing_basis, created_at
+     ) VALUES
+       (?, ?, ?, 'build_task', 'qwen', 'qwen/qwen3.6-plus', 2, 'provider_actual', 'token_priced', '2026-03-31T23:59:59.999Z'),
+       (?, ?, ?, 'build_task', 'qwen', 'qwen/qwen3.6-plus', 3, 'provider_actual', 'token_priced', '2026-04-01T00:00:00.000Z')`,
+    [crypto.randomUUID(), productId, workspaceId, crypto.randomUUID(), productId, workspaceId],
+  );
+
+  createProviderBillingSnapshot({
+    workspace_id: workspaceId,
+    product_id: productId,
+    provider: 'qwen',
+    billing_period: '2026-04',
+    imported_total_usd: 5,
+  });
+
+  const reconciliation = getProviderBillingReconciliation(workspaceId, productId);
+  assert.equal(reconciliation.items.length, 1);
+  assert.equal(reconciliation.items[0]?.provider_actual_total_usd, 3);
+});

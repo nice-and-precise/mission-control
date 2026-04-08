@@ -43,10 +43,12 @@ test('cost reporting separates provider actual, mission estimate, and legacy mix
        actual_cost_usd, reserved_cost_usd, budget_status, budget_block_reason, created_at, updated_at
      ) VALUES
        (?, 'Active cap blocked', 'assigned', 'high', ?, 'default', ?, 60, 0, 0, 'blocked', 'workspace_daily_cap_exceeded', datetime('now'), datetime('now')),
+       (?, 'Active unknown blocked', 'assigned', 'normal', ?, 'default', ?, 11, 0, 0, 'blocked', 'usage_missing_accountable_pricing', datetime('now'), datetime('now')),
        (?, 'Historical blocked', 'done', 'normal', ?, 'default', ?, 10, 0, 0, 'blocked', 'workspace_daily_cap_exceeded', datetime('now'), datetime('now')),
        (?, 'Unpriced build', 'done', 'normal', ?, 'default', ?, 3, 0, 0, 'blocked', 'usage_missing_accountable_pricing', datetime('now'), datetime('now')),
        (?, 'Reserved build', 'in_progress', 'normal', ?, 'default', ?, 25, 0, 12, 'clear', NULL, datetime('now'), datetime('now'))`,
     [
+      crypto.randomUUID(), workspaceId, productId,
       crypto.randomUUID(), workspaceId, productId,
       crypto.randomUUID(), workspaceId, productId,
       crypto.randomUUID(), workspaceId, productId,
@@ -71,17 +73,17 @@ test('cost reporting separates provider actual, mission estimate, and legacy mix
   assert.equal(overview.mission_estimate.total, 1.2);
   assert.equal(overview.legacy_mixed.total, 9.9);
   assert.equal(overview.provider_reserved_total, 12);
-  assert.equal(overview.active_blocked_task_count, 1);
+  assert.equal(overview.active_blocked_task_count, 2);
   assert.equal(overview.active_blocked_provider_estimated_usd, 60);
-  assert.equal(overview.blocked_unknown_cost_count, 1);
+  assert.equal(overview.blocked_unknown_cost_count, 2);
 
   assert.equal(breakdown.summary.provider_actual_usd, 4.5);
   assert.equal(breakdown.summary.mission_estimate_usd, 1.2);
   assert.equal(breakdown.summary.legacy_mixed_usd, 9.9);
   assert.equal(breakdown.summary.provider_reserved_usd, 12);
-  assert.equal(breakdown.summary.active_blocked_task_count, 1);
+  assert.equal(breakdown.summary.active_blocked_task_count, 2);
   assert.equal(breakdown.summary.active_blocked_provider_estimated_usd, 60);
-  assert.equal(breakdown.summary.blocked_unknown_cost_count, 1);
+  assert.equal(breakdown.summary.blocked_unknown_cost_count, 2);
   assert.deepEqual(
     breakdown.by_ledger.map(item => item.ledger_type).sort(),
     ['legacy_mixed', 'mission_estimate', 'provider_actual'],
