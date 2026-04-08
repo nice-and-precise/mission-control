@@ -33,7 +33,8 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 - Git ref: `chore/mission-control-openclaw-2026-4-8-runtime-audit`
 - Baseline commit: `5a31d2d` (foundation-reset worktree base on top of `origin/main`)
 - GitHub PR state:
-  - the current work is isolated in a clean upgrade worktree and has not been merged yet
+  - active review PR: `#15` <https://github.com/nice-and-precise/mission-control/pull/15>
+  - companion workspace docs/governance PR: `nice-and-precise/openclaw-workspace#5`
   - `origin/main` remains the canonical trunk
 - Git remote model on this machine:
   - `origin` -> `nice-and-precise/mission-control`
