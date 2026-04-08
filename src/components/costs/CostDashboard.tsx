@@ -111,6 +111,7 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
   const [productCapExceeded, setProductCapExceeded] = useState(false);
   const [reconciliation, setReconciliation] = useState<ProviderBillingReconciliation | null>(null);
   const [savingReconciliation, setSavingReconciliation] = useState(false);
+  const [reconciliationError, setReconciliationError] = useState<string | null>(null);
   const [reconciliationForm, setReconciliationForm] = useState({
     provider: 'qwen',
     provider_account_label: '',
@@ -253,8 +254,9 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
   const saveReconciliationSnapshot = async () => {
     if (!effectiveWorkspaceId || !reconciliationForm.imported_total_usd) return;
     setSavingReconciliation(true);
+    setReconciliationError(null);
     try {
-      await fetch('/api/costs/reconciliation', {
+      const response = await fetch('/api/costs/reconciliation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -268,10 +270,16 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
           notes: reconciliationForm.notes || null,
         }),
       });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null) as { error?: string; details?: Array<{ message?: string }> } | null;
+        const detailMessage = errorPayload?.details?.map(detail => detail.message).filter(Boolean).join('; ');
+        throw new Error(detailMessage || errorPayload?.error || 'Failed to save reconciliation snapshot');
+      }
       await loadReconciliation(effectiveWorkspaceId);
       setReconciliationForm(current => ({ ...current, imported_total_usd: '', notes: '' }));
     } catch (error) {
       console.error('Failed to save reconciliation snapshot:', error);
+      setReconciliationError(error instanceof Error ? error.message : 'Failed to save reconciliation snapshot');
     } finally {
       setSavingReconciliation(false);
     }
@@ -486,6 +494,12 @@ export function CostDashboard({ productId, workspaceId = 'default' }: CostDashbo
           className="w-full bg-mc-bg-tertiary border border-mc-border rounded-lg px-3 py-2 text-mc-text text-sm min-h-[88px]"
           placeholder="notes"
         />
+
+        {reconciliationError && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+            {reconciliationError}
+          </div>
+        )}
 
         <div className="space-y-3">
           {reconciliation?.items.length ? reconciliation.items.map(item => (

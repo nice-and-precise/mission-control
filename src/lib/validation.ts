@@ -184,7 +184,7 @@ export const CreateProviderBillingSnapshotSchema = z.object({
   product_id: z.string().optional().nullable(),
   provider: z.string().min(1),
   provider_account_label: z.string().optional().nullable(),
-  billing_period: z.string().regex(/^\d{4}-\d{2}$/, 'Billing period must be YYYY-MM'),
+  billing_period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Billing period must be YYYY-MM with month 01-12'),
   imported_total_usd: z.number().min(0),
   source: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),

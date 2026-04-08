@@ -5,8 +5,8 @@ import type { CreateProviderBillingSnapshotInput } from '@/lib/validation';
 
 function periodBounds(billingPeriod: string): { start: string; end: string } {
   const [year, month] = billingPeriod.split('-').map(Number);
-  const start = new Date(year, month - 1, 1).toISOString();
-  const end = new Date(year, month, 1).toISOString();
+  const start = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+  const end = new Date(Date.UTC(year, month, 1)).toISOString();
   return { start, end };
 }
 
