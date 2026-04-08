@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { getMissionControlUrl } from '@/lib/config';
+import { normalizeIdeaTags } from '@/lib/task-ideas';
 import {
   handleStageTransition,
   handleStageFailure,
@@ -60,12 +61,16 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const task = queryOne<Task>(
+    const task = queryOne<Task & { idea_tags?: string | null; idea_impact_score?: number | null; idea_feasibility_score?: number | null }>(
       `SELECT t.*,
         aa.name as assigned_agent_name,
-        aa.avatar_emoji as assigned_agent_emoji
+        aa.avatar_emoji as assigned_agent_emoji,
+        i.tags as idea_tags,
+        i.impact_score as idea_impact_score,
+        i.feasibility_score as idea_feasibility_score
        FROM tasks t
        LEFT JOIN agents aa ON t.assigned_agent_id = aa.id
+       LEFT JOIN ideas i ON t.idea_id = i.id
        WHERE t.id = ?`,
       [id]
     );
@@ -74,7 +79,12 @@ export async function GET(
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
 
-    return NextResponse.json(task);
+    return NextResponse.json({
+      ...task,
+      idea_tags: normalizeIdeaTags(task.idea_tags),
+      idea_impact_score: task.idea_impact_score ?? undefined,
+      idea_feasibility_score: task.idea_feasibility_score ?? undefined,
+    });
   } catch (error) {
     console.error('Failed to fetch task:', error);
     return NextResponse.json({ error: 'Failed to fetch task' }, { status: 500 });

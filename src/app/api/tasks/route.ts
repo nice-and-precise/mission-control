@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { queryAll, queryOne, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { getMissionControlUrl } from '@/lib/config';
+import { normalizeIdeaTags } from '@/lib/task-ideas';
 import { CreateTaskSchema } from '@/lib/validation';
 import { populateTaskRolesFromAgents } from '@/lib/workflow-engine';
 import type { Task, CreateTaskRequest, Agent } from '@/lib/types';
@@ -23,10 +24,14 @@ export async function GET(request: NextRequest) {
         t.*,
         aa.name as assigned_agent_name,
         aa.avatar_emoji as assigned_agent_emoji,
-        ca.name as created_by_agent_name
+        ca.name as created_by_agent_name,
+        i.tags as idea_tags,
+        i.impact_score as idea_impact_score,
+        i.feasibility_score as idea_feasibility_score
       FROM tasks t
       LEFT JOIN agents aa ON t.assigned_agent_id = aa.id
       LEFT JOIN agents ca ON t.created_by_agent_id = ca.id
+      LEFT JOIN ideas i ON t.idea_id = i.id
       WHERE 1=1
     `;
     const params: unknown[] = [];
@@ -57,9 +62,18 @@ export async function GET(request: NextRequest) {
 
     sql += ' ORDER BY t.created_at DESC';
 
-    const tasks = queryAll<Task & { assigned_agent_name?: string; assigned_agent_emoji?: string; created_by_agent_name?: string }>(sql, params);
+    const tasks = queryAll<
+      Task & {
+        assigned_agent_name?: string;
+        assigned_agent_emoji?: string;
+        created_by_agent_name?: string;
+        idea_tags?: string | null;
+        idea_impact_score?: number | null;
+        idea_feasibility_score?: number | null;
+      }
+    >(sql, params);
 
-    // Transform to include nested agent info
+    // Transform to include nested agent info and normalized idea metadata.
     const transformedTasks = tasks.map((task) => ({
       ...task,
       assigned_agent: task.assigned_agent_id
@@ -69,6 +83,9 @@ export async function GET(request: NextRequest) {
             avatar_emoji: task.assigned_agent_emoji,
           }
         : undefined,
+      idea_tags: normalizeIdeaTags(task.idea_tags),
+      idea_impact_score: task.idea_impact_score ?? undefined,
+      idea_feasibility_score: task.idea_feasibility_score ?? undefined,
     }));
 
     return NextResponse.json(transformedTasks);

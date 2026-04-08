@@ -126,6 +126,9 @@ export interface Task {
   // Joined fields
   assigned_agent?: Agent;
   created_by_agent?: Agent;
+  idea_tags?: string[];
+  idea_impact_score?: number;
+  idea_feasibility_score?: number;
 }
 
 export interface TaskImage {
