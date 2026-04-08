@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Plus, ChevronRight, GripVertical, ArrowRightLeft, AlertTriangle, MessageSquare } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import { getConfig } from '@/lib/config';
+import { resolveEditingTaskById } from '@/lib/planning-ui-state';
 import { useUnreadCounts } from '@/hooks/useUnreadCounts';
 import type { Task, TaskStatus } from '@/lib/types';
 import { TaskModal } from './TaskModal';
@@ -28,7 +29,7 @@ const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
 ];
 
 export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = true }: MissionQueueProps) {
-  const { tasks, updateTaskStatus, addEvent } = useMissionControl();
+  const { tasks, updateTaskStatus, addEvent, setSelectedTask } = useMissionControl();
   const [compactEmptyColumns, setCompactEmptyColumns] = useState(true);
   const unreadCounts = useUnreadCounts();
 
@@ -45,11 +46,16 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
     return `${widthPx}px`;
   };
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [draggedTask, setDraggedTask] = useState<Task | null>(null);
   const [mobileStatus, setMobileStatus] = useState<TaskStatus>('planning');
   const [statusMoveTask, setStatusMoveTask] = useState<Task | null>(null);
   const [pendingMove, setPendingMove] = useState<{ task: Task; targetStatus: TaskStatus } | null>(null);
+  const editingTask = resolveEditingTaskById(tasks, editingTaskId);
+
+  useEffect(() => {
+    setSelectedTask(editingTask);
+  }, [editingTask, setSelectedTask]);
 
   const getTasksByStatus = (status: TaskStatus) =>
     tasks.filter((task) =>
@@ -187,7 +193,7 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
                       key={task.id}
                       task={task}
                       onDragStart={handleDragStart}
-                      onClick={() => setEditingTask(task)}
+                      onClick={() => setEditingTaskId(task.id)}
                       onMoveStatus={() => setStatusMoveTask(task)}
                       isDragging={draggedTask?.id === task.id}
                       mobileMode={false}
@@ -233,7 +239,7 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
                   key={task.id}
                   task={task}
                   onDragStart={handleDragStart}
-                  onClick={() => setEditingTask(task)}
+                  onClick={() => setEditingTaskId(task.id)}
                   onMoveStatus={() => setStatusMoveTask(task)}
                   isDragging={false}
                   mobileMode
@@ -247,7 +253,7 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
       )}
 
       {showCreateModal && <TaskModal onClose={() => setShowCreateModal(false)} workspaceId={workspaceId} />}
-      {editingTask && <TaskModal task={editingTask} onClose={() => setEditingTask(null)} workspaceId={workspaceId} />}
+      {editingTask && <TaskModal task={editingTask} onClose={() => setEditingTaskId(null)} workspaceId={workspaceId} />}
 
       {mobileMode && statusMoveTask && (
         <div className="fixed inset-0 z-50 bg-black/60 p-4 flex items-end sm:items-center sm:justify-center" onClick={() => setStatusMoveTask(null)}>
@@ -393,7 +399,6 @@ interface TaskCardProps {
   portraitMode?: boolean;
   unreadCount?: number;
 }
-
 function TaskCard({ task, onDragStart, onClick, onMoveStatus, isDragging, mobileMode, portraitMode = true, unreadCount = 0 }: TaskCardProps) {
   const priorityStyles = {
     low: 'text-mc-text-secondary',

@@ -33,14 +33,14 @@ test('listSessions normalizes object payloads with a sessions array', async () =
   const client = new OpenClawClient('ws://127.0.0.1:1');
   const originalCall = client.call.bind(client);
 
-  client.call = async () => ({
+  client.call = (async () => ({
     sessions: [
       {
         id: 'session-1',
         key: 'agent:main:session-1',
       },
     ],
-  });
+  })) as typeof client.call;
 
   try {
     const sessions = await client.listSessions();

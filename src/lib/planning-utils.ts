@@ -40,7 +40,7 @@ export interface PlanningTranscriptResolution {
   completion: PlanningCompletionPayload | null;
   currentQuestion: PlanningQuestion | null;
   transcriptIssue?: {
-    code: 'history_omitted';
+    code: 'history_omitted' | 'gateway_timeout';
     message: string;
   } | null;
 }
@@ -360,7 +360,7 @@ export function mergeStoredMessagesWithOpenClaw(
 
 export async function reconcilePlanningTranscript(
   task: PlanningTaskRow,
-  options?: { refreshFromOpenClaw?: boolean },
+  options?: { refreshFromOpenClaw?: boolean; timeoutMs?: number },
 ): Promise<PlanningTranscriptResolution & { changed: boolean }> {
   let messages = normalizePlanningMessages(task.planning_messages ? JSON.parse(task.planning_messages) : []);
   let resolution = resolvePlanningTranscript(messages);
@@ -372,14 +372,29 @@ export async function reconcilePlanningTranscript(
     options?.refreshFromOpenClaw &&
     !resolution.completion
   ) {
-    const { messages: openclawMessages, transcriptIssue: fetchedTranscriptIssue } = await getMessagesFromOpenClaw(task.planning_session_key);
-    const merged = mergeStoredMessagesWithOpenClaw(messages, openclawMessages);
-    if (merged.changed) {
-      messages = merged.messages;
-      changed = true;
-      resolution = resolvePlanningTranscript(messages);
+    try {
+      const { messages: openclawMessages, transcriptIssue: fetchedTranscriptIssue } = await getMessagesFromOpenClaw(
+        task.planning_session_key,
+        { timeoutMs: options?.timeoutMs },
+      );
+      const merged = mergeStoredMessagesWithOpenClaw(messages, openclawMessages);
+      if (merged.changed) {
+        messages = merged.messages;
+        changed = true;
+        resolution = resolvePlanningTranscript(messages);
+      }
+      transcriptIssue = fetchedTranscriptIssue || transcriptIssue;
+    } catch (err) {
+      const errorMessage = (err as Error).message;
+      console.error('[reconcilePlanningTranscript] OpenClaw fetch failed, returning stored messages:', errorMessage);
+      // Return stored messages but flag the fetch failure so callers know
+      transcriptIssue = {
+        code: /Request timeout: chat\.history/i.test(errorMessage) ? 'gateway_timeout' : 'history_omitted',
+        message: /Request timeout: chat\.history/i.test(errorMessage)
+          ? 'Timed out while waiting for OpenClaw transcript history — showing cached messages and retrying automatically.'
+          : 'Failed to reach OpenClaw gateway — showing cached messages. The response may have arrived but could not be retrieved.',
+      };
     }
-    transcriptIssue = fetchedTranscriptIssue || transcriptIssue;
   }
 
   return {
@@ -456,11 +471,12 @@ export function setOpenClawMessagesResolverForTests(resolver: OpenClawMessagesRe
  * Returns assistant messages with text content extracted.
  */
 export async function getMessagesFromOpenClaw(
-  sessionKey: string
+  sessionKey: string,
+  options?: { timeoutMs?: number },
 ): Promise<{
   messages: Array<{ role: string; content: string }>;
   transcriptIssue?: {
-    code: 'history_omitted';
+    code: 'history_omitted' | 'gateway_timeout';
     message: string;
   } | null;
 }> {
@@ -469,7 +485,14 @@ export async function getMessagesFromOpenClaw(
   }
 
   try {
-    const history = await loadGatewaySessionHistory(sessionKey, 50, { includeTools: true });
+    const startedAt = Date.now();
+    const history = await loadGatewaySessionHistory(sessionKey, 50, {
+      includeTools: true,
+      timeoutMs: options?.timeoutMs,
+    });
+    console.log(
+      `[Planning Utils] Transcript refresh completed for ${sessionKey} in ${Date.now() - startedAt}ms`,
+    );
     const messages: Array<{ role: string; content: string }> = [];
 
     for (const item of history.items) {

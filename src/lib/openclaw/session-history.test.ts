@@ -258,3 +258,15 @@ test('oversized history omission helpers detect the documented placeholder', () 
   assert.equal(hasOversizedHistoryOmission(items), true);
   assert.match(getOversizedHistoryOmissionMessage(), /oversized/i);
 });
+
+test('loadGatewaySessionHistory honors timeoutMs for resolver-backed history loads', async () => {
+  setGatewaySessionHistoryResolverForTests(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return { items: [] };
+  });
+
+  await assert.rejects(
+    () => loadGatewaySessionHistory('agent:main:session-123', 100, { timeoutMs: 10 }),
+    /Request timeout: chat\.history:agent:main:session-123/,
+  );
+});

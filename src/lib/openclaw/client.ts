@@ -440,7 +440,11 @@ export class OpenClawClient extends EventEmitter {
     }, 10000); // 10 seconds between reconnect attempts
   }
 
-  async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
+  async call<T = unknown>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number },
+  ): Promise<T> {
     if (!this.ws || !this.connected || !this.authenticated) {
       throw new Error('Not connected to OpenClaw Gateway');
     }
@@ -452,11 +456,11 @@ export class OpenClawClient extends EventEmitter {
       this.pendingRequests.set(id, { resolve: resolve as (value: unknown) => void, reject });
 
       // Some gateway operations can legitimately take longer under local load.
-      const timeoutMs = method === 'sessions.patch'
+      const timeoutMs = options?.timeoutMs ?? (method === 'sessions.patch'
         ? 60000
         : method === 'chat.history'
           ? 120000
-          : 30000;
+          : 30000);
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
