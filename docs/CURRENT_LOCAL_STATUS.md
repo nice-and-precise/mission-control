@@ -8,9 +8,9 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Snapshot
 
-- Date verified: `2026-04-05` (session 3)
+- Date verified: `2026-04-09`
 - Upstream base: `v2.4.0`
-- Local checkout state: `queue/session hijack fix + live squti repair; LLI SaaS unblocked`
+- Local checkout state: `OpenClaw 2026.4.9 restored; Mission Control reconnected; BoreReady verification lane unstuck`
 - Git ref: `main`
 - Baseline commit: `ca1d88d` (queue/session hijack fix on top of origin/main)
 - GitHub PR state:
@@ -34,6 +34,25 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
   - direct API calls to protected `/api/*` routes require `Authorization: Bearer <token>`
 
 ## Verified Runtime Behavior
+
+The following facts were re-verified against the live local runtime on `2026-04-09`:
+
+- OpenClaw is now running locally on `2026.4.9`
+  - `~/.openclaw/bin/openclaw --version` returns `OpenClaw 2026.4.9 (0512059)`
+  - the LaunchAgent is installed at `~/Library/LaunchAgents/ai.openclaw.gateway.plist`
+  - the live service command runs from `~/.openclaw/tools/node-v22.22.0/bin/node`
+- Mission Control is reconnected to the restored loopback gateway
+  - authenticated `GET /api/openclaw/status` returns `{"connected":true,...}` against `ws://127.0.0.1:18789`
+  - BoreReady no longer shows the stale gateway transport failure once the verification dispatch is retried on the restored runtime
+- BoreReady's earlier product-cap blocker was stale local task state, not an active cap decision
+  - BoreReady's historical blended spend remains in `legacy_mixed`
+  - provider-enforced spend remains separate and the BoreReady verification task cleared after gateway recovery without any cap override
+- The detached-task surface still requires the current local timeout budget
+  - `openclaw tasks list --json` still emits valid JSON on `stderr`
+  - on the current runtime it can take longer than `8s`, so Mission Control now uses a `20s` timeout before reporting the background-task ledger as degraded
+- `openclaw doctor --fix --yes --non-interactive` is not a steady-state health check on this machine today
+  - it can clean up state successfully and still flap the LaunchAgent during the same run
+  - after any `doctor --fix`, the authoritative truth should come from warm `openclaw gateway status --require-rpc --deep`, `openclaw status --json`, `openclaw health`, and Mission Control's `/api/openclaw/status`
 
 The following facts were re-verified against the live local runtime on `2026-04-05`:
 

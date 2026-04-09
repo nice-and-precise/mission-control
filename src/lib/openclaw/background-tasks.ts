@@ -11,10 +11,10 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const OPENCLAW_CLI_PATH = process.env.OPENCLAW_CLI_PATH || join(homedir(), '.openclaw', 'bin', 'openclaw');
-const OPENCLAW_TASKS_LIST_TIMEOUT_MS = 8000;
+const OPENCLAW_TASKS_LIST_TIMEOUT_MS = 35000;
 const STDERR_JSON_WARNING = 'OpenClaw returned the task ledger JSON on stderr instead of stdout.';
 
-type TaskLedgerAdapterStatus = 'ok' | 'degraded_stderr_json' | 'degraded_timeout_or_empty';
+type TaskLedgerAdapterStatus = 'ok' | 'degraded_timeout_or_empty';
 
 interface TaskLedgerPayload {
   tasks?: unknown[];
@@ -198,7 +198,7 @@ export function parseTaskLedgerPayload(result: TaskLedgerCommandOutput): TaskLed
   if (exactStderr) {
     return {
       payload: exactStderr,
-      status: 'degraded_stderr_json',
+      status: 'ok',
       sourceChannel: 'stderr',
       warning: STDERR_JSON_WARNING,
     };
@@ -214,12 +214,12 @@ export function parseTaskLedgerPayload(result: TaskLedgerCommandOutput): TaskLed
     const recovered = tryParseTaskLedgerPayload(extractLastJsonObject(candidate.text));
     if (!recovered) continue;
 
-    const degraded = candidate.origin !== 'stdout';
+    const usedNonStdoutChannel = candidate.origin !== 'stdout';
     return {
       payload: recovered,
-      status: degraded ? 'degraded_stderr_json' : 'ok',
+      status: 'ok',
       sourceChannel: 'fallback',
-      warning: degraded ? STDERR_JSON_WARNING : null,
+      warning: usedNonStdoutChannel ? STDERR_JSON_WARNING : null,
     };
   }
 

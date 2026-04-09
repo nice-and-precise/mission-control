@@ -41,7 +41,7 @@ test('listOpenClawBackgroundTasks reads JSON from stdout as ok', async () => {
   assert.equal(result.tasks[0]?.id, 'bg-stdout');
 });
 
-test('listOpenClawBackgroundTasks treats stderr JSON as degraded but successful', async () => {
+test('listOpenClawBackgroundTasks treats stderr JSON as successful with a warning', async () => {
   stubTaskLedger({
     stderr: JSON.stringify({
       tasks: [
@@ -52,7 +52,7 @@ test('listOpenClawBackgroundTasks treats stderr JSON as degraded but successful'
 
   const result = await listOpenClawBackgroundTasks();
 
-  assert.equal(result.status, 'degraded');
+  assert.equal(result.status, 'ok');
   assert.equal(result.sourceChannel, 'stderr');
   assert.match(result.warning || '', /stderr/i);
   assert.equal(result.tasks.length, 1);
@@ -112,7 +112,7 @@ test('listOpenClawBackgroundTasks recovers noisy stderr payloads via fallback pa
 
   const result = await listOpenClawBackgroundTasks();
 
-  assert.equal(result.status, 'degraded');
+  assert.equal(result.status, 'ok');
   assert.equal(result.sourceChannel, 'fallback');
   assert.match(result.warning || '', /stderr/i);
   assert.equal(result.tasks[0]?.id, 'bg-fallback-stderr');
