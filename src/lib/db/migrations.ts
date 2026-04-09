@@ -870,7 +870,8 @@ const migrations: Migration[] = [
           description TEXT NOT NULL,
           category TEXT NOT NULL CHECK (category IN (
             'feature', 'improvement', 'ux', 'performance', 'integration',
-            'infrastructure', 'content', 'growth', 'monetization', 'operations', 'security'
+            'infrastructure', 'content', 'growth', 'monetization', 'operations', 'security',
+            'compliance'
           )),
           research_backing TEXT,
           impact_score REAL,
@@ -1951,6 +1952,72 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_provider_billing_snapshots_scope_period
         ON provider_billing_snapshots(workspace_id, product_id, provider, billing_period, imported_at DESC)
       `);
+    }
+  },
+  {
+    id: '039',
+    name: 'add_compliance_category_to_ideas',
+    up: (db) => {
+      console.log('[Migration 039] Adding compliance to ideas category CHECK constraint...');
+
+      // SQLite cannot ALTER CHECK constraints, so we recreate the table.
+      // Disable FK checks during the swap to avoid issues with referencing tables.
+      db.pragma('foreign_keys = OFF');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ideas_new (
+          id TEXT PRIMARY KEY,
+          product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          cycle_id TEXT REFERENCES research_cycles(id),
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          category TEXT NOT NULL CHECK (category IN (
+            'feature', 'improvement', 'ux', 'performance', 'integration',
+            'infrastructure', 'content', 'growth', 'monetization', 'operations', 'security',
+            'compliance'
+          )),
+          research_backing TEXT,
+          impact_score REAL,
+          feasibility_score REAL,
+          complexity TEXT CHECK (complexity IN ('S', 'M', 'L', 'XL')),
+          estimated_effort_hours REAL,
+          competitive_analysis TEXT,
+          target_user_segment TEXT,
+          revenue_potential TEXT,
+          technical_approach TEXT,
+          risks TEXT,
+          tags TEXT,
+          source TEXT DEFAULT 'research' CHECK (source IN ('research', 'manual', 'resurfaced', 'feedback')),
+          source_research TEXT,
+          status TEXT DEFAULT 'pending' CHECK (status IN (
+            'pending', 'approved', 'rejected', 'maybe', 'building', 'built', 'shipped'
+          )),
+          swiped_at TEXT,
+          task_id TEXT REFERENCES tasks(id),
+          user_notes TEXT,
+          resurfaced_from TEXT,
+          resurfaced_reason TEXT,
+          similarity_flag TEXT,
+          auto_suppressed INTEGER DEFAULT 0,
+          suppress_reason TEXT,
+          variant_id TEXT REFERENCES product_program_variants(id),
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      db.exec(`INSERT INTO ideas_new SELECT * FROM ideas`);
+      db.exec(`DROP TABLE ideas`);
+      db.exec(`ALTER TABLE ideas_new RENAME TO ideas`);
+
+      // Recreate indexes that existed on the original table
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ideas_product ON ideas(product_id, created_at DESC)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ideas_product_pending ON ideas(product_id, status) WHERE status = 'pending'`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ideas_variant ON ideas(variant_id)`);
+
+      db.pragma('foreign_keys = ON');
+
+      console.log('[Migration 039] ideas table recreated with compliance category');
     }
   }
 ];
