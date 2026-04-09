@@ -77,6 +77,8 @@ function describeTopLevelShape(value: unknown): string {
   return keys.length > 0 ? `object keys=${keys.join(',')}` : 'object keys=<none>';
 }
 
+const VALID_COMPLEXITY = new Set(['S', 'M', 'L', 'XL']);
+
 function buildIdeationPrompt(
   product: Product,
   researchReport: string | null,
@@ -454,7 +456,7 @@ export async function storeIdeasFromPhaseData(
         idea.research_backing ? String(idea.research_backing) : null,
         typeof idea.impact_score === 'number' ? idea.impact_score : null,
         typeof idea.feasibility_score === 'number' ? idea.feasibility_score : null,
-        idea.complexity ? String(idea.complexity) : null,
+        idea.complexity && VALID_COMPLEXITY.has(String(idea.complexity).toUpperCase().trim()) ? String(idea.complexity).toUpperCase().trim() : null,
         typeof idea.estimated_effort_hours === 'number' ? idea.estimated_effort_hours : null,
         idea.competitive_analysis ? String(idea.competitive_analysis) : null,
         idea.target_user_segment ? String(idea.target_user_segment) : null,
@@ -616,7 +618,7 @@ export function createManualIdea(productId: string, input: {
     [
       id, productId, input.title, input.description, input.category,
       input.impact_score || null, input.feasibility_score || null,
-      input.complexity || null, input.estimated_effort_hours || null,
+      input.complexity && VALID_COMPLEXITY.has(String(input.complexity).toUpperCase().trim()) ? String(input.complexity).toUpperCase().trim() : null, input.estimated_effort_hours || null,
       input.technical_approach || null,
       input.risks ? JSON.stringify(input.risks) : null,
       input.tags ? JSON.stringify(input.tags) : null,
