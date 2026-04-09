@@ -20,6 +20,7 @@ export function ResearchReport({ productId }: ResearchReportProps) {
   const [cycles, setCycles] = useState<ResearchCycle[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
+  const [ideating, setIdeating] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
 
@@ -69,14 +70,22 @@ export function ResearchReport({ productId }: ResearchReportProps) {
   };
 
   const handleRunIdeation = async (cycleId: string) => {
+    setIdeating(cycleId);
     try {
-      await fetch(`/api/products/${productId}/ideation/run`, {
+      const res = await fetch(`/api/products/${productId}/ideation/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cycle_id: cycleId }),
       });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error('Ideation start failed:', res.status, text);
+      }
     } catch (error) {
       console.error('Failed to start ideation:', error);
+    } finally {
+      setIdeating(null);
+      await loadCycles();
     }
   };
 
@@ -143,9 +152,11 @@ export function ResearchReport({ productId }: ResearchReportProps) {
                   {cycle.status === 'completed' && (
                     <button
                       onClick={() => handleRunIdeation(cycle.id)}
-                      className="text-xs px-3 py-1.5 rounded bg-mc-accent/20 text-mc-accent hover:bg-mc-accent/30"
+                      disabled={ideating === cycle.id}
+                      className="text-xs px-3 py-1.5 rounded bg-mc-accent/20 text-mc-accent hover:bg-mc-accent/30 disabled:opacity-50 flex items-center gap-1.5"
                     >
-                      Generate Ideas
+                      {ideating === cycle.id && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {ideating === cycle.id ? 'Generating...' : 'Generate Ideas'}
                     </button>
                   )}
                   <button

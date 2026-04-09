@@ -441,7 +441,8 @@ CREATE TABLE IF NOT EXISTS ideas (
   description TEXT NOT NULL,
   category TEXT NOT NULL CHECK (category IN (
     'feature', 'improvement', 'ux', 'performance', 'integration',
-    'infrastructure', 'content', 'growth', 'monetization', 'operations', 'security'
+    'infrastructure', 'content', 'growth', 'monetization', 'operations', 'security',
+    'compliance'
   )),
   research_backing TEXT,
   impact_score REAL,
