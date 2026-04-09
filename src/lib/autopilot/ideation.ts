@@ -87,34 +87,46 @@ function buildIdeationPrompt(
     ? swipeHistory.map(s => `- ${s.action}: [${s.category}] (impact: ${s.impact_score}, feasibility: ${s.feasibility_score}, complexity: ${s.complexity})`).join('\n')
     : 'No swipe history yet.';
 
-  return `You are a Product Ideation Agent for Mission Control. Generate high-quality feature ideas based on research findings and user preferences.
+  return `You are a Finish-Line Task Generator for Mission Control. Generate tasks that produce specific missing artifacts from the provider-compliance finish-line checklist. Every task must create or verify a concrete repo artifact.
 
 ## Instructions
 
-1. Read the Product Program and Learned Preferences carefully.
-2. Read the research report from the latest cycle.
+1. Read the Product Program carefully — it contains the Current Objective, the finish-line artifact checklist, the Not Now exclusion list, and the card-generation contract.
+2. Read the research report from the latest compliance gap audit.
 3. Review the swipe history — understand what the user approves and rejects.
-4. Generate 10-20 ideas as a JSON array, each with:
-   - title: specific and actionable
+4. Generate 5-15 tasks as a JSON array. Each task MUST target a specific artifact on the finish-line checklist.
+
+## Required Fields (Card-Generation Contract)
+
+Every idea MUST include ALL of these fields:
+   - title: specific and actionable — what is being created or verified
    - description: detailed enough to build from
-   - category: one of feature, improvement, ux, performance, integration, infrastructure, content, growth, monetization, operations, security
-   - research_backing: evidence from research
+   - category: one of content, compliance, operations, improvement
+   - artifact: exact repo-relative file path to be created or modified (REQUIRED)
+   - blocker_cleared: which finish-line artifact # this unblocks, e.g. "Artifact #10" (REQUIRED)
+   - why_now: why this is needed for the DLI provider approval packet (REQUIRED)
    - impact_score: 1-10
    - feasibility_score: 1-10
    - complexity: S (<4h), M (4-16h), L (16-40h), XL (40h+)
    - estimated_effort_hours: number
    - technical_approach: how to build it
+   - research_backing: evidence from compliance gap audit
    - risks: array of risk strings
-   - tags: array of tag strings (MUST include exactly one tier tag like "tier-1", "tier-2", "tier-3", "tier-4", or "tier-5", plus any topic tags)
-   - competitive_analysis: comparison with competitors (optional)
-   - target_user_segment: who benefits (optional)
-   - revenue_potential: money impact (optional)
+   - tags: array of tag strings — MUST include exactly one of "tier-2" or "tier-3" (NO other tier tags allowed: tier-1, tier-4, tier-5 are REJECTED)
+
+## Rejection Rules (enforced automatically — do not generate ideas that match these)
+- Missing artifact, blocker_cleared, or why_now → REJECTED
+- Tier tag is not tier-2 or tier-3 → REJECTED
+- References any topic on the Not Now list → REJECTED
+- Contains prohibited terms from DOMAIN_LOCK.md → REJECTED
+- artifact path does not map to the finish-line checklist → REJECTED
+- Describes a software feature rather than a document or validation script → REJECTED
 
 ## Product Program
 
 ${product.product_program || 'No product program defined yet.'}
 
-## Research Report
+## Research Report (Compliance Gap Audit)
 
 ${researchReport || 'No research report available.'}
 
@@ -260,7 +272,7 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
           finishReason,
         } = await completeJSON<unknown>(prompt, {
           model,
-          systemPrompt: 'You are a product ideation agent. Respond with a JSON array of idea objects only.',
+          systemPrompt: 'You are a finish-line task generator. Respond with a JSON array of task objects that each target a specific artifact on the finish-line checklist.',
           timeoutMs: 300_000,
         });
 
@@ -338,12 +350,43 @@ export async function storeIdeasFromPhaseData(
   const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
 
   const VALID_CATEGORIES = new Set([
-    'feature', 'improvement', 'ux', 'performance', 'integration',
-    'infrastructure', 'content', 'growth', 'monetization', 'operations', 'security'
+    'content', 'compliance', 'operations', 'improvement',
+    // Legacy categories still accepted for backward compatibility
+    'feature', 'ux', 'performance', 'integration',
+    'infrastructure', 'growth', 'monetization', 'security'
   ]);
 
+  // --- Post-generation tier filter: reject ideas with invalid tier tags ---
+  const ALLOWED_TIERS = new Set(['tier-2', 'tier-3']);
+  const tierFiltered: unknown[] = [];
+  let tierRejected = 0;
+
+  for (const raw of ideasData) {
+    const idea = raw as Record<string, unknown>;
+    const tags = Array.isArray(idea.tags) ? idea.tags.map(String) : [];
+    const tierTags = tags.filter(t => /^tier-\d+$/.test(t));
+
+    // Reject if no tier tag, or if any tier tag is not tier-2 or tier-3
+    if (tierTags.length === 0 || tierTags.some(t => !ALLOWED_TIERS.has(t))) {
+      tierRejected++;
+      console.log(`[TierFilter] Rejected: "${String(idea.title || 'Untitled')}" — tier tags: [${tierTags.join(', ')}]`);
+      emitAutopilotActivity({
+        productId, cycleId: ideationId, cycleType: 'ideation',
+        eventType: 'idea_tier_rejected',
+        message: `Idea rejected by tier filter: ${String(idea.title || 'Untitled')}`,
+        detail: `Tier tags: [${tierTags.join(', ')}] — only tier-2 and tier-3 allowed`,
+      });
+      continue;
+    }
+    tierFiltered.push(raw);
+  }
+
+  if (tierRejected > 0) {
+    console.log(`[TierFilter] ${tierRejected} ideas rejected, ${tierFiltered.length} passed`);
+  }
+
   // --- Similarity Detection: batch-check all candidates before insertion ---
-  const candidates = ideasData.map((raw, index) => {
+  const candidates = tierFiltered.map((raw, index) => {
     const idea = raw as Record<string, unknown>;
     return {
       title: String(idea.title || 'Untitled'),
@@ -365,8 +408,8 @@ export async function storeIdeasFromPhaseData(
   let count = 0;
   let suppressed = 0;
 
-  for (let idx = 0; idx < ideasData.length; idx++) {
-    const raw = ideasData[idx];
+  for (let idx = 0; idx < tierFiltered.length; idx++) {
+    const raw = tierFiltered[idx];
     const idea = raw as Record<string, unknown>;
     const id = uuidv4();
     const now = new Date().toISOString();
