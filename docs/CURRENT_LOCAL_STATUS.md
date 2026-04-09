@@ -217,6 +217,10 @@ These files are preserved for context, but they are not the current-state source
 ## Active Docs To Trust
 
 - [../VERIFICATION_CHECKLIST.md](../VERIFICATION_CHECKLIST.md) for the current shareable verification contract
+- [../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md](../../docs/ops/OPENCLAW_LOCAL_RUNTIME.md) for the machine-local OpenClaw runtime contract, ownership model, and verification commands
+- [../../docs/ops/OPENCLAW_UPDATE_LESSONS.md](../../docs/ops/OPENCLAW_UPDATE_LESSONS.md) for the machine-specific update traps and wiki-health-versus-lint-clean distinction
+- [../../docs/ops/OPENCLAW_2026_4_X_UPGRADE_SUMMARY.md](../../docs/ops/OPENCLAW_2026_4_X_UPGRADE_SUMMARY.md) for the verified local `2026.4.8` repair summary
+- [../../docs/ops/MEMORY_AND_DREAMS_OPERATING_POLICY.md](../../docs/ops/MEMORY_AND_DREAMS_OPERATING_POLICY.md) for the durable-memory, dreaming, and `memory-wiki` role split
 - [docs/README.md](README.md) for the current docs map and documentation conventions
 - [docs/LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATIONS_RUNBOOK.md) for local start/restart, health, backup, and checkpoint commands
 - [USER_GUIDE.md](USER_GUIDE.md) for the shareable doc entrypoint

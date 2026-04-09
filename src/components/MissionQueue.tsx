@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, ChevronRight, GripVertical, ArrowRightLeft, AlertTriangle, MessageSquare } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
+import { buildAgentLoadMap, formatDurationCompact, getTaskQueueWaitMs, isTaskWaitingForAgent, type AgentLoadMetrics } from '@/lib/agent-load';
 import { getConfig } from '@/lib/config';
 import { resolveEditingTaskById } from '@/lib/planning-ui-state';
 import { getTierBadgeInfo } from '@/lib/task-ideas';
@@ -30,9 +31,10 @@ const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
 ];
 
 export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = true }: MissionQueueProps) {
-  const { tasks, updateTaskStatus, addEvent, setSelectedTask } = useMissionControl();
+  const { agents, tasks, updateTaskStatus, addEvent, setSelectedTask } = useMissionControl();
   const [compactEmptyColumns, setCompactEmptyColumns] = useState(true);
   const unreadCounts = useUnreadCounts();
+  const agentLoad = useMemo(() => buildAgentLoadMap(agents, tasks), [agents, tasks]);
 
   useEffect(() => {
     const cfg = getConfig();
@@ -193,6 +195,7 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
                     <TaskCard
                       key={task.id}
                       task={task}
+                      agentLoad={task.assigned_agent_id ? agentLoad[task.assigned_agent_id] || null : null}
                       onDragStart={handleDragStart}
                       onClick={() => setEditingTaskId(task.id)}
                       onMoveStatus={() => setStatusMoveTask(task)}
@@ -239,6 +242,7 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
                 <TaskCard
                   key={task.id}
                   task={task}
+                  agentLoad={task.assigned_agent_id ? agentLoad[task.assigned_agent_id] || null : null}
                   onDragStart={handleDragStart}
                   onClick={() => setEditingTaskId(task.id)}
                   onMoveStatus={() => setStatusMoveTask(task)}
@@ -330,12 +334,14 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
   );
 }
 
-function AssignedStatusBadge({ task, portraitMode }: { task: Task; portraitMode: boolean }) {
+function AssignedStatusBadge({ task, portraitMode, agentLoad }: { task: Task; portraitMode: boolean; agentLoad: AgentLoadMetrics | null }) {
   const [retrying, setRetrying] = useState(false);
   const statusReason = (task.status_reason || '').trim();
   const updatedAt = new Date(task.updated_at).getTime();
   const staleMs = Date.now() - updatedAt;
   const isStale = staleMs > 2 * 60 * 1000; // 2 minutes
+  const queuedForAgent = isTaskWaitingForAgent(task);
+  const queueWaitMs = queuedForAgent ? getTaskQueueWaitMs(task) : 0;
 
   const handleRetryDispatch = async (e: React.MouseEvent) => {
     e.stopPropagation(); // Don't open the task modal
@@ -352,6 +358,25 @@ function AssignedStatusBadge({ task, portraitMode }: { task: Task; portraitMode:
       setRetrying(false);
     }
   };
+
+  if (queuedForAgent) {
+    const hotQueue = (agentLoad?.level || 'warm') === 'hot' || queueWaitMs >= 15 * 60 * 1000;
+    const waitingCount = Math.max(agentLoad?.waitingTaskCount || 0, 1);
+    const waitLabel = formatDurationCompact(agentLoad?.oldestWaitMs || queueWaitMs);
+    return (
+      <div className={`${portraitMode ? 'mb-3 py-2 px-3' : 'mb-2 py-1.5 px-2.5'} rounded-md border ${hotQueue ? 'bg-red-500/10 border-red-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}>
+        <div className="flex items-center gap-2 mb-1.5">
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${hotQueue ? 'bg-red-400' : 'bg-amber-400'}`} />
+          <span className={`text-xs ${hotQueue ? 'text-red-300' : 'text-amber-200'}`}>
+            Agent backlog: {waitingCount} waiting · oldest {waitLabel}
+          </span>
+        </div>
+        <div className={`text-[11px] ${hotQueue ? 'text-red-200/90' : 'text-amber-100/90'}`}>
+          Waiting for an execution slot before this task can start.
+        </div>
+      </div>
+    );
+  }
 
   if (isStale) {
     const staleMinutes = Math.floor(staleMs / 60000);
@@ -392,6 +417,7 @@ function AssignedStatusBadge({ task, portraitMode }: { task: Task; portraitMode:
 
 interface TaskCardProps {
   task: Task;
+  agentLoad: AgentLoadMetrics | null;
   onDragStart: (e: React.DragEvent, task: Task) => void;
   onClick: () => void;
   onMoveStatus: () => void;
@@ -400,7 +426,7 @@ interface TaskCardProps {
   portraitMode?: boolean;
   unreadCount?: number;
 }
-function TaskCard({ task, onDragStart, onClick, onMoveStatus, isDragging, mobileMode, portraitMode = true, unreadCount = 0 }: TaskCardProps) {
+function TaskCard({ task, agentLoad, onDragStart, onClick, onMoveStatus, isDragging, mobileMode, portraitMode = true, unreadCount = 0 }: TaskCardProps) {
   const tierInfo = getTierBadgeInfo(task.idea_tags);
   const priorityStyles = {
     low: 'text-mc-text-secondary',
@@ -476,7 +502,7 @@ function TaskCard({ task, onDragStart, onClick, onMoveStatus, isDragging, mobile
         )}
 
         {isAssigned && !dispatchError && (
-          <AssignedStatusBadge task={task} portraitMode={portraitMode} />
+          <AssignedStatusBadge task={task} portraitMode={portraitMode} agentLoad={agentLoad} />
         )}
 
         {task.status === 'inbox' && !task.assigned_agent_id && (

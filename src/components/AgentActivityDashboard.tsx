@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, AlertTriangle, Activity, Clock, Filter, RefreshCw } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Activity, Clock, Filter, RefreshCw, Flame } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { buildAgentLoadMap, formatDurationCompact, formatTokenCount, formatUsdCompact } from '@/lib/agent-load';
 import type { Agent, Event, Task, Workspace } from '@/lib/types';
 
 type ActivityFilter = 'all' | 'working' | 'blocked' | 'idle';
@@ -155,6 +156,16 @@ export function AgentActivityDashboard({ workspace }: AgentActivityDashboardProp
     return ids;
   }, [agents, tasks]);
 
+  const agentLoad = useMemo(() => buildAgentLoadMap(agents, tasks), [agents, tasks]);
+  const hotAgentCount = useMemo(
+    () => agents.filter((agent) => agentLoad[agent.id]?.level === 'hot').length,
+    [agentLoad, agents],
+  );
+  const oldestWaitMs = useMemo(
+    () => Math.max(0, ...Object.values(agentLoad).map((metric) => metric.oldestWaitMs)),
+    [agentLoad],
+  );
+
   const nowWorking = useMemo(() => {
     return agents
       .filter((agent) => agent.status === 'working')
@@ -167,14 +178,21 @@ export function AgentActivityDashboard({ workspace }: AgentActivityDashboardProp
   }, [agents, tasks]);
 
   const filteredAgents = useMemo(() => {
-    return agents.filter((agent) => {
+    const visibleAgents = agents.filter((agent) => {
       if (filter === 'all') return true;
       if (filter === 'working') return agent.status === 'working';
       if (filter === 'blocked') return blockedAgentIds.has(agent.id);
       if (filter === 'idle') return agent.status === 'standby' || agent.status === 'offline';
       return true;
     });
-  }, [agents, blockedAgentIds, filter]);
+    return visibleAgents.sort((left, right) => {
+      const leftLoad = agentLoad[left.id];
+      const rightLoad = agentLoad[right.id];
+      const leftScore = (leftLoad?.waitingTaskCount || 0) * 100000 + (leftLoad?.oldestWaitMs || 0);
+      const rightScore = (rightLoad?.waitingTaskCount || 0) * 100000 + (rightLoad?.oldestWaitMs || 0);
+      return rightScore - leftScore;
+    });
+  }, [agentLoad, agents, blockedAgentIds, filter]);
 
   const eventsByAgent = useMemo(() => {
     const map = new Map<string, Event[]>();
@@ -224,11 +242,13 @@ export function AgentActivityDashboard({ workspace }: AgentActivityDashboardProp
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
-        <section className={`grid ${isPortrait ? 'grid-cols-2' : 'grid-cols-4'} gap-3`}>
+        <section className={`grid ${isPortrait ? 'grid-cols-2' : 'grid-cols-3 xl:grid-cols-6'} gap-3`}>
           <MetricCard label="Agents" value={String(agents.length)} />
           <MetricCard label="Working" value={String(agents.filter((a) => a.status === 'working').length)} />
           <MetricCard label="Blocked" value={String(blockedAgentIds.size)} />
           <MetricCard label="Active Tasks" value={String(activeTasks.length)} />
+          <MetricCard label="Hotspots" value={String(hotAgentCount)} />
+          <MetricCard label="Oldest Wait" value={oldestWaitMs ? formatDurationCompact(oldestWaitMs) : '0m'} />
         </section>
 
         <section className="bg-mc-bg-secondary border border-mc-border rounded-xl p-4">
@@ -276,9 +296,15 @@ export function AgentActivityDashboard({ workspace }: AgentActivityDashboardProp
             {filteredAgents.map((agent) => {
               const agentTimeline = (eventsByAgent.get(agent.id) || []).slice(0, 5);
               const isBlocked = blockedAgentIds.has(agent.id);
+              const load = agentLoad[agent.id];
+              const loadTone = load?.level === 'hot'
+                ? 'border-red-500/30 bg-red-500/5'
+                : load?.level === 'warm'
+                  ? 'border-amber-500/20 bg-amber-500/5'
+                  : 'border-mc-border bg-mc-bg-secondary';
 
               return (
-                <article key={agent.id} className="bg-mc-bg-secondary border border-mc-border rounded-xl p-4">
+                <article key={agent.id} className={`border rounded-xl p-4 ${loadTone}`}>
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="min-w-0">
                       <div className="font-semibold truncate">{agent.avatar_emoji} {agent.name}</div>
@@ -289,6 +315,38 @@ export function AgentActivityDashboard({ workspace }: AgentActivityDashboardProp
                         {agent.status}
                       </span>
                       <div className="text-[11px] text-mc-text-secondary mt-1">Updated {formatDistanceToNow(new Date(agent.updated_at), { addSuffix: true })}</div>
+                    </div>
+                  </div>
+
+                  <div className="mb-3 p-3 rounded-lg border border-mc-border bg-mc-bg space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-medium uppercase text-mc-text-secondary">Load</div>
+                      <div className={`text-[10px] uppercase flex items-center gap-1 ${load?.level === 'hot' ? 'text-red-300' : load?.level === 'warm' ? 'text-amber-200' : 'text-mc-text-secondary'}`}>
+                        {load?.level === 'hot' ? <Flame className="w-3 h-3" /> : null}
+                        {load?.level || 'clear'}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="rounded border border-mc-border px-2 py-1.5">
+                        <div className="text-mc-text-secondary uppercase text-[10px]">Waiting</div>
+                        <div className="font-medium">{load?.waitingTaskCount || 0}</div>
+                      </div>
+                      <div className="rounded border border-mc-border px-2 py-1.5">
+                        <div className="text-mc-text-secondary uppercase text-[10px]">Oldest Wait</div>
+                        <div className="font-medium">{load?.oldestWaitMs ? formatDurationCompact(load.oldestWaitMs) : '0m'}</div>
+                      </div>
+                      <div className="rounded border border-mc-border px-2 py-1.5">
+                        <div className="text-mc-text-secondary uppercase text-[10px]">In Flight</div>
+                        <div className="font-medium">{formatUsdCompact(load?.inFlightCostUsd || 0)}</div>
+                      </div>
+                      <div className="rounded border border-mc-border px-2 py-1.5">
+                        <div className="text-mc-text-secondary uppercase text-[10px]">Lifetime</div>
+                        <div className="font-medium">{formatUsdCompact(agent.total_cost_usd || 0)}</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-mc-text-secondary">
+                      Tokens: {formatTokenCount(agent.total_tokens_used || 0)}
+                      {load?.activeTaskTitle ? ` · Active: ${load.activeTaskTitle}` : ''}
                     </div>
                   </div>
 

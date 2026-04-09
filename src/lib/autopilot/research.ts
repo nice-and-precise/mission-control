@@ -13,29 +13,31 @@ import { getResearchPrograms } from './ab-testing';
 import type { Product, ResearchCycle } from '@/lib/types';
 
 function buildResearchPrompt(product: Product, learnedPreferences?: string): string {
-  return `You are a Product Research Agent for Mission Control. Your job is to research and analyze a product to identify improvement opportunities.
+  return `You are a Compliance Gap Auditor for Mission Control. Your job is to audit a product against its finish-line artifact checklist and identify what is missing, incorrect, or contradicted.
 
 ## Your Process
 
-1. Read the Product Program to understand what this product is, who uses it, and what matters to the owner.
-2. If a repo URL is provided, consider what the codebase likely contains based on the product description — missing features, UX gaps, possible technical debt.
-3. Analyze the competitive landscape: products in the same category, feature gaps, pricing and positioning.
-4. Identify market trends: industry trends, emerging technologies, community signals.
-5. Research the technology landscape: new libraries, API integrations, infrastructure improvements.
+1. Read the Product Program carefully — it contains the Current Objective, the finish-line artifact checklist, and the Not Now exclusion list.
+2. For each artifact on the checklist, determine: does it exist on repo main? Is it reviewer-approved? Is it accurate against DLI source documents?
+3. Identify factual gaps: statute mismatches, DLI document mismatches, missing source citations.
+4. Identify contradictions: repo vs board state, repo vs open PRs, internal document conflicts.
+5. Check for domain-lock violations: prohibited terms from DOMAIN_LOCK.md, wrong-domain references.
 
 ## Output Format
 
 Produce a JSON research report with this structure:
 {
   "sections": {
-    "codebase": { "findings": [], "gaps": [], "opportunities": [] },
-    "competitors": { "products_analyzed": [], "feature_gaps": [], "market_position": "" },
-    "trends": { "relevant_trends": [], "emerging_tech": [], "community_signals": [] },
-    "technology": { "new_tools": [], "integration_opportunities": [], "infrastructure_improvements": [] }
+    "missing_artifacts": { "artifacts": [], "blockers": [], "priority_order": [] },
+    "factual_gaps": { "statute_mismatches": [], "dli_doc_mismatches": [], "source_citation_issues": [] },
+    "contradictions": { "repo_vs_board": [], "repo_vs_prs": [], "internal_doc_conflicts": [] },
+    "domain_lock_violations": { "prohibited_terms_found": [], "wrong_domain_references": [] }
   }
 }
 
-Include specific, actionable findings — not generic observations. Every finding should inspire a concrete idea.
+Each finding must be specific and actionable — reference exact file paths, statute subdivisions, or DLI document names. Every finding should directly inform a finish-line task.
+
+Do NOT report on topics from the Not Now list. Do NOT suggest platform features, dashboards, or software implementation.
 
 IMPORTANT: Respond with ONLY the JSON object. No markdown, no code blocks, no explanation text before or after. Just the raw JSON.
 
@@ -141,7 +143,7 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
 
         const { data: report, model: responseModel, usage } = await completeJSON(prompt, {
           model,
-          systemPrompt: 'You are a product research agent. Analyze the product and respond with a JSON research report only.',
+          systemPrompt: 'You are a compliance gap auditor. Analyze the product against its finish-line artifact checklist and respond with a JSON research report only.',
           timeoutMs: 300_000,
         });
 

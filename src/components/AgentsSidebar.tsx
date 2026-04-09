@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Plus, ChevronRight, ChevronLeft, Zap, ZapOff, Loader2 } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, ChevronRight, ChevronLeft, Zap, ZapOff, Loader2, Flame, Clock3 } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import type { Agent, AgentStatus, OpenClawSession } from '@/lib/types';
+import { buildAgentLoadMap, formatDurationCompact, formatTokenCount, formatUsdCompact } from '@/lib/agent-load';
 import { AgentModal } from './AgentModal';
 
 type FilterTab = 'all' | 'working' | 'standby';
@@ -13,13 +14,19 @@ interface AgentsSidebarProps {
 }
 
 export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
-  const { agents, selectedAgent, setSelectedAgent, agentOpenClawSessions, setAgentOpenClawSession } = useMissionControl();
+  const { agents, tasks, selectedAgent, setSelectedAgent, agentOpenClawSessions, setAgentOpenClawSession } = useMissionControl();
   const [filter, setFilter] = useState<FilterTab>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [connectingAgentId, setConnectingAgentId] = useState<string | null>(null);
   const [activeSubAgents, setActiveSubAgents] = useState(0);
   const [isMinimized, setIsMinimized] = useState(false);
+
+  const agentLoad = useMemo(() => buildAgentLoadMap(agents, tasks), [agents, tasks]);
+  const hotAgentCount = useMemo(
+    () => agents.filter((agent) => agentLoad[agent.id]?.level === 'hot').length,
+    [agentLoad, agents],
+  );
 
   const toggleMinimize = () => setIsMinimized(!isMinimized);
 
@@ -156,6 +163,16 @@ export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
               </div>
             )}
 
+            {hotAgentCount > 0 && (
+              <div className="mb-3 mt-3 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg">
+                <div className="flex items-center gap-2 text-sm">
+                  <Flame className="w-4 h-4 text-red-400" />
+                  <span className="text-mc-text">Hotspots:</span>
+                  <span className="font-bold text-red-400">{hotAgentCount}</span>
+                </div>
+              </div>
+            )}
+
             {/* Filter Tabs */}
             <div className="flex gap-1">
               {(['all', 'working', 'standby'] as FilterTab[]).map((tab) => (
@@ -180,6 +197,9 @@ export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {filteredAgents.map((agent) => {
           const openclawSession = agentOpenClawSessions[agent.id];
+          const load = agentLoad[agent.id];
+          const hot = load?.level === 'hot';
+          const warm = load?.level === 'warm';
 
           if (isMinimized) {
             // Minimized view - just avatar
@@ -190,7 +210,7 @@ export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
                     setSelectedAgent(agent);
                     setEditingAgent(agent);
                   }}
-                  className="relative group"
+                  className={`relative group ${hot ? 'rounded-full ring-2 ring-red-500/60 ring-offset-2 ring-offset-mc-bg-secondary' : warm ? 'rounded-full ring-2 ring-amber-500/50 ring-offset-2 ring-offset-mc-bg-secondary' : ''}`}
                   title={`${agent.name} - ${agent.role}`}
                 >
                   <span className="text-2xl">{agent.avatar_emoji}</span>
@@ -222,8 +242,10 @@ export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
           return (
             <div
               key={agent.id}
-              className={`w-full rounded hover:bg-mc-bg-tertiary transition-colors ${
-                selectedAgent?.id === agent.id ? 'bg-mc-bg-tertiary' : ''
+              className={`w-full rounded border transition-colors ${
+                selectedAgent?.id === agent.id ? 'bg-mc-bg-tertiary border-mc-accent/30' : 'border-transparent hover:bg-mc-bg-tertiary'
+              } ${
+                hot ? 'bg-red-500/5 border-red-500/30' : warm ? 'bg-amber-500/5 border-amber-500/20' : ''
               }`}
             >
               <button
@@ -252,16 +274,44 @@ export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
                   <div className="text-xs text-mc-text-secondary truncate">
                     {agent.role}
                   </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    {load?.waitingTaskCount ? (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${hot ? 'bg-red-500/15 text-red-300 border-red-500/30' : 'bg-amber-500/15 text-amber-200 border-amber-500/30'}`}>
+                        {load.waitingTaskCount} waiting
+                      </span>
+                    ) : null}
+                    {load?.activeTaskCount ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-mc-accent/20 bg-mc-accent/10 text-mc-accent">
+                        {load.activeTaskCount} active
+                      </span>
+                    ) : null}
+                    {load?.oldestWaitMs ? (
+                      <span className="text-[10px] flex items-center gap-1 text-mc-text-secondary">
+                        <Clock3 className="w-3 h-3" />
+                        {formatDurationCompact(load.oldestWaitMs)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 text-[11px] text-mc-text-secondary truncate">
+                    {formatUsdCompact(load?.inFlightCostUsd || 0)} in flight · {formatUsdCompact(agent.total_cost_usd || 0)} total · {formatTokenCount(agent.total_tokens_used || 0)} tok
+                  </div>
                 </div>
 
                 {/* Status */}
-                <span
-                  className={`text-xs px-2 py-0.5 rounded uppercase ${getStatusBadge(
-                    agent.status
-                  )}`}
-                >
-                  {agent.status}
-                </span>
+                <div className="text-right shrink-0">
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded uppercase ${getStatusBadge(
+                      agent.status
+                    )}`}
+                  >
+                    {agent.status}
+                  </span>
+                  {load && load.level !== 'clear' && (
+                    <div className={`mt-1 text-[10px] uppercase ${hot ? 'text-red-300' : 'text-amber-200'}`}>
+                      {load.level}
+                    </div>
+                  )}
+                </div>
               </button>
 
               {/* OpenClaw Connect Button - show for master agents */}
