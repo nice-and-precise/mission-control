@@ -273,7 +273,7 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
         } = await completeJSON<unknown>(prompt, {
           model,
           systemPrompt: 'You are a finish-line task generator. Respond with a JSON array of task objects that each target a specific artifact on the finish-line checklist.',
-          timeoutMs: 300_000,
+          timeoutMs: 600_000,
         });
 
         const ideasData = extractIdeaArray(rawIdeas);
