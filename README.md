@@ -202,7 +202,6 @@ See [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) for the full production guide inc
 ### Infrastructure
 - OpenClaw Gateway integration (WebSocket)
 - Gateway agent discovery & import
-- Docker ready (`docker-compose.yml` included)
 - Bearer token auth, HMAC webhooks, Zod validation
 - Privacy first — no trackers, no centralized data collection
 - Multi-machine support (Tailscale compatible)
@@ -278,7 +277,7 @@ graph TD
 | `src/components/` | React UI — Kanban board, swipe deck, agent sidebar, live feed, cost dashboard |
 | `src/lib/autopilot/` | Research, ideation, swipe logic, preferences, scheduling, similarity detection |
 | `src/lib/openclaw/` | Gateway WebSocket client, session management, model catalog, routing |
-| `src/lib/db/` | SQLite schema + 21 auto-running migrations |
+| `src/lib/db/` | SQLite schema + 38 auto-running migrations |
 | `docs/` | Operator runbooks, architecture docs, troubleshooting |
 | `scripts/` | Runtime checks, docs validation, database utilities |
 
@@ -296,20 +295,7 @@ npm run db:reset   # Drop and re-seed (destructive)
 
 ---
 
-## 🐳 Docker
-
-```bash
-cp .env.example .env
-# Edit .env — use ws://host.docker.internal:18789 for local gateway
-
-docker compose up -d --build
-```
-
-Open **http://localhost:4000**. Data persists in named volumes (`mission-control-data`, `mission-control-workspace`).
-
----
-
-## 🔧 Troubleshooting
+##  Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
