@@ -295,7 +295,7 @@ npm run db:reset   # Drop and re-seed (destructive)
 
 ---
 
-##  Troubleshooting
+## 🔧 Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
