@@ -1,341 +1,127 @@
-<h1 align="center">Autensa</h1>
+<h1 align="center">Mission Control</h1>
 
 <p align="center">
-  <em>The World's First Autonomous Product Engine</em><br>
-  <a href="https://autensa.com">autensa.com</a>
+  <em>AI Agent Orchestration Dashboard</em><br>
+  Manage AI agents, assign tasks, and run autonomous product improvement pipelines via <a href="https://github.com/open-claw/open-claw-gateway">OpenClaw Gateway</a>.
 </p>
 
 <p align="center">
-  <strong>Your products improve themselves — 24/7 — while you sleep.</strong><br>
-  Research → Ideation → Swipe → Build → Test → Review → Pull Request — fully automated.
-</p>
-
-<p align="center">
-I highly recommend getting Hetzner VPS to run this. <a href="https://hetzner.cloud/?ref=WYxriOUHyTil">You can sign up here.</a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/github/stars/nice-and-precise/mission-control?style=flat-square" alt="GitHub Stars" />
-  <img src="https://img.shields.io/github/issues/nice-and-precise/mission-control?style=flat-square" alt="GitHub Issues" />
   <img src="https://img.shields.io/github/license/nice-and-precise/mission-control?style=flat-square" alt="License" />
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" />
   <img src="https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js" alt="Next.js" />
   <img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
 </p>
 
 <p align="center">
-  <a href="https://missioncontrol.ghray.com"><strong>🎮 Live Demo</strong></a> •
   <a href="#-quick-start">Quick Start</a> •
-  <a href="#-docker">Docker</a> •
-  <a href="#-whats-new-in-v240">What's New</a> •
+  <a href="#-architecture">Architecture</a> •
+  <a href="#-autopilot-pipeline">Autopilot</a> •
   <a href="#-features">Features</a> •
-  <a href="#-how-it-works">How It Works</a> •
   <a href="#-configuration">Configuration</a> •
-  <a href="#-contributors">Contributors</a>
-</p>
-
-<p align="center">
-  <a href="https://ghray.com/Autensa_v2.mp4"><strong>▶️ Watch the Autensa v2 Introduction</strong></a>
+  <a href="#-contributing">Contributing</a>
 </p>
 
 ---
 
-## 🚀 What's New in v2.4.0
+## What Is This?
 
-### Agent Skill Creation Loop
-- **Agents learn reusable procedures** — When a task completes, the system extracts structured skills (build steps, deploy scripts, config patterns) from what the agent did. Skills are stored as executable playbooks with commands, prerequisites, and verification.
-- **Skills improve with use** — Agents report whether a skill worked. Bayesian confidence scoring promotes proven skills and deprecates unreliable ones. No manual curation needed.
-- **Injected at dispatch** — Matched skills are the first thing an agent sees, not a footnote. Agent #1 figures out the build process, Agent #2 gets it as primary instructions.
+Mission Control is a self-hosted Next.js dashboard that connects to an [OpenClaw Gateway](https://github.com/open-claw/open-claw-gateway) to orchestrate AI agents. It provides:
 
-### Previous Releases
+- **Task management** — Kanban board with AI planning, agent dispatch, and checkpoint recovery
+- **Product Autopilot** — Autonomous research → ideation → swipe → build → PR pipeline
+- **Agent monitoring** — Real-time health, cost tracking, and convoy (parallel multi-agent) execution
+- **Workspace isolation** — Git worktrees per task, no branch conflicts between agents
 
-<details>
-<summary>v2.3.x — Idea Dedup, Chat, Undo, A/B Testing, Rollback</summary>
-
-- Idea similarity detection & auto-deduplication
-- Floating operator chat widget with @mentions
-- 10-second swipe undo + batch review mode
-- Product program A/B testing
-- Automated rollback pipeline via GitHub webhooks
-</details>
-
-### Idea Similarity Detection
-- **Auto-deduplication** — New ideas are compared against existing ones. Ideas >90% similar to rejected ideas are auto-suppressed. Similar ideas get a warning badge. Full audit trail.
-
-### Operator Chat Widget
-- **Chat from anywhere** — Floating chat widget with threaded conversations per task. `@agent` mentions, command palette (`/status`, `/nudge`, `/checkpoint`), and unread badges.
-
-### Swipe Undo & Batch Review
-- **10-second undo** — Full rollback of any swipe including task deletion. Batch review mode for table-view multi-select actions.
-
-### Product Program A/B Testing
-- **Test your product program** — Run concurrent or alternating A/B tests on product program variants. Research and ideation run against each variant. Statistical comparison of approval rates.
-
-### Automated Rollback Pipeline
-- **Auto-revert failed deploys** — GitHub webhook monitors merged PRs. Post-merge health checks. Auto-creates revert PRs when failures detected.
-
-### Activity Dashboard Picker
-- **Workspace selector** — `/activity` lists all workspaces instead of hardcoding to one.
-
-### Previous Releases
-
-<details>
-<summary>v2.2.1 — Health Check & Backup API</summary>
-
-- `/api/health` for runtime and database monitoring integration
-- Database backup API with optional S3 upload
-</details>
-
-<details>
-<summary>v2.2.0 — Preference Learning & Token Tracking</summary>
-
-- Swipe-driven preference learning (Karpathy AutoResearch pattern)
-- Token counts now recorded in activity log and cost tracker
-</details>
-
-<details>
-<summary>v2.1.x — Server-Side Pipeline, Error Reporting & Badges</summary>
-
-- Server-side research → ideation pipeline (fire-and-forget)
-- LLM retry with exponential backoff
-- Toast notifications with one-click error reporting
-- Pending ideas badges on product cards
-- One-click error reporting via mailto (pre-filled with system logs)
-- Pending ideas badge on product cards (iPhone-style notification count)
-</details>
-
-<details>
-<summary>v2.0.2 — Session Key Prefix Support</summary>
-
-- Session Key Prefix UI for custom OpenClaw session routing. ([@balaji-g42](https://github.com/balaji-g42))
-- Session key sanitization — empty prefixes fall back to defaults.
-</details>
-
-<details>
-<summary>v2.0.1 — Dispatch Stability & Community Contributions</summary>
-
-- **Product Settings Modal** — Edit product config inline via the gear icon.
-- **Import README / Auto-Generate Description** — One-click README import and AI-generated descriptions in the New Product Wizard.
-- **Dispatch hang fix** — 30s timeout on all dispatch calls; stale WebSocket force-reconnect.
-- **Pre-migration database backups** — Automatic timestamped backups before migrations. ([@cgluttrell](https://github.com/cgluttrell))
-- **Migration 013 data guard** — Destructive migration skips databases with existing data. ([@cgluttrell](https://github.com/cgluttrell))
-- **Static device identity path** — Removes dynamic filesystem path parameter. ([@org4lap](https://github.com/org4lap))
-</details>
-
-### v2.0 Highlights
-
-Autensa v2 is a ground-up expansion from task orchestration dashboard to **the world's first autonomous product improvement engine**. It researches your market, generates feature ideas, lets you decide with a swipe, and builds them — automatically.
-
-### 🔬 Product Autopilot — The Full Pipeline
-
-The headline feature. Point Autensa at any product (repo + live URL) and it runs a continuous improvement loop:
-
-1. **Autonomous Research** — AI agents analyze your codebase, scan your live site, and research your market: competitors, user intent, conversion patterns, SEO gaps, technical opportunities. Runs on configurable schedules — daily, weekly, or on-demand.
-
-2. **AI-Powered Ideation** — Research feeds into ideation agents that generate concrete, scored feature ideas. Each idea includes an impact score, feasibility score, size estimate, technical approach, and a direct link to the research that inspired it.
-
-3. **Swipe to Decide** — Ideas appear as cards in a Tinder-style interface. Four actions:
-   - **Pass** — Rejected. The preference model learns from it.
-   - **Maybe** — Saved to the Maybe Pool. Resurfaces in 1 week with fresh context.
-   - **Yes** — Task created. Build agent starts coding.
-   - **Now!** — Urgent dispatch. Priority queue, immediate execution.
-
-4. **Automated Build → PR** — Approved ideas flow through the full agent pipeline: Build agent implements the feature → Test agent runs the suite → Review agent inspects the diff → Pull request created on GitHub with full context.
-
-**Your only job is the swipe.** Everything else is automated.
-
-### Product Workspace Routing & Reset
-
-New products now default to a dedicated Mission Control workspace so Autopilot build cards do not spill into `default` unless you explicitly choose a shared workspace. If you create a product with the wrong workspace destination, delete it from the Autopilot card menu or the product settings `Danger Zone` and recreate it. Product delete is a hard reset for mistaken setups: it removes the product, its Autopilot data, and any product-owned tasks, and it removes the dedicated workspace too when Mission Control created that workspace for the product.
-
-### 📄 Product Program (Karpathy AutoResearch Pattern)
-
-Inspired by Andrej Karpathy's [AutoResearch](https://github.com/karpathy/autoresearch) architecture. Each product has a **Product Program** — a living document that instructs research and ideation agents on what to look for, what matters, and what to ignore. The program evolves as swipe data accumulates: the system learns your taste, not just patterns.
-
-### 🚛 Convoy Mode — Parallel Multi-Agent Execution
-
-Large features get decomposed into subtasks with a visual dependency graph (DAG). Multiple agents (3–5) work simultaneously with dependency-aware scheduling:
-
-- **Parallel subtask execution** — Independent pieces run concurrently
-- **Dependency graph visualization** — See what depends on what
-- **Health monitoring** — Detects stalled, stuck, or zombie agents automatically
-- **Auto-nudge** — Reassigns or restarts agents that go dark
-- **Crash recovery** — Checkpoints save agent progress; work resumes from last checkpoint, not from scratch
-
-### 💬 Operator Chat — Talk to Agents Mid-Build
-
-Don't wait for a PR to give feedback. Two communication modes:
-
-- **Queued Notes** — Add context ("use the existing auth middleware") that gets delivered at the agent's next checkpoint
-- **Direct Messages** — Delivered immediately to the agent's active session for real-time course correction
-
-Full chat history preserved per task — every message, note, and response.
-
-### 💰 Cost Tracking & Budget Caps
-
-Granular spend visibility across every dimension:
-
-- **Per-task accounting** — Track recorded spend plus reserved estimated dispatch cost per task
-- **Per-product aggregation** — Total spend across all tasks for a product
-- **Workspace + product caps** — Daily, monthly, and per-task policy caps can hard-block new spend-producing work
-- **Cost breakdown API** — Detailed reports split across actual recorded spend, reserved estimated spend, and blocked/unpriced runs
-
-### 🧠 Knowledge Base & Learner Agent
-
-A dedicated Learner agent captures lessons from every build cycle — what worked, what failed, what patterns emerged. Knowledge entries are injected into future dispatches so agents don't repeat mistakes.
-
-### 📋 Enhanced Planning Phase
-
-Before any build starts, agents run a structured planning phase:
-
-- AI asks clarifying questions about requirements and constraints
-- Generates a detailed spec from your answers
-- Multi-agent planning specs with sub-agent definitions and execution steps
-- Approval gate — you review the plan before any code is written
-
-### 🔄 Checkpoint & Crash Recovery
-
-Agent progress is saved at configurable checkpoints:
-
-- If a session crashes, work resumes from the last checkpoint — not from scratch
-- Checkpoint restore API for manual recovery
-- Checkpoint history visible per task
-
-### 🎯 Preference Learning
-
-Every swipe trains a per-product preference model:
-
-- Category weights (growth, SEO, UX, etc.) adjust based on approvals/rejections
-- Complexity preferences calibrate over time
-- Tag pattern recognition refines idea generation
-- Ideas get sharper with every iteration
-
-### 🔁 Maybe Pool
-
-Ideas you're not sure about don't disappear:
-
-- Swiped "Maybe" ideas enter a holding pool
-- Automatically resurface after a configurable period with new market context
-- Batch re-evaluation mode to review accumulated maybes
-- Can be promoted to Yes at any time
-
-### 📡 Live Activity Feed
-
-Real-time SSE stream of everything happening across all products:
-
-- Research progress, ideation cycles, swipe events
-- Build progress, test results, review outcomes
-- Agent health events, cost updates, PR creation
-- Filterable by product, agent, and event type
-
-### 🛡️ Automation Tiers
-
-Choose your comfort level per product:
-
-| Tier | Behavior | Best For |
-|:-----|:---------|:---------|
-| **Supervised** | PRs created automatically. You review and merge manually. | Production apps |
-| **Semi-Auto** | PRs auto-merge when CI passes and review agent approves. | Staging & trusted repos |
-| **Full Auto** | Everything automated end-to-end. Idea → deployed feature. | Side projects & MVPs |
-
-### 🔀 Workspace Isolation
-
-Each build task gets an isolated workspace:
-
-- **Git Worktrees** for repo-backed projects — isolated branch, no conflicts with other agents
-- **Task Sandboxes** for local/no-repo projects — dedicated directory under `.workspaces/task-{id}/`
-- **Port allocation** (4200–4299 range) for dev servers — no port conflicts between concurrent builds
-- **Serialized merge queue** — completed tasks merge one at a time with conflict detection
-- **Product-scoped locking** — concurrent completions for the same product queue automatically
-
-### 📊 Product Scheduling
-
-Configure autonomous cycles per product:
-
-- Research frequency (daily, weekly, custom cron)
-- Ideation frequency (after each research cycle, or independent schedule)
-- Auto-dispatch rules (immediate on "Yes" swipe, or batch)
-- Schedule management UI with enable/disable per schedule
-
----
-
-## ✨ Features
-
-**Product Autopilot**
-- 🔬 Autonomous market research (competitors, SEO, user intent, technical gaps)
-- 💡 AI-powered ideation with impact/feasibility scoring
-- 👆 Swipe interface for instant approve/reject/maybe decisions
-- 📄 Product Program (Karpathy AutoResearch pattern)
-- 🎯 Preference learning from swipe history
-- 🔁 Maybe Pool with auto-resurface
-- 📊 Configurable research & ideation schedules
-
-**Agent Orchestration**
-- 🤖 Multi-agent pipeline (Builder → Tester → Reviewer → Learner)
-- 🚛 Convoy Mode for parallel multi-agent execution
-- 💬 Operator Chat (queued notes + direct messages)
-- 💚 Agent health monitoring with auto-nudge
-- 🔄 Checkpoint & crash recovery
-- 🧠 Knowledge base with cross-task learning
-- 🔀 Workspace isolation (git worktrees + task sandboxes)
-
-**Task Management**
-- 🎯 Kanban board with drag-and-drop across 7 status columns
-- 🧠 AI planning phase with clarifying Q&A
-- 📋 Multi-agent planning specs
-- 🖼️ Task image attachments (UI mockups, screenshots)
-- 📡 Live real-time activity feed (SSE)
-- 💰 Actual spend, reserved dispatch cost, and hard budget caps
-
-**Infrastructure**
-- 🔌 OpenClaw Gateway integration (WebSocket)
-- 🔗 Gateway agent discovery & import
-- 🐳 Docker ready (production-optimized)
-- 🔒 Bearer token auth, HMAC webhooks, Zod validation
-- 🛡️ Privacy first — no trackers, no centralized data collection
-- 🌐 Multi-machine support (Tailscale compatible)
-- 🛡️ Automation tiers (Supervised / Semi-Auto / Full Auto)
-
----
-
-## 🛡️ Privacy
-
-Autensa is open-source and self-hosted. The project does **not** include ad trackers, third-party analytics beacons, or a centralized data collector.
-
-Your task data, research results, ideas, swipe history, and product programs stay in your own deployment (SQLite + workspace). If you connect external services (AI providers or remote gateways), only the data you explicitly send to those services leaves your environment.
+This fork is maintained by [nice-and-precise](https://github.com/nice-and-precise) and is used to run the [BoreReady](https://github.com/nice-and-precise/squti) provider-compliance project. Upstream: [crshdn/mission-control](https://github.com/crshdn/mission-control).
 
 ---
 
 ## 🏗 Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                          YOUR MACHINE                                │
-│                                                                      │
-│  ┌──────────────────┐          ┌──────────────────────────────────┐  │
-│  │ Autensa           │◄────────►│    OpenClaw Gateway              │  │
-│  │  (Next.js)        │   WS     │  (AI Agent Runtime)              │  │
-│  │  Port 4000        │          │  Port 18789                      │  │
-│  └────────┬──────────┘          └───────────┬────────────────────┘  │
-│           │                                  │                       │
-│           ▼                                  ▼                       │
-│  ┌──────────────────┐          ┌──────────────────────────────────┐  │
-│  │    SQLite DB       │          │     AI Providers                │  │
-│  │  (tasks, products, │          │  (Anthropic / OpenAI / etc.)    │  │
-│  │   ideas, costs)    │          └──────────────────────────────────┘  │
-│  └──────────────────┘                                                │
-│           │                                                          │
-│           ▼                                                          │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │              Autopilot Engine                                  │   │
-│  │  Research → Ideation → Swipe → Build → Test → Review → PR     │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Your Machine
+        MC["Mission Control<br/>(Next.js · port 4000)"]
+        DB[(SQLite<br/>tasks · products · ideas · costs)]
+        AP["Autopilot Engine"]
+        MC --> DB
+        MC --> AP
+    end
+
+    subgraph OpenClaw Gateway
+        GW["Gateway<br/>(WebSocket · port 18789)"]
+        A1["Agent 1"]
+        A2["Agent 2"]
+        A3["Agent N"]
+        GW --> A1
+        GW --> A2
+        GW --> A3
+    end
+
+    MC <-->|"WebSocket"| GW
+    A1 & A2 & A3 -->|"API calls"| AI["AI Providers<br/>(Anthropic · OpenAI · etc.)"]
+
+    style MC fill:#0070f3,color:#fff
+    style DB fill:#003B57,color:#fff
+    style GW fill:#4a5568,color:#fff
+    style AI fill:#f59e0b,color:#000
 ```
 
-**Autensa** = The dashboard + autopilot engine (this project)
-**OpenClaw Gateway** = The AI runtime that executes tasks ([separate project](https://github.com/openclaw/openclaw))
+**Mission Control** is the dashboard + autopilot engine (this project).
+**OpenClaw Gateway** is the AI runtime that executes tasks ([separate project](https://github.com/open-claw/open-claw-gateway)).
+
+### Autopilot Pipeline
+
+```mermaid
+graph LR
+    R["🔬 Research<br/><em>AI analyzes gaps</em>"] --> I["💡 Ideation<br/><em>AI generates ideas</em>"]
+    I --> S["👆 Swipe<br/><em>You decide</em>"]
+    S --> P["📋 Plan<br/><em>AI writes spec</em>"]
+    P --> B["🔨 Build<br/><em>Agent codes</em>"]
+    B --> T["🧪 Test<br/><em>Agent runs tests</em>"]
+    T --> V["👀 Review<br/><em>Agent inspects diff</em>"]
+    V --> PR["📤 Pull Request<br/><em>Auto-created</em>"]
+
+    style R fill:#059669,color:#fff
+    style I fill:#7c3aed,color:#fff
+    style S fill:#dc2626,color:#fff
+    style P fill:#2563eb,color:#fff
+    style B fill:#d97706,color:#000
+    style T fill:#059669,color:#fff
+    style V fill:#7c3aed,color:#fff
+    style PR fill:#0070f3,color:#fff
+```
+
+Your only job is the **swipe**. Everything else is automated.
+
+### Task Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Planning: New task
+    Planning --> Inbox: Plan approved
+    Inbox --> Assigned: Agent picked
+    Assigned --> InProgress: Agent starts
+    InProgress --> Testing: Code ready
+    Testing --> Review: Tests pass
+    Review --> Done: Approved
+    InProgress --> InProgress: Checkpoint saved
+    Testing --> InProgress: Tests fail (auto-fix)
+```
+
+### Convoy Mode (Parallel Agents)
+
+```mermaid
+graph LR
+    PARENT["Parent Task"] --> A["Subtask A<br/>(Agent 1)"]
+    PARENT --> B["Subtask B<br/>(Agent 2)"]
+    A --> C["Subtask C<br/>(Agent 3)<br/><em>depends on A</em>"]
+    B --> MERGE["Merge & PR"]
+    C --> MERGE
+
+    style PARENT fill:#4a5568,color:#fff
+    style MERGE fill:#059669,color:#fff
+```
 
 ---
 
@@ -343,62 +129,34 @@ Your task data, research results, ideas, swipe history, and product programs sta
 
 ### Prerequisites
 
-- **Node.js** `20.x` or `24.x` ([download](https://nodejs.org/))
-- **OpenClaw** `2026.4.1` or newer on the `stable` channel
+- **Node.js** `20.x` or `24.x` ([download](https://nodejs.org/) or use `nvm`)
+- **OpenClaw** `2026.4.1+` on the `stable` channel
 - **AI API Key** — Anthropic (recommended), OpenAI, Google, or others via OpenRouter
 
-### Install
+### Install & Run
 
 ```bash
-# Clone
 git clone https://github.com/nice-and-precise/mission-control.git
 cd mission-control
 
-# Install dependencies
+# Use the pinned Node version
 nvm use
+
+# Install dependencies
 npm ci
 
-# Setup
+# Configure
 cp .env.example .env.local
-python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local
-```
+# Edit .env.local — set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN
 
-Edit `.env.local`:
+# Initialize the database
+npm run db:seed
 
-```env
-OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
-OPENCLAW_GATEWAY_TOKEN=your-token-here
-```
-
-> **Token source:** use the same token or SecretRef-backed value that your OpenClaw gateway actually uses. On this local baseline, the supported path is `python3 ../scripts/sync_mission_control_gateway_token.py --env-file .env.local`, which derives `OPENCLAW_GATEWAY_TOKEN` from the configured OpenClaw SecretRef target instead of scraping config or LaunchAgent metadata.
-
-`nvm use` reads `.nvmrc`, which is pinned to the same Node `24.13.0` runtime used in CI. If you switch Node majors, run a fresh `npm ci` before testing or starting the app.
-
-### Run
-
-```bash
-# Prepare OpenClaw
-cd ..
-./scripts/update_openclaw_local_runtime.sh
-cd mission-control
-openclaw doctor
-openclaw gateway restart
-sleep 8
-openclaw gateway status --require-rpc --deep
-
-# Start Autensa
+# Start
 npm run dev
 ```
 
-On Jordan's Mac, the supported OpenClaw operator path is `../scripts/update_openclaw_local_runtime.sh`, not `openclaw update`, so the runtime stays owned by the local prefix under `~/.openclaw`. Machine-local runtime details live in [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md).
-
-OpenClaw compatibility notes on this baseline:
-- Mission Control treats `openclaw` as the default agent target for Autopilot HTTP completions.
-- `/api/openclaw/models` separates agent targets from provider overrides so operators do not confuse the two contracts.
-- `/api/openclaw/sessions/{id}/history` is available as a read-only transcript surface, but oversized entries may still be omitted by OpenClaw's bounded history contract.
-- Detached OpenClaw work is visible through Mission Control's read-only background-task surface and the task modal's `Detached Work` tab, including degraded-ledger metadata when the CLI only returns JSON on `stderr` or times out.
-
-Open **http://localhost:4000** — you're in! 🎉
+Open **http://localhost:4000**.
 
 ### Production
 
@@ -407,103 +165,48 @@ npm run build
 npx next start -p 4000
 ```
 
----
-
-## 🐳 Docker
-
-You can run Autensa in a container using the included `Dockerfile` and `docker-compose.yml`.
-
-### Prerequisites
-
-- Docker Desktop (or Docker Engine + Compose plugin)
-- OpenClaw Gateway running locally or remotely
-
-### 1. Configure environment
-
-Create a `.env` file for Compose:
-
-```bash
-cp .env.example .env
-```
-
-Then set at least:
-
-```env
-OPENCLAW_GATEWAY_URL=ws://host.docker.internal:18789
-OPENCLAW_GATEWAY_TOKEN=your-token-here
-```
-
-Notes:
-- Use `host.docker.internal` when OpenClaw runs on your host machine.
-- If OpenClaw is on another machine, set its reachable `ws://` or `wss://` URL instead.
-- If the host gateway is SecretRef-backed, sync the Compose token from the same canonical source before `docker compose up`.
-
-### 2. Build and start
-
-```bash
-docker compose up -d --build
-```
-
-Open **http://localhost:4000**.
-
-### 3. Useful commands
-
-```bash
-# View logs
-docker compose logs -f mission-control
-
-# Stop containers
-docker compose down
-
-# Stop and remove volumes (deletes SQLite/workspace data)
-docker compose down -v
-```
-
-### Data persistence
-
-Compose uses named volumes:
-- `mission-control-data` for SQLite (`/app/data`)
-- `mission-control-workspace` for workspace files (`/app/workspace`)
+See [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) for the full production guide including Docker, PM2, and Tailscale multi-machine setup.
 
 ---
 
-## 🎯 How It Works
+## ✨ Features
 
-### The Autopilot Pipeline
+### Product Autopilot
+- Autonomous market/compliance research on configurable schedules
+- AI-powered ideation with impact/feasibility scoring
+- Tinder-style swipe interface (Pass / Maybe / Yes / Now!)
+- Product Program — living document that guides all AI prompts ([Karpathy AutoResearch](https://github.com/karpathy/autoresearch) pattern)
+- Preference learning from swipe history
+- Maybe Pool with auto-resurface after configurable delay
 
-```
-RESEARCH → IDEATION → SWIPE → PLAN → BUILD → TEST → REVIEW → PR
-   AI          AI      You      AI     Agent   Agent   Agent   Auto
-```
+### Agent Orchestration
+- Multi-agent pipeline: Builder → Tester → Reviewer → Learner
+- Convoy Mode for parallel multi-agent execution with dependency DAG
+- Operator Chat — queued notes + direct messages to agents mid-build
+- Agent health monitoring with auto-nudge for stalled agents
+- Checkpoint & crash recovery — work resumes from last save, not from scratch
+- Knowledge base with cross-task learning
 
-1. **Research** — AI analyzes your product's market: competitors, SEO, user intent, technical gaps
-2. **Ideation** — Research feeds ideation agents that generate scored feature ideas
-3. **Swipe** — You review ideas as cards. Pass / Maybe / Yes / Now!
-4. **Plan** — AI asks clarifying questions, generates a detailed spec
-5. **Build** — Agent clones repo, creates branch, implements the feature
-6. **Test** — Agent runs the test suite. Failures bounce back for auto-fix
-7. **Review** — Agent inspects the diff for quality, security, best practices
-8. **PR** — Pull request created on GitHub with full context and research backing
+### Task Management
+- Kanban board with drag-and-drop across 7 status columns
+- AI planning phase with clarifying Q&A before any code is written
+- Multi-agent planning specs with sub-agent definitions
+- Task image attachments (UI mockups, screenshots)
+- Live real-time activity feed (SSE)
 
-### Task Flow (Manual Tasks)
+### Cost & Budget
+- Per-task and per-product cost tracking
+- Workspace + product budget caps (daily, monthly, per-task)
+- Cost breakdown API: recorded spend, reserved dispatch cost, blocked runs
 
-```
-PLANNING → INBOX → ASSIGNED → IN PROGRESS → TESTING → REVIEW → DONE
-```
-
-Drag tasks between columns or let the system auto-advance them.
-
-### Convoy Mode (Large Features)
-
-```
-                    ┌─ Subtask A (Agent 1) ──┐
-PARENT TASK ────────┤                        ├──── MERGE & PR
-                    ├─ Subtask B (Agent 2) ──┤
-                    └─ Subtask C (Agent 3) ──┘
-                         (depends on A)
-```
-
-Subtasks run in parallel with dependency-aware scheduling. Health monitoring detects stalls. Crash recovery via checkpoints.
+### Infrastructure
+- OpenClaw Gateway integration (WebSocket)
+- Gateway agent discovery & import
+- Docker ready (`docker-compose.yml` included)
+- Bearer token auth, HMAC webhooks, Zod validation
+- Privacy first — no trackers, no centralized data collection
+- Multi-machine support (Tailscale compatible)
+- Automation tiers: Supervised / Semi-Auto / Full Auto
 
 ---
 
@@ -513,486 +216,148 @@ Subtasks run in parallel with dependency-aware scheduling. Health monitoring det
 
 | Variable | Required | Default | Description |
 |:---------|:--------:|:--------|:------------|
-| `OPENCLAW_GATEWAY_URL` | ✅ | `ws://127.0.0.1:18789` | WebSocket URL to OpenClaw Gateway |
-| `OPENCLAW_GATEWAY_TOKEN` | ✅ | — | Authentication token for OpenClaw |
-| `MC_API_TOKEN` | — | — | API auth token (enables auth middleware) |
-| `WEBHOOK_SECRET` | — | — | HMAC secret for webhook validation |
-| `DATABASE_PATH` | — | `./mission-control.db` | SQLite database location |
-| `WORKSPACE_BASE_PATH` | — | `~/Documents/Shared` | Base directory for workspace files |
-| `PROJECTS_PATH` | — | `~/Documents/Shared/projects` | Directory for project folders |
+| `OPENCLAW_GATEWAY_URL` | Yes | `ws://127.0.0.1:18789` | WebSocket URL to OpenClaw Gateway |
+| `OPENCLAW_GATEWAY_TOKEN` | Yes | — | Authentication token for OpenClaw |
+| `MC_API_TOKEN` | No | — | API auth token (enables auth middleware) |
+| `WEBHOOK_SECRET` | No | — | HMAC secret for webhook validation |
+| `DATABASE_PATH` | No | `./mission-control.db` | SQLite database location |
+| `WORKSPACE_BASE_PATH` | No | `~/Documents/Shared` | Base directory for workspace files |
+| `PROJECTS_PATH` | No | `~/Documents/Shared/projects` | Directory for project folders |
 
-### Workspace AI Routing Overrides
-
-Mission Control now supports workspace-scoped model routing overrides in **Settings**:
-
-- `Autopilot Model Override` controls the model used by product research and ideation for that workspace.
-- `Planning Model Override` controls the model used when planning sessions are started for tasks in that workspace.
-
-Behavior:
-
-- If an override is set, Mission Control uses it for that workflow.
-- If no override is set, Mission Control falls back to the configured environment defaults.
-- Overrides are validated against the OpenClaw model policy allowlist before being saved.
+See [.env.example](.env.example) for the complete list with descriptions.
 
 ### Security (Production)
 
-Generate secure tokens:
-
 ```bash
-# API authentication token
-openssl rand -hex 32
-
-# Webhook signature secret
-openssl rand -hex 32
+# Generate secure tokens
+openssl rand -hex 32  # MC_API_TOKEN
+openssl rand -hex 32  # WEBHOOK_SECRET
 ```
 
-Add to `.env.local`:
-
-```env
-MC_API_TOKEN=your-64-char-hex-token
-WEBHOOK_SECRET=your-64-char-hex-token
-```
-
-When `MC_API_TOKEN` is set:
-- External API calls require `Authorization: Bearer <token>`
-- Browser UI works automatically (same-origin requests are allowed)
-- SSE streams accept token as query param
-- Direct operational checks such as `curl /api/health` must include the bearer token
-
-See [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) for the full production guide.
-
----
-
-## 🌐 Multi-Machine Setup
-
-Run Autensa on one machine and OpenClaw on another:
-
-```env
-# Point to the remote machine
-OPENCLAW_GATEWAY_URL=ws://YOUR_SERVER_IP:18789
-OPENCLAW_GATEWAY_TOKEN=your-shared-token
-```
-
-### With Tailscale (Recommended)
-
-```env
-OPENCLAW_GATEWAY_URL=wss://your-machine.tailnet-name.ts.net
-OPENCLAW_GATEWAY_TOKEN=your-shared-token
-```
-
----
-
-## 🗄 Database
-
-SQLite database auto-created at `./mission-control.db`. Migrations run automatically on startup (21 migrations). As of v2.0.1, a timestamped backup is created before any pending migration runs.
-
-```bash
-# Reset (start fresh)
-rm mission-control.db
-
-# Inspect
-sqlite3 mission-control.db ".tables"
-```
-
-Key tables added in v2: `products`, `research_cycles`, `ideas`, `swipe_history`, `preference_models`, `maybe_pool`, `product_feedback`, `cost_events`, `cost_caps`, `product_schedules`, `operations_log`, `convoys`, `convoy_subtasks`, `agent_health`, `work_checkpoints`, `agent_mailbox`, `workspace_ports`, `workspace_merges`.
+When `MC_API_TOKEN` is set, all external API calls require `Authorization: Bearer <token>`. Browser UI works automatically via same-origin.
 
 ---
 
 ## 📁 Project Structure
 
+```mermaid
+graph TD
+    subgraph "src/"
+        APP["app/<br/>Next.js pages & API routes"]
+        COMP["components/<br/>React UI"]
+        LIB["lib/<br/>Core logic"]
+    end
+
+    subgraph "app/api/"
+        TASKS["/tasks"]
+        PRODUCTS["/products"]
+        AGENTS["/agents"]
+        COSTS["/costs"]
+        OC["/openclaw"]
+        WH["/webhooks"]
+    end
+
+    subgraph "lib/"
+        AUTO["autopilot/<br/>research · ideation · swipe<br/>scheduling · similarity"]
+        OCLIB["openclaw/<br/>gateway client · sessions<br/>model catalog · routing"]
+        DBLIB["db/<br/>SQLite · migrations"]
+    end
+
+    APP --> TASKS & PRODUCTS & AGENTS & COSTS & OC & WH
+    LIB --> AUTO & OCLIB & DBLIB
+
+    style APP fill:#0070f3,color:#fff
+    style AUTO fill:#7c3aed,color:#fff
+    style OCLIB fill:#4a5568,color:#fff
+    style DBLIB fill:#003B57,color:#fff
 ```
-autensa/
-├── src/
-│   ├── app/                    # Next.js pages & API routes
-│   │   ├── api/
-│   │   │   ├── tasks/          # Task CRUD, planning, dispatch, convoy, chat, workspace
-│   │   │   ├── products/       # Product CRUD, research, ideation, swipe, schedules
-│   │   │   ├── agents/         # Agent management, health, mail, discovery
-│   │   │   ├── costs/          # Cost tracking, caps, breakdowns
-│   │   │   ├── convoy/         # Convoy mail endpoints
-│   │   │   ├── openclaw/       # Gateway proxy endpoints
-│   │   │   └── webhooks/       # Agent completion webhooks
-│   │   ├── settings/           # Settings page
-│   │   └── workspace/[slug]/   # Workspace dashboard
-│   ├── components/
-│   │   ├── MissionQueue.tsx    # Kanban board
-│   │   ├── PlanningTab.tsx     # AI planning interface
-│   │   ├── AgentsSidebar.tsx   # Agent panel
-│   │   ├── LiveFeed.tsx        # Real-time events
-│   │   ├── TaskModal.tsx       # Task create/edit
-│   │   ├── TaskChatTab.tsx     # Operator chat
-│   │   ├── ConvoyTab.tsx       # Convoy visualization
-│   │   ├── DependencyGraph.tsx # DAG visualization
-│   │   ├── HealthIndicator.tsx # Agent health badges
-│   │   ├── WorkspaceTab.tsx    # Workspace isolation UI
-│   │   ├── autopilot/          # SwipeDeck, IdeaCard, ResearchReport, etc.
-│   │   └── costs/              # Cost dashboard components
-│   └── lib/
-│       ├── autopilot/          # Research, ideation, swipe, maybe-pool, scheduling
-│       ├── costs/              # Cost tracker, caps, reporting
-│       ├── db/                 # SQLite + 21 migrations
-│       ├── openclaw/           # Gateway client + device identity
-│       ├── convoy.ts           # Convoy orchestration
-│       ├── agent-health.ts     # Health monitoring + auto-nudge
-│       ├── checkpoint.ts       # Checkpoint save/restore
-│       ├── workspace-isolation.ts # Git worktrees + task sandboxes
-│       ├── mailbox.ts          # Inter-agent messaging
-│       ├── chat-listener.ts    # Operator chat relay
-│       ├── learner.ts          # Knowledge base management
-│       └── types.ts            # TypeScript types
-├── presentation/               # v2 pitch deck + narration script
-├── specs/                      # Feature specs
-├── scripts/                    # Bridge & hook scripts
-└── CHANGELOG.md                # Full version history
+
+| Directory | Purpose |
+|-----------|---------|
+| `src/app/api/` | Next.js API routes — tasks, products, agents, costs, OpenClaw proxy, webhooks |
+| `src/components/` | React UI — Kanban board, swipe deck, agent sidebar, live feed, cost dashboard |
+| `src/lib/autopilot/` | Research, ideation, swipe logic, preferences, scheduling, similarity detection |
+| `src/lib/openclaw/` | Gateway WebSocket client, session management, model catalog, routing |
+| `src/lib/db/` | SQLite schema + 21 auto-running migrations |
+| `docs/` | Operator runbooks, architecture docs, troubleshooting |
+| `scripts/` | Runtime checks, docs validation, database utilities |
+
+---
+
+## 🗄 Database
+
+SQLite, auto-created at `./mission-control.db`. Migrations run automatically on startup.
+
+```bash
+npm run db:seed    # Initialize with schema
+npm run db:backup  # WAL checkpoint + copy
+npm run db:reset   # Drop and re-seed (destructive)
 ```
+
+---
+
+## 🐳 Docker
+
+```bash
+cp .env.example .env
+# Edit .env — use ws://host.docker.internal:18789 for local gateway
+
+docker compose up -d --build
+```
+
+Open **http://localhost:4000**. Data persists in named volumes (`mission-control-data`, `mission-control-workspace`).
 
 ---
 
 ## 🔧 Troubleshooting
 
-### Can't connect to OpenClaw Gateway
+| Problem | Fix |
+|---------|-----|
+| Can't connect to gateway | Check `openclaw gateway status`, verify URL + token in `.env.local` |
+| Planning questions not loading | Check `openclaw logs --plain --limit 200`, verify AI API key |
+| Port 4000 in use | `lsof -i :4000` then `kill -9 <PID>` |
+| Agent callbacks failing (502) | Set `NO_PROXY=localhost,127.0.0.1` if behind a proxy |
+| Stale error banners on completed tasks | `npm run tasks:repair-successful-run-errors -- --apply` |
 
-1. Check OpenClaw is running: `openclaw gateway status`
-2. Verify URL and token in `.env.local`
-3. Check firewall isn't blocking port 18789
-
-### Planning questions not loading
-
-1. Check OpenClaw logs: `openclaw logs --plain --limit 200`
-2. Verify your AI API key is valid
-3. Refresh and click the task again
-
-### Task looks active but Sessions tab is empty
-
-Mission Control task runs can use either a root persistent session or spawned subagent sessions.
-
-If you are debugging a task and want the full runtime picture:
-
-1. Open the task modal and check the Sessions tab for task-scoped sessions
-2. Query `GET /api/openclaw/sessions?task_id=<task-id>` to inspect all task sessions directly
-3. Do not treat an empty `/api/tasks/[id]/subagent` response as proof that the builder is idle; that endpoint only covers spawned subagents
-
-### Port 4000 already in use
-
-```bash
-lsof -i :4000
-kill -9 <PID>
-```
-
-### Agent callbacks failing behind a proxy (502 errors)
-
-If you're behind an HTTP proxy (corporate VPN, Hiddify, etc.), agent callbacks to `localhost` may fail because the proxy intercepts local requests.
-
-**Fix:** Set `NO_PROXY` so localhost bypasses the proxy:
-
-```bash
-# Linux / macOS
-export NO_PROXY=localhost,127.0.0.1
-
-# Windows (cmd)
-set NO_PROXY=localhost,127.0.0.1
-
-# Docker
-docker run -e NO_PROXY=localhost,127.0.0.1 ...
-```
-
-For historical context, see the upstream discussion in [crshdn/mission-control issue #30](https://github.com/crshdn/mission-control/issues/30).
-
-### Callback/runtime regressions after changing Node versions
-
-Use the guarded runtime suite instead of raw `tsx --test` commands:
-
-```bash
-nvm use
-npm ci
-npm run test:runtime-targeted
-```
-
-If a completed card still shows the generic `Run ended without completion callback or workflow handoff ...` banner, preview and apply the targeted cleanup:
-
-```bash
-npm run tasks:repair-successful-run-errors
-npm run tasks:repair-successful-run-errors -- --apply
-```
+See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for more.
 
 ---
 
 ## 🤝 Contributing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Quick version:
+
 1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'feat: add amazing feature'`
-4. Push: `git push origin feature/amazing-feature`
-5. Open a Pull Request
+2. Create a feature branch: `git checkout -b feature/my-change`
+3. Run tests: `npm test`
+4. Commit with conventional commits: `git commit -m 'feat: add thing'`
+5. Push and open a Pull Request
 
 ---
 
-## 👏 Contributors
+## 📚 Documentation
 
-Autensa is built by a growing community. Thank you to everyone who has contributed!
-
-<table>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/superlowburn">
-        <img src="https://github.com/superlowburn.png?size=80" width="80" height="80" style="border-radius:50%" alt="Steve" /><br />
-        <sub><b>Steve</b></sub>
-      </a><br />
-      <sub>Device Identity</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/rchristman89">
-        <img src="https://github.com/rchristman89.png?size=80" width="80" height="80" style="border-radius:50%" alt="Ryan Christman" /><br />
-        <sub><b>Ryan Christman</b></sub>
-      </a><br />
-      <sub>Port Configuration</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/nicozefrench">
-        <img src="https://github.com/nicozefrench.png?size=80" width="80" height="80" style="border-radius:50%" alt="nicozefrench" /><br />
-        <sub><b>nicozefrench</b></sub>
-      </a><br />
-      <sub>ARIA Hooks</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/misterdas">
-        <img src="https://github.com/misterdas.png?size=80" width="80" height="80" style="border-radius:50%" alt="GOPAL" /><br />
-        <sub><b>GOPAL</b></sub>
-      </a><br />
-      <sub>Node v25 Support</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/joralemarti">
-        <img src="https://github.com/joralemarti.png?size=80" width="80" height="80" style="border-radius:50%" alt="Jorge Martinez" /><br />
-        <sub><b>Jorge Martinez</b></sub>
-      </a><br />
-      <sub>Orchestration</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/niks918">
-        <img src="https://github.com/niks918.png?size=80" width="80" height="80" style="border-radius:50%" alt="Nik" /><br />
-        <sub><b>Nik</b></sub>
-      </a><br />
-      <sub>Planning & Dispatch</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/gmb9000">
-        <img src="https://github.com/gmb9000.png?size=80" width="80" height="80" style="border-radius:50%" alt="Michael G" /><br />
-        <sub><b>Michael G</b></sub>
-      </a><br />
-      <sub>Usage Dashboard</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/Z8Medina">
-        <img src="https://github.com/Z8Medina.png?size=80" width="80" height="80" style="border-radius:50%" alt="Z8Medina" /><br />
-        <sub><b>Z8Medina</b></sub>
-      </a><br />
-      <sub>Metabase Integration</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/markphelps">
-        <img src="https://github.com/markphelps.png?size=80" width="80" height="80" style="border-radius:50%" alt="Mark Phelps" /><br />
-        <sub><b>Mark Phelps</b></sub>
-      </a><br />
-      <sub>Gateway Agent Discovery 💡</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/muneale">
-        <img src="https://github.com/muneale.png?size=80" width="80" height="80" style="border-radius:50%" alt="Alessio" /><br />
-        <sub><b>Alessio</b></sub>
-      </a><br />
-      <sub>Docker Support</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/JamesTsetsekas">
-        <img src="https://github.com/JamesTsetsekas.png?size=80" width="80" height="80" style="border-radius:50%" alt="James Tsetsekas" /><br />
-        <sub><b>James Tsetsekas</b></sub>
-      </a><br />
-      <sub>Planning Flow Fixes</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/nice-and-precise">
-        <img src="https://github.com/nice-and-precise.png?size=80" width="80" height="80" style="border-radius:50%" alt="nice-and-precise" /><br />
-        <sub><b>nice-and-precise</b></sub>
-      </a><br />
-      <sub>Agent Protocol Docs</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/JamesCao2048">
-        <img src="https://github.com/JamesCao2048.png?size=80" width="80" height="80" style="border-radius:50%" alt="JamesCao2048" /><br />
-        <sub><b>JamesCao2048</b></sub>
-      </a><br />
-      <sub>Task Creation Fix</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/davetha">
-        <img src="https://github.com/davetha.png?size=80" width="80" height="80" style="border-radius:50%" alt="davetha" /><br />
-        <sub><b>davetha</b></sub>
-      </a><br />
-      <sub>Force-Dynamic & Model Discovery</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/pkgaiassistant-droid">
-        <img src="https://github.com/pkgaiassistant-droid.png?size=80" width="80" height="80" style="border-radius:50%" alt="pkgaiassistant-droid" /><br />
-        <sub><b>pkgaiassistant-droid</b></sub>
-      </a><br />
-      <sub>Activity Dashboard & Mobile UX</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/Coder-maxer">
-        <img src="https://github.com/Coder-maxer.png?size=80" width="80" height="80" style="border-radius:50%" alt="Coder-maxer" /><br />
-        <sub><b>Coder-maxer</b></sub>
-      </a><br />
-      <sub>Static Route Fix</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/grunya-openclaw">
-        <img src="https://github.com/grunya-openclaw.png?size=80" width="80" height="80" style="border-radius:50%" alt="grunya-openclaw" /><br />
-        <sub><b>grunya-openclaw</b></sub>
-      </a><br />
-      <sub>Dispatch & Proxy Bug Reports</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/ilakskill">
-        <img src="https://github.com/ilakskill.png?size=80" width="80" height="80" style="border-radius:50%" alt="ilakskill" /><br />
-        <sub><b>ilakskill</b></sub>
-      </a><br />
-      <sub>Dispatch Recovery Design</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/plutusaisystem-cmyk">
-        <img src="https://github.com/plutusaisystem-cmyk.png?size=80" width="80" height="80" style="border-radius:50%" alt="plutusaisystem-cmyk" /><br />
-        <sub><b>plutusaisystem-cmyk</b></sub>
-      </a><br />
-      <sub>Agent Daemon & Fleet View</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/nithis4th">
-        <img src="https://github.com/nithis4th.png?size=80" width="80" height="80" style="border-radius:50%" alt="nithis4th" /><br />
-        <sub><b>nithis4th</b></sub>
-      </a><br />
-      <sub>2nd Brain Knowledge Base</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/davidpellerin">
-        <img src="https://github.com/davidpellerin.png?size=80" width="80" height="80" style="border-radius:50%" alt="davidpellerin" /><br />
-        <sub><b>davidpellerin</b></sub>
-      </a><br />
-      <sub>Dynamic Agent Config</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/tmchow">
-        <img src="https://github.com/tmchow.png?size=80" width="80" height="80" style="border-radius:50%" alt="tmchow" /><br />
-        <sub><b>tmchow</b></sub>
-      </a><br />
-      <sub>Agent Import Improvements</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/xiaomiusa87">
-        <img src="https://github.com/xiaomiusa87.png?size=80" width="80" height="80" style="border-radius:50%" alt="xiaomiusa87" /><br />
-        <sub><b>xiaomiusa87</b></sub>
-      </a><br />
-      <sub>Session Key Bug Report</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/lutherbot-ai">
-        <img src="https://github.com/lutherbot-ai.png?size=80" width="80" height="80" style="border-radius:50%" alt="lutherbot-ai" /><br />
-        <sub><b>lutherbot-ai</b></sub>
-      </a><br />
-      <sub>Security Audit</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/YitingOU">
-        <img src="https://github.com/YitingOU.png?size=80" width="80" height="80" style="border-radius:50%" alt="YITING OU" /><br />
-        <sub><b>YITING OU</b></sub>
-      </a><br />
-      <sub>Cascade Delete Fix</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/brandonros">
-        <img src="https://github.com/brandonros.png?size=80" width="80" height="80" style="border-radius:50%" alt="Brandon Ros" /><br />
-        <sub><b>Brandon Ros</b></sub>
-      </a><br />
-      <sub>Docker CI Workflow</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/nano-lgtm">
-        <img src="https://github.com/nano-lgtm.png?size=80" width="80" height="80" style="border-radius:50%" alt="nano-lgtm" /><br />
-        <sub><b>nano-lgtm</b></sub>
-      </a><br />
-      <sub>Kanban UX Improvements</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/cammybot1313-collab">
-        <img src="https://github.com/cammybot1313-collab.png?size=80" width="80" height="80" style="border-radius:50%" alt="cammybot1313-collab" /><br />
-        <sub><b>cammybot1313-collab</b></sub>
-      </a><br />
-      <sub>Docs Typo Fix</sub>
-    </td>
-  </tr>
-</table>
+| Document | Description |
+|----------|-------------|
+| [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) | Full production deployment guide |
+| [QUICKSTART_REALTIME.md](QUICKSTART_REALTIME.md) | Real-time features setup |
+| [docs/HOW-THE-PIPELINE-WORKS.md](docs/HOW-THE-PIPELINE-WORKS.md) | Deep dive into the autopilot pipeline |
+| [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md) | Agent communication protocol |
+| [docs/AUTOPILOT_SETUP.md](docs/AUTOPILOT_SETUP.md) | Autopilot configuration |
+| [docs/LOCAL_OPERATIONS_RUNBOOK.md](docs/LOCAL_OPERATIONS_RUNBOOK.md) | Day-to-day local operations |
+| [docs/ORCHESTRATION_WORKFLOW.md](docs/ORCHESTRATION_WORKFLOW.md) | Task orchestration details |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | End-user guide |
 
 ---
 
-## ⭐ Star History
+## 🙏 Acknowledgments
 
-<a href="https://www.star-history.com/#nice-and-precise/mission-control&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=nice-and-precise/mission-control&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=nice-and-precise/mission-control&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=nice-and-precise/mission-control&type=Date" width="600" />
-  </picture>
-</a>
+- **[crshdn/mission-control](https://github.com/crshdn/mission-control)** — Upstream project (originally "Autensa")
+- **[Andrej Karpathy](https://github.com/karpathy/autoresearch)** — AutoResearch architecture that inspired the Product Program pattern
+- **[OpenClaw](https://github.com/open-claw/open-claw-gateway)** — AI agent runtime
 
 ---
 
 ## 📜 License
 
 MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **[Andrej Karpathy](https://github.com/karpathy/autoresearch)** — AutoResearch architecture that inspired the Product Program pattern
-- **[Mike De'Shazer](https://github.com/mikedeshazer)** — Operator Chat concept
-
-[![OpenClaw](https://img.shields.io/badge/OpenClaw-Gateway-blue?style=for-the-badge)](https://github.com/open-claw/open-claw-gateway)
-[![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![Anthropic](https://img.shields.io/badge/Anthropic-Claude-orange?style=for-the-badge)](https://www.anthropic.com/)
-
----
-
-## ☕ Support
-
-If Autensa has been useful to you, consider buying me a coffee!
-
-<a href="https://buymeacoffee.com/crshdn" target="_blank">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" />
-</a>
-
----
-
-<p align="center">
-  <a href="https://discord.gg/3u62kySzM">
-    <img src="https://img.shields.io/badge/Join_Our_Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Our Discord" />
-  </a>
-</p>
-
-<p align="center">
-  <strong>Stop managing a backlog. Start shipping on autopilot.</strong> 🚀
-</p>
