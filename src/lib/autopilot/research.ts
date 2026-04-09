@@ -144,7 +144,7 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
         const { data: report, model: responseModel, usage } = await completeJSON(prompt, {
           model,
           systemPrompt: 'You are a compliance gap auditor. Analyze the product against its finish-line artifact checklist and respond with a JSON research report only.',
-          timeoutMs: 300_000,
+          timeoutMs: 600_000,
         });
 
         allReports.push({ report, variantId: programEntry.variantId, variantName: programEntry.variantName });
