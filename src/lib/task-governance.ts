@@ -3,6 +3,19 @@ import { notifyLearner } from '@/lib/learner';
 import type { Task } from '@/lib/types';
 
 const ACTIVE_STATUSES = ['assigned', 'in_progress', 'convoy_active', 'testing', 'review', 'verification'];
+const EXECUTION_STATUSES = ['in_progress', 'convoy_active', 'testing', 'review', 'verification'] as const;
+
+interface WorkspaceRoleCandidate {
+  id: string;
+  name: string;
+  status: string;
+  updated_at: string;
+}
+
+interface AgentTaskLoad {
+  activeTaskCount: number;
+  queuedTaskCount: number;
+}
 
 export function hasStageEvidence(taskId: string): boolean {
   const deliverable = queryOne<{ count: number }>('SELECT COUNT(*) as count FROM task_deliverables WHERE task_id = ?', [taskId]);
@@ -112,6 +125,115 @@ export function isActiveStatus(status: string): boolean {
   return ACTIVE_STATUSES.includes(status);
 }
 
+function parseSortTimestamp(value: string): number {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+}
+
+function sortCandidatesByLoad(
+  left: WorkspaceRoleCandidate,
+  right: WorkspaceRoleCandidate,
+  loadByAgentId: Map<string, AgentTaskLoad>,
+): number {
+  const leftLoad = loadByAgentId.get(left.id) || { activeTaskCount: 0, queuedTaskCount: 0 };
+  const rightLoad = loadByAgentId.get(right.id) || { activeTaskCount: 0, queuedTaskCount: 0 };
+
+  if (leftLoad.activeTaskCount !== rightLoad.activeTaskCount) {
+    return leftLoad.activeTaskCount - rightLoad.activeTaskCount;
+  }
+
+  if (leftLoad.queuedTaskCount !== rightLoad.queuedTaskCount) {
+    return leftLoad.queuedTaskCount - rightLoad.queuedTaskCount;
+  }
+
+  if (left.status !== right.status) {
+    return Number(right.status === 'standby') - Number(left.status === 'standby');
+  }
+
+  const timestampDiff = parseSortTimestamp(left.updated_at) - parseSortTimestamp(right.updated_at);
+  if (timestampDiff !== 0) {
+    return timestampDiff;
+  }
+
+  const nameDiff = left.name.localeCompare(right.name);
+  if (nameDiff !== 0) {
+    return nameDiff;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function buildRoleCandidateLoadMap(
+  workspaceId: string,
+  candidateIds: string[],
+  excludeTaskId?: string | null,
+): Map<string, AgentTaskLoad> {
+  const loadByAgentId = new Map<string, AgentTaskLoad>();
+  if (candidateIds.length === 0) {
+    return loadByAgentId;
+  }
+
+  const agentPlaceholders = candidateIds.map(() => '?').join(', ');
+  const statusPlaceholders = ACTIVE_STATUSES.map(() => '?').join(', ');
+  const excludeClause = excludeTaskId ? 'AND id != ?' : '';
+  const taskRows = queryAll<{ assigned_agent_id: string; status: string }>(
+    `SELECT assigned_agent_id, status
+     FROM tasks
+     WHERE workspace_id = ?
+       AND assigned_agent_id IN (${agentPlaceholders})
+       AND status IN (${statusPlaceholders})
+       ${excludeClause}`,
+    excludeTaskId
+      ? [workspaceId, ...candidateIds, ...ACTIVE_STATUSES, excludeTaskId]
+      : [workspaceId, ...candidateIds, ...ACTIVE_STATUSES],
+  );
+
+  for (const row of taskRows) {
+    const current = loadByAgentId.get(row.assigned_agent_id) || { activeTaskCount: 0, queuedTaskCount: 0 };
+    if (row.status === 'assigned') {
+      current.queuedTaskCount += 1;
+    } else if ((EXECUTION_STATUSES as readonly string[]).includes(row.status)) {
+      current.activeTaskCount += 1;
+    }
+    loadByAgentId.set(row.assigned_agent_id, current);
+  }
+
+  return loadByAgentId;
+}
+
+export function pickWorkspaceAgentForRole(
+  workspaceId: string,
+  role: string,
+  options?: { excludeTaskId?: string | null },
+): { id: string; name: string } | null {
+  const candidates = queryAll<WorkspaceRoleCandidate>(
+    `SELECT id, name, status, updated_at
+     FROM agents
+     WHERE workspace_id = ?
+       AND COALESCE(scope, 'workspace') = 'workspace'
+       AND lower(role) = lower(?)
+       AND status != 'offline'`,
+    [workspaceId, role],
+  );
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  if (candidates.length === 1) {
+    return { id: candidates[0].id, name: candidates[0].name };
+  }
+
+  const loadByAgentId = buildRoleCandidateLoadMap(
+    workspaceId,
+    candidates.map((candidate) => candidate.id),
+    options?.excludeTaskId,
+  );
+
+  const selected = [...candidates].sort((left, right) => sortCandidatesByLoad(left, right, loadByAgentId))[0];
+  return selected ? { id: selected.id, name: selected.name } : null;
+}
+
 export function pickDynamicAgent(taskId: string, stageRole?: string | null): { id: string; name: string } | null {
   const task = queryOne<{ workspace_id: string; assigned_agent_id: string | null }>(
     'SELECT workspace_id, assigned_agent_id FROM tasks WHERE id = ?',
@@ -130,17 +252,7 @@ export function pickDynamicAgent(taskId: string, stageRole?: string | null): { i
   }
 
   if (stageRole) {
-    const byRole = queryOne<{ id: string; name: string }>(
-      `SELECT id, name
-       FROM agents
-       WHERE workspace_id = ?
-         AND COALESCE(scope, 'workspace') = 'workspace'
-         AND lower(role) = lower(?)
-         AND status != 'offline'
-       ORDER BY status = 'standby' DESC, updated_at DESC
-       LIMIT 1`,
-      [task.workspace_id, stageRole]
-    );
+    const byRole = pickWorkspaceAgentForRole(task.workspace_id, stageRole, { excludeTaskId: taskId });
     if (byRole) return byRole;
   }
 

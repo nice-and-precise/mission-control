@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { queryAll, queryOne, run } from '@/lib/db';
 import { canonicalMissionControlModelId } from '@/lib/openclaw/model-policy';
 import { isOpenClawAgentTarget, validateProviderModelOverride } from '@/lib/openclaw/model-catalog';
+import { normalizeSessionKeyPrefix } from '@/lib/openclaw/routing';
 import type { Agent, CreateAgentRequest } from '@/lib/types';
 
 async function validateAgentModelOverride(value: unknown): Promise<string | null> {
@@ -85,10 +86,11 @@ export async function POST(request: NextRequest) {
 
     const id = uuidv4();
     const now = new Date().toISOString();
+    const normalizedSessionKeyPrefix = normalizeSessionKeyPrefix(body.session_key_prefix);
 
     run(
-      `INSERT INTO agents (id, name, role, description, avatar_emoji, is_master, workspace_id, soul_md, user_md, agents_md, model, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO agents (id, name, role, description, avatar_emoji, is_master, workspace_id, soul_md, user_md, agents_md, model, session_key_prefix, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         body.name,
@@ -101,6 +103,7 @@ export async function POST(request: NextRequest) {
         body.user_md || null,
         body.agents_md || null,
         validatedModel,
+        normalizedSessionKeyPrefix,
         now,
         now,
       ]

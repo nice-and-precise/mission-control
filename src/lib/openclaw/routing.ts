@@ -23,8 +23,21 @@ export function inferSessionKeyPrefixFromRole(role?: string | null): string {
   }
 }
 
+export function normalizeSessionKeyPrefix(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.endsWith(':') ? trimmed : `${trimmed}:`;
+}
+
 export function getAgentSessionKeyPrefix(agent?: AgentRoutingInfo): string {
-  const explicitPrefix = agent?.session_key_prefix?.trim();
+  const explicitPrefix = normalizeSessionKeyPrefix(agent?.session_key_prefix);
   if (explicitPrefix) {
     return explicitPrefix;
   }

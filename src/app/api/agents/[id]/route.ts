@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { queryOne, run } from '@/lib/db';
 import { canonicalMissionControlModelId } from '@/lib/openclaw/model-policy';
 import { isOpenClawAgentTarget, validateProviderModelOverride } from '@/lib/openclaw/model-catalog';
+import { normalizeSessionKeyPrefix } from '@/lib/openclaw/routing';
 import type { Agent, UpdateAgentRequest } from '@/lib/types';
 
 async function validateAgentModelOverride(value: unknown): Promise<string | null> {
@@ -58,9 +59,13 @@ export async function PATCH(
     }
 
     let validatedModel: string | null | undefined;
+    let normalizedSessionKeyPrefix: string | null | undefined;
     try {
       if (body.model !== undefined) {
         validatedModel = await validateAgentModelOverride(body.model);
+      }
+      if (body.session_key_prefix !== undefined) {
+        normalizedSessionKeyPrefix = normalizeSessionKeyPrefix(body.session_key_prefix);
       }
     } catch (validationError) {
       const message = validationError instanceof Error
@@ -119,6 +124,10 @@ export async function PATCH(
     if (validatedModel !== undefined) {
       updates.push('model = ?');
       values.push(validatedModel);
+    }
+    if (normalizedSessionKeyPrefix !== undefined) {
+      updates.push('session_key_prefix = ?');
+      values.push(normalizedSessionKeyPrefix);
     }
 
     if (updates.length === 0) {

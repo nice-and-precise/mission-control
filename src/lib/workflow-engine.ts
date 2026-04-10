@@ -6,7 +6,7 @@
  */
 
 import { queryOne, queryAll, run } from '@/lib/db';
-import { pickDynamicAgent, escalateFailureIfNeeded, recordLearnerOnTransition } from '@/lib/task-governance';
+import { pickDynamicAgent, pickWorkspaceAgentForRole, escalateFailureIfNeeded, recordLearnerOnTransition } from '@/lib/task-governance';
 import { getMissionControlUrl } from '@/lib/config';
 import { broadcast } from '@/lib/events';
 import type { Task, WorkflowTemplate, WorkflowStage, TaskRole } from '@/lib/types';
@@ -129,6 +129,14 @@ function getAgentForRole(taskId: string, role: string): { id: string; name: stri
 }
 
 async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: string, workspaceId: string): Promise<boolean> {
+  const releasedAgent = queryOne<{ role: string; name: string }>(
+    'SELECT role, name FROM agents WHERE id = ? LIMIT 1',
+    [agentId]
+  );
+  if (!releasedAgent || releasedAgent.role.toLowerCase() !== 'builder') {
+    return false;
+  }
+
   const executingPlaceholders = EXECUTING_STATUSES.map(() => '?').join(', ');
   const otherExecutingTasks = queryOne<{ cnt: number }>(
     `SELECT COUNT(*) as cnt
@@ -144,8 +152,8 @@ async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: st
     return false;
   }
 
-  const queuedTask = queryOne<{ id: string; title: string }>(
-    `SELECT t.id, t.title
+  let queuedTask = queryOne<{ id: string; title: string; assigned_agent_id: string | null }>(
+    `SELECT t.id, t.title, t.assigned_agent_id
      FROM tasks t
      WHERE t.assigned_agent_id = ?
        AND t.id != ?
@@ -165,7 +173,73 @@ async function dispatchNextQueuedBuilderTask(agentId: string, previousTaskId: st
   );
 
   if (!queuedTask) {
+    queuedTask = queryOne<{ id: string; title: string; assigned_agent_id: string | null }>(
+      `SELECT t.id, t.title, t.assigned_agent_id
+       FROM tasks t
+       WHERE t.id != ?
+         AND t.workspace_id = ?
+         AND t.status = 'assigned'
+         AND t.status_reason LIKE ?
+         AND NOT EXISTS (
+           SELECT 1
+           FROM openclaw_sessions os
+           WHERE os.active_task_id = t.id
+             AND os.status = 'active'
+             AND os.session_type != 'subagent'
+         )
+       ORDER BY t.updated_at ASC
+       LIMIT 1`,
+      [previousTaskId, workspaceId, `${WAITING_FOR_AGENT_PREFIX}%before starting this task.`]
+    );
+  }
+
+  if (!queuedTask) {
     return false;
+  }
+
+  if (queuedTask.assigned_agent_id !== agentId) {
+    const now = new Date().toISOString();
+    run(
+      `UPDATE tasks
+       SET assigned_agent_id = ?,
+           planning_dispatch_error = NULL,
+           status_reason = ?,
+           updated_at = ?
+       WHERE id = ?`,
+      [agentId, 'Builder reassigned from queue to the next available execution slot.', now, queuedTask.id]
+    );
+
+    const existingBuilderRole = queryOne<{ id: string }>(
+      `SELECT id
+       FROM task_roles
+       WHERE task_id = ?
+         AND lower(role) = 'builder'
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [queuedTask.id]
+    );
+
+    if (existingBuilderRole) {
+      run('UPDATE task_roles SET agent_id = ?, created_at = ? WHERE id = ?', [agentId, now, existingBuilderRole.id]);
+    } else {
+      run(
+        `INSERT INTO task_roles (id, task_id, role, agent_id, created_at)
+         VALUES (?, ?, 'builder', ?, ?)`,
+        [crypto.randomUUID(), queuedTask.id, agentId, now]
+      );
+    }
+
+    run(
+      `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+       VALUES (?, ?, ?, 'status_changed', ?, ?)`,
+      [
+        crypto.randomUUID(),
+        queuedTask.id,
+        agentId,
+        `Builder queue rebalanced: ${releasedAgent.name} picked up this task from the shared builder pool`,
+        now,
+      ]
+    );
   }
 
   const missionControlUrl = getMissionControlUrl();
@@ -478,22 +552,12 @@ export function populateTaskRolesFromAgents(taskId: string, workspaceId: string)
   const existingRoles = getTaskRoles(taskId);
   if (existingRoles.length > 0) return; // Already populated
 
-  // Get all agents in the workspace
-  const agents = queryAll<{ id: string; name: string; role: string }>(
-    `SELECT id, name, role
-     FROM agents
-     WHERE workspace_id = ?
-       AND COALESCE(scope, 'workspace') = 'workspace'
-       AND status != 'offline'`,
-    [workspaceId]
-  );
-
   // For each stage that requires a role, try to find a matching agent
   const roleMap: Record<string, string> = {};
   for (const stage of workflow.stages) {
     if (!stage.role || roleMap[stage.role]) continue;
 
-    const match = agents.find(a => a.role.toLowerCase() === stage.role!.toLowerCase());
+    const match = pickWorkspaceAgentForRole(workspaceId, stage.role, { excludeTaskId: taskId });
 
     if (match) {
       roleMap[stage.role] = match.id;
@@ -503,7 +567,7 @@ export function populateTaskRolesFromAgents(taskId: string, workspaceId: string)
   // Learner fallback: the 'learner' role isn't in any workflow stage,
   // so it won't be matched above. Find a learner agent and assign it.
   if (!roleMap['learner']) {
-    const learner = agents.find(a => a.role.toLowerCase() === 'learner');
+    const learner = pickWorkspaceAgentForRole(workspaceId, 'learner', { excludeTaskId: taskId });
     if (learner) {
       roleMap['learner'] = learner.id;
     }

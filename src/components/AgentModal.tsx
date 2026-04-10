@@ -42,7 +42,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
   useEffect(() => {
     if (!agent?.id) return;
     let cancelled = false;
-    fetch(`/api/agents/${agent.id}`)
+            session_key_prefix: normalizedPrefix || null,
       .then(res => res.ok ? res.json() : null)
       .then(fresh => {
         if (cancelled || !fresh) return;
@@ -335,10 +335,10 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
                   value={form.session_key_prefix}
                   onChange={(e) => setForm({ ...form, session_key_prefix: e.target.value })}
                   className="w-full min-h-11 bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
-                  placeholder="agent:main:"
+                  placeholder={form.role === 'builder' ? 'agent:coder:' : 'agent:main:'}
                 />
                 <p className="text-xs text-mc-text-secondary mt-1">
-                  OpenClaw session routing prefix. Defaults to &quot;agent:main:&quot; if not set.
+                  OpenClaw session routing prefix. Builders default to &quot;agent:coder:&quot;; other roles default to &quot;agent:main:&quot;.
                 </p>
               </div>
             </div>

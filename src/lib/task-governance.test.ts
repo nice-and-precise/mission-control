@@ -190,6 +190,23 @@ test('pickDynamicAgent uses exact workspace role matches and ignores task-scoped
   assert.deepEqual(picked, { id: workspaceBuilderId, name: 'Workspace Builder' });
 });
 
+test('pickDynamicAgent prefers the least-loaded workspace agent for a shared role', () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+  const busyBuilderId = crypto.randomUUID();
+  const idleBuilderId = crypto.randomUUID();
+  const busyTaskId = crypto.randomUUID();
+
+  seedTask(taskId, workspaceId);
+  seedTask(busyTaskId, workspaceId);
+  seedAgent({ id: busyBuilderId, workspace: workspaceId, name: 'Builder Agent', role: 'builder', status: 'working' });
+  seedAgent({ id: idleBuilderId, workspace: workspaceId, name: 'Builder Agent 2', role: 'builder', status: 'standby' });
+  run(`UPDATE tasks SET status = 'in_progress', assigned_agent_id = ? WHERE id = ?`, [busyBuilderId, busyTaskId]);
+
+  const picked = pickDynamicAgent(taskId, 'builder');
+  assert.deepEqual(picked, { id: idleBuilderId, name: 'Builder Agent 2' });
+});
+
 test('pickDynamicAgent falls back to a workspace agent when no exact stage role exists', () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;
   const taskId = crypto.randomUUID();
