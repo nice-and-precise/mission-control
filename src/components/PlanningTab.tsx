@@ -587,6 +587,8 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
 
   // Planning complete - show spec and agents
   if (state?.isComplete && hasRecoverableSpec) {
+    // spec is guaranteed non-null by hasRecoverableSpec check above
+    const approvedSpec = spec!;
     return (
       <div className="p-4 space-y-6">
         <div className="flex items-center justify-between">
@@ -656,25 +658,25 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
         
         {/* Spec Summary */}
         <div className="bg-mc-bg border border-mc-border rounded-lg p-4">
-          <h3 className="font-medium mb-2">{state.spec.title}</h3>
-          <p className="text-sm text-mc-text-secondary mb-4">{state.spec.summary}</p>
+          <h3 className="font-medium mb-2">{approvedSpec.title}</h3>
+          <p className="text-sm text-mc-text-secondary mb-4">{approvedSpec.summary}</p>
           
-          {state.spec.deliverables?.length > 0 && (
+          {approvedSpec.deliverables?.length > 0 && (
             <div className="mb-3">
               <h4 className="text-sm font-medium mb-1">Deliverables:</h4>
               <ul className="list-disc list-inside text-sm text-mc-text-secondary">
-                {state.spec.deliverables.map((d, i) => (
+                {approvedSpec.deliverables.map((d, i) => (
                   <li key={i}>{d}</li>
                 ))}
               </ul>
             </div>
           )}
           
-          {state.spec.success_criteria?.length > 0 && (
+          {approvedSpec.success_criteria?.length > 0 && (
             <div>
               <h4 className="text-sm font-medium mb-1">Success Criteria:</h4>
               <ul className="list-disc list-inside text-sm text-mc-text-secondary">
-                {state.spec.success_criteria.map((c, i) => (
+                {approvedSpec.success_criteria.map((c, i) => (
                   <li key={i}>{c}</li>
                 ))}
               </ul>
@@ -778,7 +780,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           <span>Planning in progress...</span>
         </div>
         <button
-          onClick={cancelPlanning}
+          onClick={() => cancelPlanning()}
           disabled={canceling}
           className="flex items-center gap-2 px-3 py-2 text-sm text-mc-accent-red hover:bg-mc-accent-red/10 rounded disabled:opacity-50"
         >
@@ -961,7 +963,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
                       )}
                     </button>
                     <button
-                      onClick={cancelPlanning}
+                      onClick={() => cancelPlanning()}
                       disabled={canceling}
                       className="px-4 py-2 text-mc-text-secondary hover:text-mc-accent-red text-sm rounded-lg border border-mc-border hover:border-mc-accent-red/30"
                     >
