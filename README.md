@@ -127,6 +127,8 @@ graph LR
 
 ## 🚀 Quick Start
 
+> **New here?** See [GETTING_STARTED.md](GETTING_STARTED.md) for the full onboarding walkthrough — prerequisites, setup, first product, and how the autopilot pipeline works.
+
 ### Prerequisites
 
 - **Node.js** `20.x` or `24.x` ([download](https://nodejs.org/) or use `nvm`)
