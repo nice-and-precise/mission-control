@@ -12,6 +12,7 @@ import {
   createTaskWorkspace,
   findFileProviderManagedAncestor,
   shouldForceFreshWorkspace,
+  triggerWorkspaceMerge,
 } from './workspace-isolation';
 import type { Task } from './types';
 
@@ -70,13 +71,15 @@ test('createTaskWorkspace forceFresh recreates a legacy workspace clone and rele
   const workspaceId = `ws-${crypto.randomUUID()}`;
   const taskId = crypto.randomUUID();
   const title = 'Refresh Workspace';
-  const projectDir = path.join(projectsPath, 'refresh-workspace');
+  const legacyProjectDir = path.join(projectsPath, 'refresh-workspace');
+  const legacyWorkspaceDir = path.join(legacyProjectDir, '.workspaces', `task-${taskId}`);
+  const projectDir = path.join(projectsPath, 'origin-repo');
   const workspaceDir = path.join(projectDir, '.workspaces', `task-${taskId}`);
 
-  mkdirSync(path.dirname(workspaceDir), { recursive: true });
-  execFileSync('git', ['clone', originRepo, workspaceDir], { stdio: 'pipe' });
+  mkdirSync(path.dirname(legacyWorkspaceDir), { recursive: true });
+  execFileSync('git', ['clone', originRepo, legacyWorkspaceDir], { stdio: 'pipe' });
   writeFileSync(
-    path.join(workspaceDir, '.mc-workspace.json'),
+    path.join(legacyWorkspaceDir, '.mc-workspace.json'),
     JSON.stringify({ taskId, strategy: 'worktree' }, null, 2),
   );
 
@@ -85,7 +88,7 @@ test('createTaskWorkspace forceFresh recreates a legacy workspace clone and rele
     `INSERT INTO tasks
       (id, title, status, priority, workspace_id, business_id, repo_url, repo_branch, workspace_path, workspace_strategy, workspace_port, created_at, updated_at)
      VALUES (?, ?, 'assigned', 'normal', ?, 'default', ?, 'main', ?, 'worktree', 4200, datetime('now'), datetime('now'))`,
-    [taskId, title, workspaceId, originRepo, workspaceDir],
+    [taskId, title, workspaceId, originRepo, legacyWorkspaceDir],
   );
   run(
     `INSERT INTO workspace_ports (id, task_id, port, product_id, status, created_at)
@@ -197,4 +200,94 @@ test('buildTaskFeatureBranch is deterministic per task and unique across same-ti
       title: 'Deduplicate repeated PR deliverables in repo-backed dispatch context',
     } as Task),
   );
+});
+
+test('createTaskWorkspace reuses a repo-scoped workspace root and resets reused worktrees to origin base', async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'mission-control-workspace-reuse-'));
+  tempRoots.add(tempRoot);
+
+  const projectsPath = path.join(tempRoot, 'projects');
+  process.env.PROJECTS_PATH = projectsPath;
+  mkdirSync(projectsPath, { recursive: true });
+
+  const originRepo = path.join(tempRoot, 'squti');
+  initOriginRepo(originRepo);
+
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+  ensureWorkspace(workspaceId);
+  run(
+    `INSERT INTO tasks
+      (id, title, status, priority, workspace_id, business_id, repo_url, repo_branch, created_at, updated_at)
+     VALUES (?, ?, 'assigned', 'normal', ?, 'default', ?, 'main', datetime('now'), datetime('now'))`,
+    [taskId, 'Fix incorrect statute subdivision citation on certification card spec', workspaceId, originRepo],
+  );
+
+  const seededTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  assert.ok(seededTask, 'Expected seeded task');
+
+  const initialWorkspace = await createTaskWorkspace(seededTask);
+  const expectedWorkspaceDir = path.join(projectsPath, 'squti', '.workspaces', `task-${taskId}`);
+  assert.equal(initialWorkspace.path, expectedWorkspaceDir);
+
+  writeFileSync(path.join(initialWorkspace.path, 'local-only.txt'), 'stale workspace state\n');
+
+  writeFileSync(path.join(originRepo, 'README.md'), '# updated from origin\n');
+  execFileSync('git', ['add', 'README.md'], { cwd: originRepo, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-m', 'advance origin'], { cwd: originRepo, stdio: 'pipe' });
+  const advancedOriginCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: originRepo,
+    encoding: 'utf-8',
+    stdio: 'pipe',
+  }).trim();
+
+  const refreshedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  assert.ok(refreshedTask, 'Expected refreshed task');
+
+  const reusedWorkspace = await createTaskWorkspace(refreshedTask);
+  const reusedWorkspaceHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: reusedWorkspace.path,
+    encoding: 'utf-8',
+    stdio: 'pipe',
+  }).trim();
+
+  assert.equal(reusedWorkspace.path, expectedWorkspaceDir);
+  assert.equal(reusedWorkspace.baseCommit, advancedOriginCommit);
+  assert.equal(reusedWorkspaceHead, advancedOriginCommit);
+  assert.equal(existsSync(path.join(reusedWorkspace.path, 'local-only.txt')), false);
+});
+
+test('triggerWorkspaceMerge is idempotent for an already-merged task workspace', async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'mission-control-workspace-merge-'));
+  tempRoots.add(tempRoot);
+
+  const projectsPath = path.join(tempRoot, 'projects');
+  process.env.PROJECTS_PATH = projectsPath;
+  mkdirSync(projectsPath, { recursive: true });
+
+  const originRepo = path.join(tempRoot, 'squti');
+  initOriginRepo(originRepo);
+
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+  ensureWorkspace(workspaceId);
+  run(
+    `INSERT INTO tasks
+      (id, title, status, priority, workspace_id, business_id, repo_url, repo_branch, created_at, updated_at)
+     VALUES (?, ?, 'done', 'normal', ?, 'default', ?, 'main', datetime('now'), datetime('now'))`,
+    [taskId, 'Inline subdivision citations for curriculum modules', workspaceId, originRepo],
+  );
+
+  const seededTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  assert.ok(seededTask, 'Expected seeded task');
+
+  await createTaskWorkspace(seededTask);
+
+  const firstMerge = await triggerWorkspaceMerge(taskId);
+  const secondMerge = await triggerWorkspaceMerge(taskId);
+  const mergeRows = queryAll<{ id: string }>('SELECT id FROM workspace_merges WHERE task_id = ?', [taskId]);
+
+  assert.equal(firstMerge?.success, true);
+  assert.equal(secondMerge?.success, true);
+  assert.equal(mergeRows.length, 1);
 });
