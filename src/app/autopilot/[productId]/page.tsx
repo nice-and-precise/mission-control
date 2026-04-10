@@ -93,7 +93,7 @@ export default function ProductDashboardPage() {
         const resCycles = await resRes.json();
         const latestResearch = resCycles[0];
 
-        if (latestResearch?.status === 'failed') {
+        if (latestResearch?.status === 'failed' || latestResearch?.status === 'interrupted') {
           setPipelineError(latestResearch.error_message || 'Research failed');
           setPipeline('error');
           return;
@@ -110,7 +110,7 @@ export default function ProductDashboardPage() {
             setPipeline('ideating');
           } else if (latestIdeation.status === 'completed') {
             setPipeline('done');
-          } else if (latestIdeation.status === 'failed') {
+          } else if (latestIdeation.status === 'failed' || latestIdeation.status === 'interrupted') {
             setPipelineError(latestIdeation.error_message || 'Ideation failed');
             setPipeline('error');
           }

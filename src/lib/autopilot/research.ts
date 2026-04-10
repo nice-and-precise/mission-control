@@ -10,6 +10,7 @@ import { runIdeationCycle } from './ideation';
 import { recalculateAndBroadcast } from './health-score';
 import { completeJSON } from './llm';
 import { getResearchPrograms } from './ab-testing';
+import { recoverStaleCycles, startCycleHeartbeat } from './cycle-runtime';
 import type { Product, ResearchCycle } from '@/lib/types';
 
 function buildResearchPrompt(product: Product, learnedPreferences?: string): string {
@@ -59,6 +60,7 @@ ${learnedPreferences ? `## Learned Preferences\n${learnedPreferences}` : ''}`;
 export async function runResearchCycle(productId: string, existingCycleId?: string, chainIdeation = false): Promise<string> {
   const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
   if (!product) throw new Error(`Product ${productId} not found`);
+  recoverStaleCycles('research', productId);
   const model = await resolveAutopilotModelForWorkspace(product.workspace_id);
 
   const prefModel = queryOne<{ learned_preferences_md: string }>(
@@ -141,11 +143,19 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
         });
         broadcast({ type: 'research_phase', payload: { productId, cycleId, phase: 'llm_polling' } });
 
-        const { data: report, model: responseModel, usage } = await completeJSON(prompt, {
-          model,
-          systemPrompt: 'You are a compliance gap auditor. Analyze the product against its finish-line artifact checklist and respond with a JSON research report only.',
-          timeoutMs: 600_000,
-        });
+        const stopHeartbeat = startCycleHeartbeat('research', cycleId);
+        let report: unknown;
+        let responseModel: string;
+        let usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+        try {
+          ({ data: report, model: responseModel, usage } = await completeJSON(prompt, {
+            model,
+            systemPrompt: 'You are a compliance gap auditor. Analyze the product against its finish-line artifact checklist and respond with a JSON research report only.',
+            timeoutMs: 600_000,
+          }));
+        } finally {
+          stopHeartbeat();
+        }
 
         allReports.push({ report, variantId: programEntry.variantId, variantName: programEntry.variantName });
         totalTokens += usage.totalTokens;
@@ -246,6 +256,7 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
 }
 
 export function getResearchCycles(productId: string): ResearchCycle[] {
+  recoverStaleCycles('research', productId);
   return queryAll<ResearchCycle>(
     'SELECT * FROM research_cycles WHERE product_id = ? ORDER BY started_at DESC',
     [productId]

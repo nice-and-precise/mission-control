@@ -16,6 +16,12 @@ function formatElapsed(startedAt: string, nowMs: number): string {
   return `${min}m ${sec}s`;
 }
 
+function isLikelyStale(lastHeartbeat?: string, startedAt?: string): boolean {
+  const reference = lastHeartbeat || startedAt;
+  if (!reference) return false;
+  return Date.now() - new Date(reference).getTime() > 90_000;
+}
+
 export function ResearchReport({ productId }: ResearchReportProps) {
   const [cycles, setCycles] = useState<ResearchCycle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,6 +48,7 @@ export function ResearchReport({ productId }: ResearchReportProps) {
   useEffect(() => { void loadCycles(); }, [loadCycles]);
 
   const activeCycle = cycles.find(c => c.status === 'running') || null;
+  const activeCycleStale = activeCycle ? isLikelyStale(activeCycle.last_heartbeat, activeCycle.started_at) : false;
 
   // Poll while running
   useEffect(() => {
@@ -115,7 +122,9 @@ export function ResearchReport({ productId }: ResearchReportProps) {
             <span>Started: {new Date(activeCycle.started_at).toLocaleTimeString()}</span>
           </div>
           <p className="mt-2 text-xs text-mc-text-secondary">
-            Not stuck — research can take a few minutes. Live steps appear in the Activity panel on the right.
+            {activeCycleStale
+              ? 'No recent heartbeat detected. Refreshing the page will recover an orphaned run so you can restart it cleanly.'
+              : 'Research is live. Heartbeats update automatically while the LLM request is still active.'}
           </p>
         </div>
       )}
@@ -133,6 +142,7 @@ export function ResearchReport({ productId }: ResearchReportProps) {
                   <span className={`text-xs px-2 py-0.5 rounded font-medium ${
                     cycle.status === 'completed' ? 'bg-green-500/20 text-green-400' :
                     cycle.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
+                    cycle.status === 'interrupted' ? 'bg-amber-500/20 text-amber-300' :
                     cycle.status === 'failed' ? 'bg-red-500/20 text-red-400' :
                     'bg-mc-bg-tertiary text-mc-text-secondary'
                   }`}>

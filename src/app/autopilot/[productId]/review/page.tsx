@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Layers } from 'lucide-react';
@@ -13,22 +13,49 @@ export default function BatchReviewPage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function loadIdeas() {
-      try {
-        const res = await fetch(`/api/products/${productId}/ideas/pending?sort_by=impact_score&sort_dir=desc`);
-        if (res.ok) {
-          const data = await res.json();
-          setIdeas(data);
-        }
-      } catch (error) {
-        console.error('Failed to load pending ideas:', error);
-      } finally {
+  const loadIdeas = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setLoading(true);
+    }
+
+    try {
+      const res = await fetch(`/api/products/${productId}/ideas/pending?sort_by=impact_score&sort_dir=desc`);
+      if (res.ok) {
+        const data = await res.json();
+        setIdeas(data);
+      }
+    } catch (error) {
+      console.error('Failed to load pending ideas:', error);
+    } finally {
+      if (!options?.silent) {
         setLoading(false);
       }
     }
-    loadIdeas();
   }, [productId]);
+
+  useEffect(() => {
+    loadIdeas();
+  }, [loadIdeas]);
+
+  useEffect(() => {
+    const es = new EventSource('/api/events/stream');
+
+    es.onmessage = (event) => {
+      try {
+        if (event.data.startsWith(':')) return;
+        const sseEvent = JSON.parse(event.data) as { type?: string; payload?: { productId?: string } };
+        if (sseEvent.payload?.productId !== productId) return;
+
+        if (sseEvent.type === 'ideas_generated' || sseEvent.type === 'idea_swiped' || sseEvent.type === 'maybe_resurfaced') {
+          loadIdeas({ silent: true });
+        }
+      } catch {
+        // ignore malformed SSE payloads
+      }
+    };
+
+    return () => es.close();
+  }, [loadIdeas, productId]);
 
   const handleBatchComplete = () => {
     // Navigate back to swipe deck or product page

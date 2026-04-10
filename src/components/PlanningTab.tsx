@@ -195,7 +195,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
             setSubmitting(false);
           }
           // Always clear submitting state when we have a question
-          if (data.currentQuestion) {
+          if (effectiveQuestion) {
             setIsSubmittingAnswer(false);
             setSubmitting(false);
           }
@@ -210,7 +210,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
             setStalePlanning(true);
           }
 
-          if (data.currentQuestion || data.complete || data.dispatchError || data.transcriptIssue) {
+          if (effectiveQuestion || effectiveComplete || effectiveDispatchError || effectiveTranscriptIssue) {
             setIsWaitingForResponse(false);
             stopPolling();
           }
@@ -733,7 +733,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           </div>
         )}
 
-        {state?.currentQuestion ? (
+        {state?.currentQuestion && !isWaitingForResponse ? (
           <div className="max-w-xl mx-auto">
             <h3 className="text-lg font-medium mb-6">
               {state.currentQuestion.question}
@@ -854,11 +854,11 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
         ) : (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              {stalePlanning ? (
+              {stalePlanning || transcriptIssue ? (
                 <>
                   <AlertCircle className="w-8 h-8 text-amber-400 mx-auto mb-3" />
                   <p className="text-amber-300 font-medium mb-2">
-                    {transcriptIssue ? 'Planning transcript needs recovery' : 'Planning appears stuck'}
+                    {transcriptIssue ? 'Planning needs recovery' : 'Planning appears stuck'}
                   </p>
                   <p className="text-mc-text-secondary text-sm mb-4 max-w-sm">
                     {transcriptIssue
