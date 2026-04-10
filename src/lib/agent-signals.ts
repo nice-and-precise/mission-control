@@ -1,7 +1,7 @@
 import { queryAll, queryOne, run, transaction } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { triggerWorkspaceMerge } from '@/lib/workspace-isolation';
-import { drainQueue, handleStageFailure, handleStageTransition } from '@/lib/workflow-engine';
+import { drainQueue, handleStageFailure, handleStageTransition, dispatchNextQueuedTask } from '@/lib/workflow-engine';
 import { buildAgentSessionKey } from '@/lib/openclaw/routing';
 import { syncOpenClawBuildUsage } from '@/lib/openclaw/session-runtime';
 import { sanitizeAgentSignalSummary, stripAgentResponseWrappers } from '@/lib/agent-signal-text';
@@ -272,8 +272,15 @@ export async function processAgentSignal(
       broadcast({ type: 'task_updated', payload: refreshedTask });
     }
 
-    setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    const blockedAgentId = session?.agent_id || task.assigned_agent_id;
+    setAgentStandbyIfIdle(blockedAgentId, task.id, now);
     triggerBuildUsageSync(task.id);
+    // Agent is freed — dispatch next queued task
+    if (blockedAgentId && task.workspace_id) {
+      dispatchNextQueuedTask(blockedAgentId, task.id, task.workspace_id).catch((err) => {
+        console.error('[AgentSignals] dispatchNextQueuedTask after blocked failed:', err);
+      });
+    }
     return { handled: true, taskId: task.id, signal: parsed.kind };
   }
 
@@ -340,11 +347,18 @@ export async function processAgentSignal(
   }
 
   if (targetStatus === 'done') {
-    setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    const freedAgentId = session?.agent_id || task.assigned_agent_id;
+    setAgentStandbyIfIdle(freedAgentId, task.id, now);
     triggerBuildUsageSync(task.id);
     drainQueue(task.id, task.workspace_id).catch((err) => {
       console.error('[AgentSignals] drainQueue after done failed:', err);
     });
+    // Dispatch the next queued task for the now-idle agent
+    if (freedAgentId && task.workspace_id) {
+      dispatchNextQueuedTask(freedAgentId, task.id, task.workspace_id).catch((err) => {
+        console.error('[AgentSignals] dispatchNextQueuedTask after done failed:', err);
+      });
+    }
     if (refreshedTask?.workspace_path) {
       triggerWorkspaceMerge(task.id).catch((err) => {
         console.error('[AgentSignals] workspace merge after done failed:', err);
