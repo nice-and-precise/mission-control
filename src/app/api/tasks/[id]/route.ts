@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
-import { queryOne, queryAll, run } from '@/lib/db';
+import { queryOne, queryAll, run, transaction } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { getMissionControlUrl } from '@/lib/config';
 import { normalizeIdeaTags } from '@/lib/task-ideas';
@@ -192,6 +192,7 @@ export async function PATCH(
     // Track if we need to dispatch task
     let shouldDispatch = false;
     let shouldDispatchWorkflowStage = false;
+    let boardOverrideAllowed = false;
 
     const effectiveAssignedAgentId =
       validatedData.assigned_agent_id !== undefined
@@ -342,7 +343,7 @@ export async function PATCH(
       }
 
       const boardOverrideRequested = Boolean(body.board_override);
-      const boardOverrideAllowed = boardOverrideRequested && canUseBoardOverride(request);
+      boardOverrideAllowed = boardOverrideRequested && canUseBoardOverride(request);
 
       // Hard evidence gate for forward-stage transitions and completion
       const enteringQualityStage = ['testing', 'review', 'verification', 'done'].includes(nextStatus);
@@ -360,36 +361,10 @@ export async function PATCH(
       updates.push('status = ?');
       values.push(nextStatus);
 
-      if (boardOverrideAllowed) {
-        auditBoardOverride(id, existing.status, nextStatus, body.override_reason);
-      }
-
       // Auto-dispatch when moving to assigned (if we have a valid assignee)
       if (nextStatus === 'assigned' && effectiveAssignedAgentId) {
         shouldDispatch = true;
       }
-
-      // When a task completes, reset the assigned agent to standby (if not working on other tasks)
-      if (nextStatus === 'done' && existing.assigned_agent_id) {
-        const otherActiveTasks = queryOne<{ cnt: number }>(
-          `SELECT COUNT(*) as cnt FROM tasks WHERE assigned_agent_id = ? AND id != ? AND status IN ('assigned', 'in_progress', 'testing', 'verification')`,
-          [existing.assigned_agent_id, id]
-        );
-        if (!otherActiveTasks || otherActiveTasks.cnt === 0) {
-          run(
-            `UPDATE agents SET status = 'standby', updated_at = datetime('now') WHERE id = ? AND status = 'working'`,
-            [existing.assigned_agent_id]
-          );
-        }
-      }
-
-      // Log status change event
-      const eventType = nextStatus === 'done' ? 'task_completed' : 'task_status_changed';
-      run(
-        `INSERT INTO events (id, type, task_id, message, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [uuidv4(), eventType, id, `Task "${existing.title}" moved to ${nextStatus}`, now]
-      );
     }
 
     // Handle assignment change
@@ -450,9 +425,71 @@ export async function PATCH(
 
     updates.push('updated_at = ?');
     values.push(now);
-    values.push(id);
+    const statusChanged = nextStatus !== undefined && nextStatus !== existing.status;
+    const eventType = statusChanged
+      ? (nextStatus === 'done' ? 'task_completed' : 'task_status_changed')
+      : null;
+    const updateSql = `UPDATE tasks SET ${updates.join(', ')}`;
+    const updateParams = [...values];
 
-    run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
+    if (statusChanged) {
+      const applied = transaction(() => {
+        const result = run(`${updateSql} WHERE id = ? AND status = ?`, [...updateParams, id, existing.status]);
+        if (result.changes === 0) {
+          return false;
+        }
+
+        if (boardOverrideAllowed) {
+          auditBoardOverride(id, existing.status, nextStatus!, body.override_reason);
+        }
+
+        if (eventType) {
+          run(
+            `INSERT INTO events (id, type, task_id, message, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+            [uuidv4(), eventType, id, `Task "${existing.title}" moved to ${nextStatus}`, now]
+          );
+        }
+
+        return true;
+      });
+
+      if (!applied) {
+        const concurrentTask = queryOne<Task>(
+          `SELECT t.*,
+            aa.name as assigned_agent_name,
+            aa.avatar_emoji as assigned_agent_emoji,
+            ca.name as created_by_agent_name,
+            ca.avatar_emoji as created_by_agent_emoji
+           FROM tasks t
+           LEFT JOIN agents aa ON t.assigned_agent_id = aa.id
+           LEFT JOIN agents ca ON t.created_by_agent_id = ca.id
+           WHERE t.id = ?`,
+          [id]
+        );
+
+        if (concurrentTask) {
+          return NextResponse.json(concurrentTask);
+        }
+
+        return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+      }
+    } else {
+      run(`${updateSql} WHERE id = ?`, [...updateParams, id]);
+    }
+
+    if (statusChanged && nextStatus === 'done' && existing.assigned_agent_id) {
+      const otherActiveTasks = queryOne<{ cnt: number }>(
+        `SELECT COUNT(*) as cnt FROM tasks WHERE assigned_agent_id = ? AND id != ? AND status IN ('assigned', 'in_progress', 'testing', 'verification')`,
+        [existing.assigned_agent_id, id]
+      );
+      if (!otherActiveTasks || otherActiveTasks.cnt === 0) {
+        run(
+          `UPDATE agents SET status = 'standby', updated_at = datetime('now') WHERE id = ? AND status = 'working'`,
+          [existing.assigned_agent_id]
+        );
+      }
+    }
 
     const shouldDetachCurrentRootSessions = shouldDetachRootSessionsForTaskUpdate({
       existingStatus: existing.status,

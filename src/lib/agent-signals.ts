@@ -1,4 +1,4 @@
-import { queryAll, queryOne, run } from '@/lib/db';
+import { queryAll, queryOne, run, transaction } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { triggerWorkspaceMerge } from '@/lib/workspace-isolation';
 import { drainQueue, handleStageFailure, handleStageTransition } from '@/lib/workflow-engine';
@@ -288,26 +288,53 @@ export async function processAgentSignal(
     return { handled: true, taskId: task.id, signal: parsed.kind };
   }
 
-  run(
-    `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
-     VALUES (?, ?, ?, 'completed', ?, ?)`,
-    [
-      crypto.randomUUID(),
-      task.id,
-      session?.agent_id || task.assigned_agent_id || null,
-      parsed.summary,
-      now,
-    ]
-  );
+  const transition = transaction(() => {
+    const currentTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]);
+    if (!currentTask || shouldIgnoreSignal(currentTask, targetStatus)) {
+      return { applied: false, previousStatus: currentTask?.status, task: currentTask };
+    }
 
-  run(
-    `UPDATE tasks
-     SET status = ?, planning_dispatch_error = NULL, status_reason = NULL, updated_at = ?
-     WHERE id = ?`,
-    [targetStatus, now, task.id]
-  );
+    const updateResult = run(
+      `UPDATE tasks
+       SET status = ?, planning_dispatch_error = NULL, status_reason = NULL, updated_at = ?
+       WHERE id = ? AND status = ?`,
+      [targetStatus, now, task.id, currentTask.status]
+    );
 
-  const refreshedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]);
+    if (updateResult.changes === 0) {
+      return {
+        applied: false,
+        previousStatus: currentTask.status,
+        task: queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]) || currentTask,
+      };
+    }
+
+    run(
+      `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+       VALUES (?, ?, ?, 'completed', ?, ?)`,
+      [
+        crypto.randomUUID(),
+        task.id,
+        session?.agent_id || currentTask.assigned_agent_id || null,
+        parsed.summary,
+        now,
+      ]
+    );
+
+    return {
+      applied: true,
+      previousStatus: currentTask.status,
+      task: queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]) || currentTask,
+    };
+  });
+
+  const refreshedTask = transition.task;
+  if (!transition.applied) {
+    setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    triggerBuildUsageSync(task.id);
+    return { handled: true, taskId: task.id, signal: parsed.kind };
+  }
+
   if (refreshedTask) {
     broadcast({ type: 'task_updated', payload: refreshedTask });
   }
@@ -318,7 +345,7 @@ export async function processAgentSignal(
     drainQueue(task.id, task.workspace_id).catch((err) => {
       console.error('[AgentSignals] drainQueue after done failed:', err);
     });
-    if (task.workspace_path) {
+    if (refreshedTask?.workspace_path) {
       triggerWorkspaceMerge(task.id).catch((err) => {
         console.error('[AgentSignals] workspace merge after done failed:', err);
       });
@@ -337,7 +364,7 @@ export async function processAgentSignal(
   }
 
   const handoff = await handleStageTransition(task.id, targetStatus, {
-    previousStatus: task.status,
+    previousStatus: transition.previousStatus || task.status,
   });
 
   if (!handoff.success && handoff.error) {
