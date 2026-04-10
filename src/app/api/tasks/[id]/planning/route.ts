@@ -187,6 +187,16 @@ Respond with ONLY valid JSON in this format:
   ]
 }`;
 
+    // Persist session state before contacting OpenClaw so the task can be
+    // recovered from the UI even if the gateway call is slow or times out.
+    const messages = [{ role: 'user', content: planningPrompt, timestamp: Date.now() }];
+
+    getDb().prepare(`
+      UPDATE tasks
+      SET planning_session_key = ?, planning_messages = ?, status = 'planning', updated_at = datetime('now')
+      WHERE id = ?
+    `).run(sessionKey, JSON.stringify(messages), taskId);
+
     // Connect to OpenClaw and send the planning request
     const client = getOpenClawClient();
     if (!client.isConnected()) {
@@ -212,15 +222,6 @@ Respond with ONLY valid JSON in this format:
       await client.patchSessionModel(sessionKey, planningModel);
     }
 
-    // Store the session key and initial message
-    const messages = [{ role: 'user', content: planningPrompt, timestamp: Date.now() }];
-
-    getDb().prepare(`
-      UPDATE tasks
-      SET planning_session_key = ?, planning_messages = ?, status = 'planning'
-      WHERE id = ?
-    `).run(sessionKey, JSON.stringify(messages), taskId);
-
     // Return immediately - frontend will poll for updates
     // This eliminates the aggressive polling loop that was making 30+ OpenClaw API calls
     return NextResponse.json({
@@ -232,6 +233,15 @@ Respond with ONLY valid JSON in this format:
     });
   } catch (error) {
     console.error('Failed to start planning:', error);
+
+    // If we pre-persisted the session state but the gateway call failed,
+    // clear it so the user can retry without getting "Planning already started".
+    getDb().prepare(`
+      UPDATE tasks
+      SET planning_session_key = NULL, planning_messages = NULL, status = 'inbox', updated_at = datetime('now')
+      WHERE id = ? AND status = 'planning'
+    `).run(taskId);
+
     return NextResponse.json({ error: 'Failed to start planning: ' + (error as Error).message }, { status: 500 });
   }
 }
