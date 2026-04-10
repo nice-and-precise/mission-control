@@ -46,6 +46,8 @@ Based on this answer and the conversation so far, either:
 1. Ask your next question (if you need more information)
 2. Complete the planning (if you have enough information)
 
+Respond with ONLY valid JSON. Do not add commentary, explanations, status updates, markdown fences, or any prose before or after the JSON.
+
 For another question, respond with JSON:
 {
   "question": "Your next question?",

@@ -129,3 +129,29 @@ test('runResearchCycle retries invalid JSON and completes for a qwen workspace o
   assert.equal(storedCycle?.current_phase, 'completed');
   assert.match(storedCycle?.report || '', /"technology"/);
 });
+
+test('getResearchCycles interrupts stale running cycles with no recent heartbeat', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const productId = crypto.randomUUID();
+  seedProduct(productId, workspaceId);
+
+  const staleCycleId = crypto.randomUUID();
+  run(
+    `INSERT INTO research_cycles (
+       id, product_id, status, current_phase, started_at, last_heartbeat
+     ) VALUES (?, ?, 'running', 'llm_polling', ?, ?)`,
+    [
+      staleCycleId,
+      productId,
+      '2026-04-09T23:00:00.000Z',
+      '2026-04-09T23:00:00.000Z',
+    ],
+  );
+
+  const mod = await import(`./research?test-stale=${Date.now()}`);
+  const cycles = mod.getResearchCycles(productId);
+  const recovered = cycles.find((cycle: { id: string }) => cycle.id === staleCycleId);
+
+  assert.equal(recovered?.status, 'interrupted');
+  assert.match(recovered?.error_message || '', /Mission Control lost its worker/i);
+});

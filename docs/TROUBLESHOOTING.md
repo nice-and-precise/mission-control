@@ -108,6 +108,8 @@ See [CARD_OPERATIONS_RUNBOOK.md](CARD_OPERATIONS_RUNBOOK.md) for the full proced
 
 **Cause (most common):** The planner run already completed but the `PLANNING_COMPLETE` marker was missed due to a restart or an oversized transcript entry that OpenClaw omitted.
 
+**Also possible:** The planner answered in free-form prose instead of the required JSON question/completion format. Before the `2026-04-09` planning-loop fix, Mission Control could then resurface an older already-answered multiple-choice question, which made the UI look like it was asking the same thing repeatedly.
+
 **Fix:**
 ```bash
 # Check gateway history for the planning session key
@@ -116,6 +118,20 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 
 If the history shows a completed spec, use `POST /api/tasks/{id}/planning/retry-dispatch` to re-trigger the planning reconcile from transcript.
+
+If the task now reports:
+
+- `transcriptIssue.code = "unstructured_response"`
+
+then the planner replied, but not in a machine-readable question/completion shape. Mission Control now does two things:
+
+- it stops resurfacing the old answered question
+- it shows an explicit recovery message instead of pretending the old question is still active
+
+**Recovery options:**
+1. Retry the last answer once from the Planning tab.
+2. If the planner is still non-JSON, cancel and restart planning for that task.
+3. If transcript history already contains a valid completion payload, use the recovery path and approve the recovered plan.
 
 ---
 

@@ -49,6 +49,28 @@ export function SwipeDeck({ productId }: SwipeDeckProps) {
     loadDeck();
   }, [loadDeck]);
 
+  useEffect(() => {
+    const es = new EventSource('/api/events/stream');
+
+    es.onmessage = (event) => {
+      try {
+        if (event.data.startsWith(':')) return;
+        const sseEvent = JSON.parse(event.data) as { type?: string; payload?: { productId?: string } };
+        if (sseEvent.type !== 'ideas_generated' || sseEvent.payload?.productId !== productId) {
+          return;
+        }
+
+        if (!ideas[currentIndex] || ideas.length - currentIndex <= 0) {
+          loadDeck();
+        }
+      } catch {
+        // ignore malformed SSE payloads
+      }
+    };
+
+    return () => es.close();
+  }, [currentIndex, ideas, loadDeck, productId]);
+
   const handleSwipe = useCallback(async (action: SwipeAction, notes?: string) => {
     const idea = ideas[currentIndex];
     if (!idea) return;

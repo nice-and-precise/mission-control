@@ -103,6 +103,7 @@ The following facts were re-verified against the live local runtime on `2026-04-
   - if a planner run already finished, Mission Control can recover the completed spec from stored/OpenClaw transcript history on a later read
   - if OpenClaw omits oversized transcript entries, Mission Control now surfaces a structured `transcriptIssue` instead of silently waiting forever
   - this local checkout also tolerates the malformed planner `constraints` JSON shape observed on `2026-03-28`, so an almost-valid completion payload does not leave the task stuck in `Waiting for response...`
+  - follow-up planning answers now require JSON-only planner replies as well; if the planner emits prose after a user answer, Mission Control surfaces `transcriptIssue.code = "unstructured_response"` and does not resurrect an already-answered older multiple-choice question
 - Session history, model discovery, and detached work are now separated into explicit operator surfaces
   - authenticated `GET /api/openclaw/sessions/{id}/history` resolves either a session key or runtime session ID into a normalized Mission Control transcript payload
   - `GET /api/openclaw/models` now separates `agentTargets` from `providerModels`, and local Autopilot defaults to `openclaw`

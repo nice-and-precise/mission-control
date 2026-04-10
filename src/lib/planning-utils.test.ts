@@ -128,6 +128,36 @@ test('resolvePlanningTranscript gives completion precedence over earlier questio
   assert.equal((resolution.completion?.spec as { title?: string })?.title, 'Completed Plan');
 });
 
+test('resolvePlanningTranscript does not reuse an already-answered question', () => {
+  const messages: PlanningMessage[] = [
+    { role: 'user', content: 'Start', timestamp: 1 },
+    planningQuestion('Which mapping should I use?'),
+    { role: 'assistant', content: 'I need to inspect the files first.', timestamp: 2 },
+    { role: 'user', content: 'Keep both mappings.', timestamp: 3 },
+    { role: 'assistant', content: 'Let me verify the full state.', timestamp: 4 },
+  ];
+
+  const resolution = resolvePlanningTranscript(messages);
+
+  assert.equal(resolution.completion, null);
+  assert.equal(resolution.currentQuestion, null);
+  assert.equal(resolution.transcriptIssue?.code, 'unstructured_response');
+});
+
+test('resolvePlanningTranscript keeps waiting state clean when no assistant reply has arrived yet', () => {
+  const messages: PlanningMessage[] = [
+    { role: 'user', content: 'Start', timestamp: 1 },
+    planningQuestion('Which mapping should I use?'),
+    { role: 'user', content: 'Keep both mappings.', timestamp: 2 },
+  ];
+
+  const resolution = resolvePlanningTranscript(messages);
+
+  assert.equal(resolution.completion, null);
+  assert.equal(resolution.currentQuestion, null);
+  assert.equal(resolution.transcriptIssue, null);
+});
+
 test('extractJSON repairs malformed planner constraints objects well enough to recover completion', () => {
   const malformed = `\`\`\`json
 {

@@ -9,7 +9,8 @@ import { emitAutopilotActivity } from './activity';
 import { completeJSON } from './llm';
 import { batchCheckSimilarity, storeEmbedding, checkSimilarity } from './similarity';
 import { getResearchPrograms } from './ab-testing';
-import type { Product, Idea, ResearchCycle, SwipeHistoryEntry } from '@/lib/types';
+import { recoverStaleCycles, startCycleHeartbeat } from './cycle-runtime';
+import type { Product, Idea, ResearchCycle, SwipeHistoryEntry, IdeationCycle } from '@/lib/types';
 
 function isIdeaLikeRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value)
@@ -151,6 +152,7 @@ Respond with ONLY a JSON array of idea objects. No markdown, no code blocks, no 
 export async function runIdeationCycle(productId: string, cycleId?: string, existingIdeationId?: string): Promise<string> {
   const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
   if (!product) throw new Error(`Product ${productId} not found`);
+  recoverStaleCycles('ideation', productId);
   const model = await resolveAutopilotModelForWorkspace(product.workspace_id);
 
   // Get latest research report
@@ -264,19 +266,31 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
         });
         broadcast({ type: 'ideation_phase', payload: { productId, ideationId, phase: 'llm_polling' } });
 
-        const {
-          data: rawIdeas,
-          model: responseModel,
-          usage,
-          transport,
-          requestedModel,
-          resolvedModel,
-          finishReason,
-        } = await completeJSON<unknown>(prompt, {
-          model,
-          systemPrompt: 'You are a finish-line task generator. Respond with a JSON array of task objects that each target a specific artifact on the finish-line checklist.',
-          timeoutMs: 600_000,
-        });
+        const stopHeartbeat = startCycleHeartbeat('ideation', ideationId);
+        let rawIdeas: unknown;
+        let responseModel: string;
+        let usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+        let transport: string;
+        let requestedModel: string;
+        let resolvedModel: string;
+        let finishReason: string | undefined;
+        try {
+          ({
+            data: rawIdeas,
+            model: responseModel,
+            usage,
+            transport,
+            requestedModel,
+            resolvedModel,
+            finishReason,
+          } = await completeJSON<unknown>(prompt, {
+            model,
+            systemPrompt: 'You are a finish-line task generator. Respond with a JSON array of task objects that each target a specific artifact on the finish-line checklist.',
+            timeoutMs: 600_000,
+          }));
+        } finally {
+          stopHeartbeat();
+        }
 
         const ideasData = extractIdeaArray(rawIdeas);
         if (!ideasData) {
@@ -335,6 +349,14 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
   })();
 
   return ideationId;
+}
+
+export function getIdeationCycles(productId: string): IdeationCycle[] {
+  recoverStaleCycles('ideation', productId);
+  return queryAll<IdeationCycle>(
+    'SELECT * FROM ideation_cycles WHERE product_id = ? ORDER BY started_at DESC LIMIT 20',
+    [productId],
+  );
 }
 
 /**
