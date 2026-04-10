@@ -465,8 +465,11 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
   };
 
   // Cancel planning
-  const cancelPlanning = async () => {
-    if (!confirm('Are you sure you want to cancel planning? This will reset the planning state.')) {
+  const cancelPlanning = async (restartMode = false) => {
+    const msg = restartMode
+      ? 'Restart planning? This will clear the current planning state so you can start over.'
+      : 'Are you sure you want to cancel planning? This will reset the planning state.';
+    if (!confirm(msg)) {
       return;
     }
 
@@ -509,7 +512,15 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
   }
 
   // Planning complete but no structured spec was recovered.
-  if (state?.isComplete && !state?.spec) {
+  const spec = state?.spec;
+  const hasRecoverableSpec =
+    !!spec &&
+    typeof spec === 'object' &&
+    Object.keys(spec).length > 0 &&
+    (typeof spec.title === 'string' && spec.title.trim().length > 0 ||
+      typeof spec.summary === 'string' && spec.summary.trim().length > 0);
+
+  if (state?.isComplete && !hasRecoverableSpec) {
     return (
       <div className="p-4 space-y-4">
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
@@ -536,7 +547,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={cancelPlanning}
+            onClick={() => cancelPlanning(true)}
             disabled={canceling}
             className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-sm rounded-lg border border-amber-500/30 disabled:opacity-50 flex items-center gap-2"
           >
@@ -575,7 +586,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
   }
 
   // Planning complete - show spec and agents
-  if (state?.isComplete && state?.spec) {
+  if (state?.isComplete && hasRecoverableSpec) {
     return (
       <div className="p-4 space-y-6">
         <div className="flex items-center justify-between">

@@ -233,6 +233,15 @@ Respond with ONLY valid JSON in this format:
     });
   } catch (error) {
     console.error('Failed to start planning:', error);
+
+    // If we pre-persisted the session state but the gateway call failed,
+    // clear it so the user can retry without getting "Planning already started".
+    getDb().prepare(`
+      UPDATE tasks
+      SET planning_session_key = NULL, planning_messages = NULL, status = 'inbox', updated_at = datetime('now')
+      WHERE id = ? AND status = 'planning'
+    `).run(taskId);
+
     return NextResponse.json({ error: 'Failed to start planning: ' + (error as Error).message }, { status: 500 });
   }
 }
