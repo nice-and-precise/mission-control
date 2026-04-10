@@ -7,6 +7,7 @@ import { processAgentSignal } from '@/lib/agent-signals';
 import { resolveTaskRunOutcomeFromGatewayHistory } from '@/lib/openclaw/session-history';
 import { syncOpenClawBuildUsage } from '@/lib/openclaw/session-runtime';
 import { buildQueuedTaskWaitingMessage, findBlockingActiveTask } from '@/lib/task-queue';
+import { dispatchNextQueuedTask } from '@/lib/workflow-engine';
 import {
   buildStoredSessionKey,
   getAuthoritativeStoredTaskSession,
@@ -588,6 +589,10 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
           `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
           [now, latestTask.assigned_agent_id]
         );
+        // Agent freed — dispatch next queued task
+        dispatchNextQueuedTask(latestTask.assigned_agent_id, task.id, latestTask.workspace_id).catch(err =>
+          console.error('[Health] dispatchNextQueuedTask after unreconciled run (dup) failed:', err)
+        );
       }
       continue;
     }
@@ -607,6 +612,10 @@ async function recoverUnreconciledTaskRunsInternal(now: string): Promise<number>
       run(
         `UPDATE agents SET status = 'standby', updated_at = ? WHERE id = ? AND status = 'working'`,
         [now, latestTask.assigned_agent_id]
+      );
+      // Agent freed — dispatch next queued task
+      dispatchNextQueuedTask(latestTask.assigned_agent_id, task.id, latestTask.workspace_id).catch(err =>
+        console.error('[Health] dispatchNextQueuedTask after unreconciled run failed:', err)
       );
     }
 

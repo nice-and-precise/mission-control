@@ -11,6 +11,7 @@ import {
   getWorkflowOwnerRoleForStatus,
   drainQueue,
   populateTaskRolesFromAgents,
+  dispatchNextQueuedTask,
 } from '@/lib/workflow-engine';
 import { hasStageEvidence, canUseBoardOverride, auditBoardOverride, taskCanBeDone, recordLearnerOnTransition } from '@/lib/task-governance';
 import { updateConvoyProgress, checkConvoyCompletion } from '@/lib/convoy';
@@ -421,6 +422,12 @@ export async function PATCH(
 
     if (nextStatus === 'inbox') {
       updates.push('assigned_agent_id = NULL');
+      // Agent freed — dispatch next queued task
+      if (existing.assigned_agent_id) {
+        dispatchNextQueuedTask(existing.assigned_agent_id, id, existing.workspace_id).catch(err =>
+          console.error('[Workflow] dispatchNextQueuedTask after inbox move failed:', err)
+        );
+      }
     }
 
     updates.push('updated_at = ?');
@@ -708,6 +715,13 @@ export async function PATCH(
       drainQueue(id, existing.workspace_id).catch(err =>
         console.error('[Workflow] drainQueue after done failed:', err)
       );
+
+      // Dispatch next queued task for the freed agent
+      if (existing.assigned_agent_id) {
+        dispatchNextQueuedTask(existing.assigned_agent_id, id, existing.workspace_id).catch(err =>
+          console.error('[Workflow] dispatchNextQueuedTask after done failed:', err)
+        );
+      }
 
       // Trigger workspace merge if task has an isolated workspace
       if (existing.workspace_path) {

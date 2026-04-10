@@ -2,7 +2,7 @@ import { queryAll, queryOne, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { movePathToTrash } from '@/lib/file-trash';
 import { endActiveTaskSessions } from '@/lib/task-session-cleanup';
-import { getTaskWorkflow, drainQueue } from '@/lib/workflow-engine';
+import { getTaskWorkflow, drainQueue, dispatchNextQueuedTask } from '@/lib/workflow-engine';
 import type { Task } from '@/lib/types';
 
 interface DeleteTaskOptions {
@@ -38,6 +38,10 @@ export function deleteTaskById(id: string, options: DeleteTaskOptions = {}): Tas
         ['standby', now, existing.assigned_agent_id, 'working']
       );
     }
+    // Agent freed — dispatch next queued task
+    dispatchNextQueuedTask(existing.assigned_agent_id, id, existing.workspace_id).catch(err =>
+      console.error('[Tasks] dispatchNextQueuedTask after delete failed:', err)
+    );
   }
 
   const convoy = queryOne<{ id: string }>('SELECT id FROM convoys WHERE parent_task_id = ?', [id]);

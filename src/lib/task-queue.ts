@@ -22,6 +22,7 @@ export function findBlockingActiveTask(
        AND id != ?
        AND workspace_id = ?
        AND status IN (${placeholders})
+       AND (status_reason IS NULL OR status_reason NOT LIKE 'Waiting for %before starting this task.')
      ORDER BY updated_at DESC
      LIMIT 1`,
     [agentId, taskId, workspaceId, ...AGENT_EXECUTING_STATUSES],

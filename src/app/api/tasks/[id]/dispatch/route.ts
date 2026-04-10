@@ -9,7 +9,7 @@ import { getProjectsPath, getMissionControlUrl } from '@/lib/config';
 import { isOpenClawAgentTarget } from '@/lib/openclaw/model-catalog';
 import { getDispatchDefaultModelForRole } from '@/lib/openclaw/model-policy';
 import { getRelevantKnowledge, formatKnowledgeForDispatch } from '@/lib/learner';
-import { getTaskWorkflow, getWorkflowOwnerRoleForStatus } from '@/lib/workflow-engine';
+import { getTaskWorkflow, getWorkflowOwnerRoleForStatus, dispatchNextQueuedTask } from '@/lib/workflow-engine';
 import { syncGatewayAgentsToCatalog } from '@/lib/agent-catalog-sync';
 import { pickDynamicAgent } from '@/lib/task-governance';
 import { buildQueuedTaskWaitingMessage, findBlockingActiveTask } from '@/lib/task-queue';
@@ -44,16 +44,24 @@ function queueTaskUntilAgentIsFree(args: {
   agentName: string;
   blockingTask: { id: string; title: string; status: string };
   now: string;
+  preserveStatus?: boolean;
 }): void {
   const message = buildQueuedTaskWaitingMessage(args.agentName, args.blockingTask.title);
   run(
-    `UPDATE tasks
-     SET status = 'assigned',
-         assigned_agent_id = ?,
-         planning_dispatch_error = NULL,
-         status_reason = ?,
-         updated_at = ?
-     WHERE id = ? AND status != 'done'`,
+    args.preserveStatus
+      ? `UPDATE tasks
+         SET assigned_agent_id = ?,
+             planning_dispatch_error = NULL,
+             status_reason = ?,
+             updated_at = ?
+         WHERE id = ? AND status != 'done'`
+      : `UPDATE tasks
+         SET status = 'assigned',
+             assigned_agent_id = ?,
+             planning_dispatch_error = NULL,
+             status_reason = ?,
+             updated_at = ?
+         WHERE id = ? AND status != 'done'`,
     [args.agentId, message, args.now, args.taskId]
   );
 
@@ -277,16 +285,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    const builderOwnedDispatch = expectedRole?.toLowerCase() === 'builder';
-    const blockingTask = builderOwnedDispatch ? findBlockingActiveTask(agent.id, task.id, task.workspace_id) : null;
+    const blockingTask = findBlockingActiveTask(agent.id, task.id, task.workspace_id);
 
-    if (builderOwnedDispatch && blockingTask) {
+    if (blockingTask) {
       queueTaskUntilAgentIsFree({
         taskId: task.id,
         agentId: agent.id,
         agentName: agent.name,
         blockingTask,
         now,
+        preserveStatus: expectedRole?.toLowerCase() !== 'builder',
       });
 
       const queuedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
@@ -433,6 +441,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                updated_at = ?
            WHERE id = ?`,
           [isolationError, isolationError, now, id]
+        );
+        // Agent freed — dispatch next queued task
+        dispatchNextQueuedTask(agent.id, task.id, task.workspace_id).catch(err =>
+          console.error('[Dispatch] dispatchNextQueuedTask after isolation failure:', err)
         );
         run(
           `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
