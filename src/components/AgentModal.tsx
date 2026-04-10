@@ -42,7 +42,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
   useEffect(() => {
     if (!agent?.id) return;
     let cancelled = false;
-            session_key_prefix: normalizedPrefix || null,
+    fetch(`/api/agents/${agent.id}`)
       .then(res => res.ok ? res.json() : null)
       .then(fresh => {
         if (cancelled || !fresh) return;
