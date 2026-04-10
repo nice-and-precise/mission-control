@@ -187,6 +187,16 @@ Respond with ONLY valid JSON in this format:
   ]
 }`;
 
+    // Persist session state before contacting OpenClaw so the task can be
+    // recovered from the UI even if the gateway call is slow or times out.
+    const messages = [{ role: 'user', content: planningPrompt, timestamp: Date.now() }];
+
+    getDb().prepare(`
+      UPDATE tasks
+      SET planning_session_key = ?, planning_messages = ?, status = 'planning', updated_at = datetime('now')
+      WHERE id = ?
+    `).run(sessionKey, JSON.stringify(messages), taskId);
+
     // Connect to OpenClaw and send the planning request
     const client = getOpenClawClient();
     if (!client.isConnected()) {
@@ -211,15 +221,6 @@ Respond with ONLY valid JSON in this format:
     if (!modelBoundBeforeFirstMessage) {
       await client.patchSessionModel(sessionKey, planningModel);
     }
-
-    // Store the session key and initial message
-    const messages = [{ role: 'user', content: planningPrompt, timestamp: Date.now() }];
-
-    getDb().prepare(`
-      UPDATE tasks
-      SET planning_session_key = ?, planning_messages = ?, status = 'planning'
-      WHERE id = ?
-    `).run(sessionKey, JSON.stringify(messages), taskId);
 
     // Return immediately - frontend will poll for updates
     // This eliminates the aggressive polling loop that was making 30+ OpenClaw API calls

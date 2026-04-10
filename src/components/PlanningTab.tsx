@@ -508,6 +508,72 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
     );
   }
 
+  // Planning complete but no structured spec was recovered.
+  if (state?.isComplete && !state?.spec) {
+    return (
+      <div className="p-4 space-y-4">
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+            <div>
+              <p className="font-medium text-amber-300">Planning completed without a recoverable spec</p>
+              <p>{state.statusReason || 'The planner did not produce a structured approval payload. Restart planning to generate a clean plan.'}</p>
+            </div>
+          </div>
+        </div>
+
+        {transcriptIssue && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+              <div>
+                <p className="font-medium text-amber-300">Transcript recovery needs attention</p>
+                <p>{transcriptIssue.message}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={cancelPlanning}
+            disabled={canceling}
+            className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-sm rounded-lg border border-amber-500/30 disabled:opacity-50 flex items-center gap-2"
+          >
+            {canceling ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Restarting...
+              </>
+            ) : (
+              <>
+                <X className="w-4 h-4" />
+                Restart Planning
+              </>
+            )}
+          </button>
+          <span className="text-xs text-mc-text-secondary">
+            This resets the current planning state so you can start over cleanly.
+          </span>
+        </div>
+
+        {state.messages && state.messages.length > 0 && (
+          <div className="rounded-lg border border-mc-border bg-mc-bg p-4">
+            <h3 className="mb-2 text-sm font-medium text-mc-text">Conversation snapshot</h3>
+            <div className="space-y-2 text-sm text-mc-text-secondary">
+              {state.messages.map((msg, index) => (
+                <div key={index}>
+                  <span className="font-medium text-mc-text">{msg.role === 'user' ? 'You' : 'Orchestrator'}:</span>{' '}
+                  <span>{msg.content.substring(0, 200)}{msg.content.length > 200 ? '...' : ''}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Planning complete - show spec and agents
   if (state?.isComplete && state?.spec) {
     return (
