@@ -7,11 +7,13 @@ import {
   finalizePlanningCompletion,
   resolvePlanningTranscript,
   setOpenClawMessagesResolverForTests,
+  shouldAutoRepairPlanningTranscript,
   type PlanningMessage,
 } from './planning-utils';
 import { GET as getPlanningRoute } from '../app/api/tasks/[id]/planning/route';
 import { GET as getPlanningPollRoute } from '../app/api/tasks/[id]/planning/poll/route';
 import { POST as postPlanningForceCompleteRoute } from '../app/api/tasks/[id]/planning/force-complete/route';
+import { parsePlanningSpecValue } from './planning-agents';
 
 afterEach(() => {
   setOpenClawMessagesResolverForTests(null);
@@ -142,6 +144,96 @@ test('resolvePlanningTranscript does not reuse an already-answered question', ()
   assert.equal(resolution.completion, null);
   assert.equal(resolution.currentQuestion, null);
   assert.equal(resolution.transcriptIssue?.code, 'unstructured_response');
+  assert.equal(
+    resolution.transcriptIssue?.message,
+    'The planner replied without a valid question or completion payload after the last planning prompt. Retry or restart planning to recover.',
+  );
+});
+
+test('resolvePlanningTranscript treats wrong-schema JSON as an unstructured response', () => {
+  const messages: PlanningMessage[] = [
+    { role: 'user', content: 'Start', timestamp: 1 },
+    {
+      role: 'assistant',
+      content: `\`\`\`json
+{
+  "scan_report": {
+    "title": "Pre-submission scan",
+    "total_violations": 0
+  }
+}
+\`\`\``,
+      timestamp: 2,
+    },
+  ];
+
+  const resolution = resolvePlanningTranscript(messages);
+
+  assert.equal(resolution.completion, null);
+  assert.equal(resolution.currentQuestion, null);
+  assert.equal(resolution.transcriptIssue?.code, 'unstructured_response');
+  assert.equal(
+    resolution.transcriptIssue?.message,
+    'The planner replied without a valid question or completion payload after the last planning prompt. Retry or restart planning to recover.',
+  );
+});
+
+test('shouldAutoRepairPlanningTranscript allows one automatic repair after a wrong-schema reply', () => {
+  const messages: PlanningMessage[] = [
+    { role: 'user', content: 'Start', timestamp: 1 },
+    {
+      role: 'assistant',
+      content: `\`\`\`json
+{
+  "scan_report": {
+    "title": "Pre-submission scan",
+    "total_violations": 0
+  }
+}
+\`\`\``,
+      timestamp: 2,
+    },
+  ];
+
+  assert.equal(shouldAutoRepairPlanningTranscript(messages), true);
+});
+
+test('shouldAutoRepairPlanningTranscript does not loop once an auto-repair prompt was already sent', () => {
+  const messages: PlanningMessage[] = [
+    { role: 'user', content: 'Start', timestamp: 1 },
+    {
+      role: 'assistant',
+      content: `\`\`\`json
+{
+  "scan_report": {
+    "title": "Pre-submission scan",
+    "total_violations": 0
+  }
+}
+\`\`\``,
+      timestamp: 2,
+    },
+    {
+      role: 'user',
+      content: `[Mission Control planning recovery]
+
+Return only valid planning JSON.`,
+      timestamp: 3,
+    },
+    {
+      role: 'assistant',
+      content: `\`\`\`json
+{
+  "scan_report": {
+    "title": "Still wrong"
+  }
+}
+\`\`\``,
+      timestamp: 4,
+    },
+  ];
+
+  assert.equal(shouldAutoRepairPlanningTranscript(messages), false);
 });
 
 test('resolvePlanningTranscript keeps waiting state clean when no assistant reply has arrived yet', () => {
@@ -183,6 +275,31 @@ test('extractJSON repairs malformed planner constraints objects well enough to r
     constraint_1: 'First constraint string.',
     constraint_2: 'Second constraint string.',
   });
+});
+
+test('parsePlanningSpecValue normalizes loose completion specs into the canonical planning shape', () => {
+  const parsed = parsePlanningSpecValue({
+    goal: 'Scan all finish-line artifacts for prohibited terms.',
+    method: 'Run grep, review context, and remediate violations.',
+    output: 'Short scan report with findings and fixes.',
+    target_artifacts: ['CURRICULUM_OVERVIEW.md', 'MODULE_01.md'],
+    canonical_repo: 'https://github.com/nice-and-precise/squti.git',
+    canonical_branch: 'main',
+    steps: [
+      { step: 1, action: 'Run grep across target artifacts.' },
+      { step: 2, action: 'Review context and fix any violations.' },
+    ],
+  });
+
+  assert.equal(parsed?.title, 'Scan all finish-line artifacts for prohibited terms.');
+  assert.equal(parsed?.summary, 'Scan all finish-line artifacts for prohibited terms.');
+  assert.deepEqual(parsed?.deliverables, ['CURRICULUM_OVERVIEW.md', 'MODULE_01.md']);
+  assert.deepEqual(parsed?.success_criteria, ['Short scan report with findings and fixes.']);
+  assert.equal(parsed?.constraints.canonical_repo, 'https://github.com/nice-and-precise/squti.git');
+  assert.deepEqual(parsed?.execution_plan?.steps, [
+    'Run grep across target artifacts.',
+    'Review context and fix any violations.',
+  ]);
 });
 
 test('planning GET recovers a stored completion payload and persists final state', async () => {
@@ -426,6 +543,54 @@ test('planning poll surfaces transcript issues instead of silently idling', asyn
   assert.deepEqual(payload.transcriptIssue, {
     code: 'history_omitted',
     message: 'OpenClaw omitted one or more oversized transcript entries.',
+  });
+});
+
+test('planning poll surfaces wrong-schema JSON replies instead of silently idling', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const taskId = crypto.randomUUID();
+
+  seedTask({
+    id: taskId,
+    workspaceId,
+    messages: [{ role: 'user', content: 'Start', timestamp: 1 }],
+  });
+
+  setOpenClawMessagesResolverForTests(async () => ({
+    messages: [
+      {
+        role: 'assistant',
+        content: `\`\`\`json
+{
+  "scan_report": {
+    "title": "Pre-submission scan",
+    "total_violations": 0
+  }
+}
+\`\`\``,
+      },
+    ],
+    transcriptIssue: null,
+  }));
+
+  const response = await getPlanningPollRoute(
+    new NextRequest(`http://localhost/api/tasks/${taskId}/planning/poll`),
+    { params: Promise.resolve({ id: taskId }) },
+  );
+  const payload = await response.json() as {
+    hasUpdates: boolean;
+    complete: boolean;
+    currentQuestion: unknown;
+    transcriptIssue: { code: string; message: string } | null;
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.hasUpdates, true);
+  assert.equal(payload.complete, false);
+  assert.equal(payload.currentQuestion, null);
+  assert.deepEqual(payload.transcriptIssue, {
+    code: 'unstructured_response',
+    message: 'The planner replied without a valid question or completion payload after the last planning prompt. Retry or restart planning to recover.',
   });
 });
 

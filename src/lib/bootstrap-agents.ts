@@ -71,8 +71,8 @@ interface AgentDef {
 const ROLE_MODEL_FALLBACKS: Record<string, string[]> = {
   builder: ['qwen/qwen3.6-plus', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
   reviewer: ['qwen/qwen3.6-plus', 'opencode-go/glm-5', 'opencode-go/kimi-k2.5', 'opencode-go-mm/minimax-m2.5'],
-  tester: ['opencode-go-mm/minimax-m2.5', 'opencode-go/kimi-k2.5', 'opencode-go/glm-5'],
-  learner: ['opencode-go/kimi-k2.5', 'opencode-go/glm-5', 'opencode-go-mm/minimax-m2.5'],
+  tester: ['qwen/qwen3.6-plus', 'opencode-go-mm/minimax-m2.5', 'opencode-go/kimi-k2.5', 'opencode-go/glm-5'],
+  learner: ['qwen/qwen3.6-plus', 'opencode-go/kimi-k2.5', 'opencode-go/glm-5', 'opencode-go-mm/minimax-m2.5'],
 };
 
 function resolveBootstrapModelForRole(role: string): string {

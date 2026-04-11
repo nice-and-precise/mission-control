@@ -23,6 +23,7 @@ Start here when you need to know which Mission Control docs to trust.
 - [HOW-THE-PIPELINE-WORKS.md](HOW-THE-PIPELINE-WORKS.md): plain-language stage walkthrough
 - [TESTING_REALTIME.md](TESTING_REALTIME.md): realtime verification checklist
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): 10-entry quick-reference for common local problems (OFFLINE badge, stuck cards, ghost agents, etc.)
+- [AUTOPILOT_TRANSPORT_RUNBOOK.md](AUTOPILOT_TRANSPORT_RUNBOOK.md): dated runbook for local autopilot model resolution, transport selection, and slow-run diagnosis
 
 ## Historical / Design Docs
 

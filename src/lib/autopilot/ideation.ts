@@ -10,6 +10,7 @@ import { completeJSON } from './llm';
 import { batchCheckSimilarity, storeEmbedding, checkSimilarity } from './similarity';
 import { getResearchPrograms } from './ab-testing';
 import { recoverStaleCycles, startCycleHeartbeat } from './cycle-runtime';
+import { recordAutopilotTransportStatus } from './transport-status';
 import type { Product, Idea, ResearchCycle, SwipeHistoryEntry, IdeationCycle } from '@/lib/types';
 
 function isIdeaLikeRecord(value: unknown): value is Record<string, unknown> {
@@ -287,6 +288,13 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
             model,
             systemPrompt: 'You are a finish-line task generator. Respond with a JSON array of task objects that each target a specific artifact on the finish-line checklist.',
             timeoutMs: 600_000,
+            onStatus: (event) => recordAutopilotTransportStatus({
+              productId,
+              cycleId: ideationId,
+              cycleType: 'ideation',
+              event,
+              variantLabel,
+            }),
           }));
         } finally {
           stopHeartbeat();

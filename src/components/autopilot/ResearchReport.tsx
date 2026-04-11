@@ -8,6 +8,19 @@ interface ResearchReportProps {
   productId: string;
 }
 
+interface RuntimeStatusData {
+  kind?: string;
+  stage?: string;
+  message?: string;
+  detail?: string;
+  requestedModel?: string;
+  transport?: string;
+  fromTransport?: string;
+  toTransport?: string;
+  attempt?: number;
+  updatedAt?: string;
+}
+
 function formatElapsed(startedAt: string, nowMs: number): string {
   const ms = nowMs - new Date(startedAt).getTime();
   const totalSec = Math.max(0, Math.floor(ms / 1000));
@@ -20,6 +33,25 @@ function isLikelyStale(lastHeartbeat?: string, startedAt?: string): boolean {
   const reference = lastHeartbeat || startedAt;
   if (!reference) return false;
   return Date.now() - new Date(reference).getTime() > 90_000;
+}
+
+function parseRuntimeStatus(phaseData?: string): RuntimeStatusData | null {
+  if (!phaseData) return null;
+
+  try {
+    const parsed = JSON.parse(phaseData) as RuntimeStatusData;
+    return parsed.kind === 'llm_runtime_status' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function transportLabel(status: RuntimeStatusData | null): string | null {
+  if (!status) return null;
+  if (status.toTransport && status.fromTransport) {
+    return `${status.fromTransport} -> ${status.toTransport}`;
+  }
+  return status.transport || status.toTransport || null;
 }
 
 export function ResearchReport({ productId }: ResearchReportProps) {
@@ -49,6 +81,7 @@ export function ResearchReport({ productId }: ResearchReportProps) {
 
   const activeCycle = cycles.find(c => c.status === 'running') || null;
   const activeCycleStale = activeCycle ? isLikelyStale(activeCycle.last_heartbeat, activeCycle.started_at) : false;
+  const activeRuntimeStatus = parseRuntimeStatus(activeCycle?.phase_data);
 
   // Poll while running
   useEffect(() => {
@@ -120,7 +153,16 @@ export function ResearchReport({ productId }: ResearchReportProps) {
             <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" /> Elapsed: {formatElapsed(activeCycle.started_at, nowMs)}</span>
             <span>Phase: {activeCycle.current_phase || 'running'}</span>
             <span>Started: {new Date(activeCycle.started_at).toLocaleTimeString()}</span>
+            {transportLabel(activeRuntimeStatus) && (
+              <span>Transport: {transportLabel(activeRuntimeStatus)}</span>
+            )}
           </div>
+          {activeRuntimeStatus?.message && (
+            <p className="mt-2 text-xs text-blue-200">
+              {activeRuntimeStatus.message}
+              {activeRuntimeStatus.detail ? ` ${activeRuntimeStatus.detail}` : ''}
+            </p>
+          )}
           <p className="mt-2 text-xs text-mc-text-secondary">
             {activeCycleStale
               ? 'No recent heartbeat detected. Refreshing the page will recover an orphaned run so you can restart it cleanly.'

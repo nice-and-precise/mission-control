@@ -11,6 +11,7 @@ import { recalculateAndBroadcast } from './health-score';
 import { completeJSON } from './llm';
 import { getResearchPrograms } from './ab-testing';
 import { recoverStaleCycles, startCycleHeartbeat } from './cycle-runtime';
+import { recordAutopilotTransportStatus } from './transport-status';
 import type { Product, ResearchCycle } from '@/lib/types';
 
 function buildResearchPrompt(product: Product, learnedPreferences?: string): string {
@@ -147,11 +148,30 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
         let report: unknown;
         let responseModel: string;
         let usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+        let transport: string;
+        let requestedModel: string;
+        let resolvedModel: string;
+        let finishReason: string | undefined;
         try {
-          ({ data: report, model: responseModel, usage } = await completeJSON(prompt, {
+          ({
+            data: report,
+            model: responseModel,
+            usage,
+            transport,
+            requestedModel,
+            resolvedModel,
+            finishReason,
+          } = await completeJSON(prompt, {
             model,
             systemPrompt: 'You are a compliance gap auditor. Analyze the product against its finish-line artifact checklist and respond with a JSON research report only.',
             timeoutMs: 600_000,
+            onStatus: (event) => recordAutopilotTransportStatus({
+              productId,
+              cycleId,
+              cycleType: 'research',
+              event,
+              variantLabel,
+            }),
           }));
         } finally {
           stopHeartbeat();
@@ -181,6 +201,10 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
             accounting_state: estimatedCostUsd == null ? 'blocked_unpriced' : 'estimated',
             policy_model: budgetModel,
             execution_model: model,
+            execution_transport: transport,
+            requested_model: requestedModel,
+            resolved_model: resolvedModel,
+            finish_reason: finishReason || null,
           }),
         });
       }

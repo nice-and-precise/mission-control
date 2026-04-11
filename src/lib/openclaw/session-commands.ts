@@ -1,5 +1,6 @@
 export type ChatSendPurpose =
   | 'task_dispatch'
+  | 'planning_start'
   | 'task_note'
   | 'direct_chat'
   | 'checkpoint_restore';
@@ -12,7 +13,7 @@ export interface TaskDispatchEnvelope {
 const FRESH_RUN_COMMAND = '/new';
 
 export function shouldStartFreshRun(purpose: ChatSendPurpose): boolean {
-  return purpose === 'task_dispatch';
+  return purpose === 'task_dispatch' || purpose === 'planning_start';
 }
 
 export function buildChatSendMessage(message: string, purpose: ChatSendPurpose): string {

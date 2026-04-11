@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { queryOne, run } from '@/lib/db';
-import { finalizePlanningCompletion, reconcilePlanningTranscript } from '@/lib/planning-utils';
+import {
+  attemptAutomaticPlanningRecovery,
+  finalizePlanningCompletion,
+  reconcilePlanningTranscript,
+} from '@/lib/planning-utils';
 import { broadcast } from '@/lib/events';
 import type { TaskActivity } from '@/lib/types';
 
@@ -74,6 +78,27 @@ export async function GET(
         autoDispatched: false,
         dispatchError: null,
       });
+    }
+
+    if (resolution.transcriptIssue?.code === 'unstructured_response') {
+      try {
+        const repairedMessages = await attemptAutomaticPlanningRecovery(
+          taskId,
+          task.planning_session_key,
+          resolution.messages,
+        );
+        if (repairedMessages) {
+          return NextResponse.json({
+            hasUpdates: true,
+            complete: false,
+            messages: repairedMessages,
+            currentQuestion: null,
+            transcriptIssue: null,
+          });
+        }
+      } catch (repairError) {
+        console.error('Failed to auto-repair planning transcript during poll:', repairError);
+      }
     }
 
     if (resolution.changed) {
