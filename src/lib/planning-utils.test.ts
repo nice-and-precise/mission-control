@@ -302,6 +302,50 @@ test('parsePlanningSpecValue normalizes loose completion specs into the canonica
   ]);
 });
 
+test('parsePlanningSpecValue handles planner response using task/changes/validation field names', () => {
+  const parsed = parsePlanningSpecValue({
+    task: 'Remove Frappe references from verification protocol',
+    target_repo: 'https://github.com/nice-and-precise/squti.git',
+    target_branch: 'main',
+    target_file: 'docs/specs/hands-on-verification-protocol.md',
+    changes: [
+      { location: 'line 22', current: 'Frappe LMS custom doctype', action: 'reword to platform-neutral language' },
+      { location: 'line 309', current: 'implemented as Frappe LMS custom doctypes', action: 'reword to structured data formats' },
+    ],
+    validation: 'Verify no remaining Frappe or doctype references in the file after edits',
+  });
+
+  assert.equal(parsed?.title, 'Remove Frappe references from verification protocol');
+  assert.equal(parsed?.summary, 'Remove Frappe references from verification protocol');
+  assert.deepEqual(parsed?.deliverables, [
+    'line 22: reword to platform-neutral language',
+    'line 309: reword to structured data formats',
+  ]);
+  assert.deepEqual(parsed?.success_criteria, [
+    'Verify no remaining Frappe or doctype references in the file after edits',
+  ]);
+  assert.equal(parsed?.constraints.target_repo, 'https://github.com/nice-and-precise/squti.git');
+});
+
+test('parsePlanningSpecValue handles planner response using task/checks field names', () => {
+  const parsed = parsePlanningSpecValue({
+    task: 'Cross-reference consistency sweep across provider packet docs',
+    scope: ['docs/provider/INDEX.md', 'docs/provider/RUNBOOK.md'],
+    repository: 'https://github.com/nice-and-precise/squti.git',
+    branch: 'main',
+    checks: [
+      'DLI contact information is identical across all files',
+      'Statutory references use consistent subdivision format',
+    ],
+    output: 'Reconciliation notes appended to corrected files',
+  });
+
+  assert.equal(parsed?.title, 'Cross-reference consistency sweep across provider packet docs');
+  assert.equal(parsed?.summary, 'Reconciliation notes appended to corrected files');
+  assert.deepEqual(parsed?.success_criteria, ['Reconciliation notes appended to corrected files']);
+  assert.equal(parsed?.constraints.repository, 'https://github.com/nice-and-precise/squti.git');
+});
+
 test('planning GET recovers a stored completion payload and persists final state', async () => {
   const workspaceId = `ws-${crypto.randomUUID()}`;
   const taskId = crypto.randomUUID();

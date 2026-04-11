@@ -540,7 +540,15 @@ export async function finalizePlanningCompletion(
   },
 ): Promise<Omit<PlanningCompletionPayload, 'spec'> & { spec: GeneratedPlanningSpec; agents: SuggestedPlanningAgent[] }> {
   const db = getDb();
-  const normalizedSpec = parsePlanningSpecValue(completion.spec || {}) || {
+
+  // Merge top-level execution_plan into spec before normalization — planners
+  // sometimes place it alongside spec rather than inside it.
+  const specInput = { ...(completion.spec || {}) } as Record<string, unknown>;
+  if (!specInput.execution_plan && completion.execution_plan) {
+    specInput.execution_plan = completion.execution_plan;
+  }
+
+  const normalizedSpec = parsePlanningSpecValue(specInput) || {
     title: '',
     summary: '',
     deliverables: [],
