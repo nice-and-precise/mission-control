@@ -380,16 +380,26 @@ async function completeViaHttp(prompt: string, options: CompletionOptions): Prom
   messages.push({ role: 'user', content: prompt });
 
   let lastError: Error | null = null;
+  const deadline = Date.now() + timeoutMs;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+
     if (attempt > 0) {
-      const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+      const delay = Math.min(RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1), Math.max(remainingMs - 1, 0));
+      if (delay <= 0) {
+        break;
+      }
       console.log(`[LLM] Retry ${attempt}/${MAX_RETRIES} after ${delay}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const requestTimeoutMs = Math.max(1, deadline - Date.now());
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
     try {
       const response = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
@@ -463,7 +473,7 @@ async function completeViaHttp(prompt: string, options: CompletionOptions): Prom
     }
   }
 
-  throw lastError || new Error('LLM completion failed after retries');
+  throw lastError || new Error(`LLM completion failed after retries within ${timeoutMs}ms`);
 }
 
 function tryParseJSON<T>(text: string): T | null {

@@ -18,6 +18,34 @@ interface MissionQueueProps {
   isPortrait?: boolean;
 }
 
+const PRIORITY_WEIGHT: Record<Task['priority'], number> = {
+  urgent: 4,
+  high: 3,
+  normal: 2,
+  low: 1,
+};
+
+function sortTasksForBoard(tasks: Task[]): Task[] {
+  return [...tasks].sort((left, right) => {
+    const priorityDelta = (PRIORITY_WEIGHT[right.priority] || 0) - (PRIORITY_WEIGHT[left.priority] || 0);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+
+    const impactDelta = (right.idea_impact_score || 0) - (left.idea_impact_score || 0);
+    if (impactDelta !== 0) {
+      return impactDelta;
+    }
+
+    const feasibilityDelta = (right.idea_feasibility_score || 0) - (left.idea_feasibility_score || 0);
+    if (feasibilityDelta !== 0) {
+      return feasibilityDelta;
+    }
+
+    return Date.parse(left.created_at) - Date.parse(right.created_at);
+  });
+}
+
 const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
   { id: 'planning', label: '📋 Planning', color: 'border-t-mc-accent-purple' },
   { id: 'inbox', label: 'Inbox', color: 'border-t-mc-accent-pink' },
@@ -61,8 +89,10 @@ export function MissionQueue({ workspaceId, mobileMode = false, isPortrait = tru
   }, [editingTask, setSelectedTask]);
 
   const getTasksByStatus = (status: TaskStatus) =>
-    tasks.filter((task) =>
-      task.status === status || (status === 'planning' && task.status === 'pending_dispatch')
+    sortTasksForBoard(
+      tasks.filter((task) =>
+        task.status === status || (status === 'planning' && task.status === 'pending_dispatch')
+      )
     );
 
   // Active pipeline states where manual moves are dangerous

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryAll } from '@/lib/db';
-import type { IdeationCycle } from '@/lib/types';
+import { getIdeationCycles } from '@/lib/autopilot/ideation';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,10 +9,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const cycles = queryAll<IdeationCycle>(
-      'SELECT * FROM ideation_cycles WHERE product_id = ? ORDER BY started_at DESC LIMIT 20',
-      [id]
-    );
+    const cycles = getIdeationCycles(id);
     return NextResponse.json(cycles);
   } catch (error) {
     console.error('Failed to fetch ideation cycles:', error);

@@ -40,7 +40,7 @@ export interface PlanningTranscriptResolution {
   completion: PlanningCompletionPayload | null;
   currentQuestion: PlanningQuestion | null;
   transcriptIssue?: {
-    code: 'history_omitted' | 'gateway_timeout';
+    code: 'history_omitted' | 'gateway_timeout' | 'unstructured_response';
     message: string;
   } | null;
 }
@@ -286,13 +286,31 @@ export function normalizePlanningMessages(messages: unknown): PlanningMessage[] 
 
 export function resolvePlanningTranscript(messages: PlanningMessage[]): PlanningTranscriptResolution {
   const normalizedMessages = normalizePlanningMessages(messages);
+  let sawAssistantReplyWithoutStructuredPayload = false;
 
   for (let index = normalizedMessages.length - 1; index >= 0; index -= 1) {
     const message = normalizedMessages[index];
+    if (message.role === 'user') {
+      return {
+        messages: normalizedMessages,
+        completion: null,
+        currentQuestion: null,
+        transcriptIssue: sawAssistantReplyWithoutStructuredPayload
+          ? {
+              code: 'unstructured_response',
+              message: 'The planner replied without a valid question or completion payload after your last answer. Retry the answer or restart planning to recover.',
+            }
+          : null,
+      };
+    }
+
     if (message.role !== 'assistant') continue;
 
     const parsed = extractJSON(message.content) as Record<string, unknown> | null;
-    if (!parsed) continue;
+    if (!parsed) {
+      sawAssistantReplyWithoutStructuredPayload = true;
+      continue;
+    }
 
     if (parsed.status === 'complete') {
       return {

@@ -159,8 +159,148 @@ export function determineIsolationStrategy(task: Task): IsolationStrategy | null
 
 function getProductProjectDir(task: Task): string {
   const projectsPath = getProjectsPath();
-  const projectDir = task.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const product = task.product_id
+    ? queryOne<Pick<Product, 'id' | 'name' | 'repo_url'>>(
+        'SELECT id, name, repo_url FROM products WHERE id = ?',
+        [task.product_id],
+      )
+    : undefined;
+  const projectDir =
+    getRepoDirectoryName(task.repo_url || product?.repo_url || null) ||
+    (product?.id
+      ? `${slugifyPathSegment(product.name || 'product')}-${product.id.slice(0, 8)}`
+      : slugifyPathSegment(task.title));
   return path.resolve(projectsPath.replace('~', process.env.HOME || ''), projectDir);
+}
+
+function slugifyPathSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+}
+
+function getRepoDirectoryName(repoUrl?: string | null): string | null {
+  const normalized = repoUrl?.trim().replace(/\/+$/, '').replace(/\.git$/, '');
+  if (!normalized) {
+    return null;
+  }
+
+  const parts = normalized.split(/[/:]/).filter(Boolean);
+  const repoName = parts.at(-1);
+  return repoName ? slugifyPathSegment(repoName) : null;
+}
+
+function fetchOriginIfPresent(repoDir: string): void {
+  try {
+    execSync('git fetch origin', { cwd: repoDir, stdio: 'pipe', timeout: 120000 });
+  } catch {
+    // Local-only repos may not have an origin remote.
+  }
+}
+
+function resolveCommitForRef(repoDir: string, ref: string): string | undefined {
+  try {
+    return execSync(`git rev-parse --verify "${ref}^{commit}"`, {
+      cwd: repoDir,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+      timeout: 10000,
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveBaseRef(repoDir: string, baseBranch: string): { baseRef: string; baseCommit?: string } {
+  for (const candidate of [`origin/${baseBranch}`, baseBranch, 'HEAD']) {
+    const baseCommit = resolveCommitForRef(repoDir, candidate);
+    if (baseCommit) {
+      return { baseRef: candidate, baseCommit };
+    }
+  }
+
+  return { baseRef: 'HEAD' };
+}
+
+function resetWorkspaceToBase(
+  workspaceDir: string,
+  branchName: string,
+  baseBranch: string,
+): { branch: string; baseCommit?: string } {
+  fetchOriginIfPresent(workspaceDir);
+  const { baseRef, baseCommit } = resolveBaseRef(workspaceDir, baseBranch);
+
+  execSync(`git checkout -B "${branchName}" "${baseRef}"`, {
+    cwd: workspaceDir,
+    stdio: 'pipe',
+    timeout: 30000,
+  });
+  execSync(`git reset --hard "${baseRef}"`, {
+    cwd: workspaceDir,
+    stdio: 'pipe',
+    timeout: 30000,
+  });
+  execSync('git clean -fdx', { cwd: workspaceDir, stdio: 'pipe', timeout: 30000 });
+
+  return { branch: branchName, baseCommit };
+}
+
+function createOrResetWorktree(
+  repoDir: string,
+  workspaceDir: string,
+  branchName: string,
+  baseRef: string,
+): void {
+  try {
+    execSync(`git worktree add "${workspaceDir}" -B "${branchName}" "${baseRef}"`, {
+      cwd: repoDir,
+      stdio: 'pipe',
+      timeout: 120000,
+    });
+    return;
+  } catch (err) {
+    try {
+      execSync(`git worktree add "${workspaceDir}" --detach "${baseRef}"`, {
+        cwd: repoDir,
+        stdio: 'pipe',
+        timeout: 120000,
+      });
+      execSync(`git checkout -B "${branchName}" "${baseRef}"`, {
+        cwd: workspaceDir,
+        stdio: 'pipe',
+        timeout: 30000,
+      });
+      return;
+    } catch {
+      throw new Error(`Failed to create git worktree: ${(err as Error).message}`);
+    }
+  }
+}
+
+function getRecordedSuccessfulMerge(task: Pick<Task, 'id' | 'workspace_path' | 'merge_pr_url' | 'merge_status'>): MergeResult | null {
+  if (!task.workspace_path || !task.merge_status || !['merged', 'pr_created'].includes(task.merge_status)) {
+    return null;
+  }
+
+  const existing = queryOne<{ status: 'merged' | 'pr_created'; merge_commit?: string | null }>(
+    `SELECT status, merge_commit
+     FROM workspace_merges
+     WHERE task_id = ?
+       AND workspace_path = ?
+       AND status IN ('merged', 'pr_created')
+     ORDER BY COALESCE(merged_at, created_at) DESC
+     LIMIT 1`,
+    [task.id, task.workspace_path],
+  );
+
+  if (!existing) {
+    return null;
+  }
+
+  return {
+    success: true,
+    status: existing.status,
+    prUrl: task.merge_pr_url || undefined,
+    mergeCommit: existing.merge_commit || undefined,
+  };
 }
 
 function getPathAncestors(targetPath: string): string[] {
@@ -267,33 +407,12 @@ function reuseExistingTaskWorkspace(
     return null;
   }
 
-  execSync('git reset --hard HEAD', { cwd: workspaceDir, stdio: 'pipe' });
-  execSync('git clean -fdx', { cwd: workspaceDir, stdio: 'pipe' });
-
-  let currentBranch = branchName;
-  try {
-    const detectedBranch = execSync('git branch --show-current', {
-      cwd: workspaceDir,
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    }).trim();
-    if (detectedBranch) {
-      currentBranch = detectedBranch;
-    }
-  } catch {
-    // Best effort — stay on the intended branch name if detection fails.
-  }
-
-  const baseCommit = execSync('git rev-parse HEAD', {
-    cwd: workspaceDir,
-    encoding: 'utf-8',
-    stdio: 'pipe',
-  }).trim();
+  const { branch, baseCommit } = resetWorkspaceToBase(workspaceDir, branchName, baseBranch);
 
   return {
     path: workspaceDir,
     strategy: 'worktree',
-    branch: currentBranch,
+    branch,
     baseBranch,
     baseCommit,
     port,
@@ -477,37 +596,9 @@ async function createWorktreeWorkspace(
 
   if (isGitRepo) {
     // Use git worktree from existing repo
-    try {
-      execSync(`git fetch origin`, { cwd: projectDir, stdio: 'pipe' });
-    } catch {
-      // May not have a remote — that's OK for local repos
-    }
-
-    // Get base commit
-    let baseCommit: string | undefined;
-    try {
-      baseCommit = execSync(`git rev-parse HEAD`, { cwd: projectDir, encoding: 'utf-8' }).trim();
-    } catch {
-      // Empty repo
-    }
-
-    // Create worktree with a new branch
-    try {
-      execSync(
-        `git worktree add "${workspaceDir}" -b "${branchName}" HEAD`,
-        { cwd: projectDir, stdio: 'pipe' }
-      );
-    } catch (err) {
-      // Branch may already exist — try without -b
-      try {
-        execSync(
-          `git worktree add "${workspaceDir}" "${branchName}"`,
-          { cwd: projectDir, stdio: 'pipe' }
-        );
-      } catch {
-        throw new Error(`Failed to create git worktree: ${(err as Error).message}`);
-      }
-    }
+    fetchOriginIfPresent(projectDir);
+    const { baseRef, baseCommit } = resolveBaseRef(projectDir, baseBranch);
+    createOrResetWorktree(projectDir, workspaceDir, branchName, baseRef);
 
     return { path: workspaceDir, strategy: 'worktree', branch: branchName, baseBranch, baseCommit, port };
   }
@@ -516,15 +607,8 @@ async function createWorktreeWorkspace(
   if (task.repo_url) {
     try {
       const repoCacheDir = ensureRepoCache(projectDir, task.repo_url, baseBranch);
-      const baseCommit = execSync('git rev-parse HEAD', {
-        cwd: repoCacheDir,
-        encoding: 'utf-8',
-        stdio: 'pipe',
-      }).trim();
-      execSync(
-        `git worktree add "${workspaceDir}" -B "${branchName}" HEAD`,
-        { cwd: repoCacheDir, stdio: 'pipe', timeout: 120000 }
-      );
+      const { baseRef, baseCommit } = resolveBaseRef(repoCacheDir, baseBranch);
+      createOrResetWorktree(repoCacheDir, workspaceDir, branchName, baseRef);
       return { path: workspaceDir, strategy: 'worktree', branch: branchName, baseBranch, baseCommit, port };
     } catch (err) {
       throw new Error(`Failed to clone repo: ${(err as Error).message}`);
@@ -917,6 +1001,11 @@ export function releaseMergeLock(productId: string): void {
 export async function triggerWorkspaceMerge(taskId: string): Promise<MergeResult | null> {
   const task = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (!task || !task.workspace_path || !task.workspace_strategy) return null;
+
+  const existingSuccessfulMerge = getRecordedSuccessfulMerge(task);
+  if (existingSuccessfulMerge) {
+    return existingSuccessfulMerge;
+  }
 
   // Acquire merge lock for the product
   const lockKey = task.product_id || task.id;

@@ -1,7 +1,7 @@
-import { queryAll, queryOne, run } from '@/lib/db';
+import { queryAll, queryOne, run, transaction } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { triggerWorkspaceMerge } from '@/lib/workspace-isolation';
-import { drainQueue, handleStageFailure, handleStageTransition } from '@/lib/workflow-engine';
+import { drainQueue, handleStageFailure, handleStageTransition, dispatchNextQueuedTask } from '@/lib/workflow-engine';
 import { buildAgentSessionKey } from '@/lib/openclaw/routing';
 import { syncOpenClawBuildUsage } from '@/lib/openclaw/session-runtime';
 import { sanitizeAgentSignalSummary, stripAgentResponseWrappers } from '@/lib/agent-signal-text';
@@ -272,8 +272,15 @@ export async function processAgentSignal(
       broadcast({ type: 'task_updated', payload: refreshedTask });
     }
 
-    setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    const blockedAgentId = session?.agent_id || task.assigned_agent_id;
+    setAgentStandbyIfIdle(blockedAgentId, task.id, now);
     triggerBuildUsageSync(task.id);
+    // Agent is freed — dispatch next queued task
+    if (blockedAgentId && task.workspace_id) {
+      dispatchNextQueuedTask(blockedAgentId, task.id, task.workspace_id).catch((err) => {
+        console.error('[AgentSignals] dispatchNextQueuedTask after blocked failed:', err);
+      });
+    }
     return { handled: true, taskId: task.id, signal: parsed.kind };
   }
 
@@ -288,37 +295,71 @@ export async function processAgentSignal(
     return { handled: true, taskId: task.id, signal: parsed.kind };
   }
 
-  run(
-    `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
-     VALUES (?, ?, ?, 'completed', ?, ?)`,
-    [
-      crypto.randomUUID(),
-      task.id,
-      session?.agent_id || task.assigned_agent_id || null,
-      parsed.summary,
-      now,
-    ]
-  );
+  const transition = transaction(() => {
+    const currentTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]);
+    if (!currentTask || shouldIgnoreSignal(currentTask, targetStatus)) {
+      return { applied: false, previousStatus: currentTask?.status, task: currentTask };
+    }
 
-  run(
-    `UPDATE tasks
-     SET status = ?, planning_dispatch_error = NULL, status_reason = NULL, updated_at = ?
-     WHERE id = ?`,
-    [targetStatus, now, task.id]
-  );
+    const updateResult = run(
+      `UPDATE tasks
+       SET status = ?, planning_dispatch_error = NULL, status_reason = NULL, updated_at = ?
+       WHERE id = ? AND status = ?`,
+      [targetStatus, now, task.id, currentTask.status]
+    );
 
-  const refreshedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]);
+    if (updateResult.changes === 0) {
+      return {
+        applied: false,
+        previousStatus: currentTask.status,
+        task: queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]) || currentTask,
+      };
+    }
+
+    run(
+      `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+       VALUES (?, ?, ?, 'completed', ?, ?)`,
+      [
+        crypto.randomUUID(),
+        task.id,
+        session?.agent_id || currentTask.assigned_agent_id || null,
+        parsed.summary,
+        now,
+      ]
+    );
+
+    return {
+      applied: true,
+      previousStatus: currentTask.status,
+      task: queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [task.id]) || currentTask,
+    };
+  });
+
+  const refreshedTask = transition.task;
+  if (!transition.applied) {
+    setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    triggerBuildUsageSync(task.id);
+    return { handled: true, taskId: task.id, signal: parsed.kind };
+  }
+
   if (refreshedTask) {
     broadcast({ type: 'task_updated', payload: refreshedTask });
   }
 
   if (targetStatus === 'done') {
-    setAgentStandbyIfIdle(session?.agent_id || task.assigned_agent_id, task.id, now);
+    const freedAgentId = session?.agent_id || task.assigned_agent_id;
+    setAgentStandbyIfIdle(freedAgentId, task.id, now);
     triggerBuildUsageSync(task.id);
     drainQueue(task.id, task.workspace_id).catch((err) => {
       console.error('[AgentSignals] drainQueue after done failed:', err);
     });
-    if (task.workspace_path) {
+    // Dispatch the next queued task for the now-idle agent
+    if (freedAgentId && task.workspace_id) {
+      dispatchNextQueuedTask(freedAgentId, task.id, task.workspace_id).catch((err) => {
+        console.error('[AgentSignals] dispatchNextQueuedTask after done failed:', err);
+      });
+    }
+    if (refreshedTask?.workspace_path) {
       triggerWorkspaceMerge(task.id).catch((err) => {
         console.error('[AgentSignals] workspace merge after done failed:', err);
       });
@@ -337,7 +378,7 @@ export async function processAgentSignal(
   }
 
   const handoff = await handleStageTransition(task.id, targetStatus, {
-    previousStatus: task.status,
+    previousStatus: transition.previousStatus || task.status,
   });
 
   if (!handoff.success && handoff.error) {

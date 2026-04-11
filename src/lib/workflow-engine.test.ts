@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDb, queryOne, run } from './db';
 import { getOpenClawClient } from './openclaw/client';
-import { handleStageTransition } from './workflow-engine';
+import { handleStageTransition, populateTaskRolesFromAgents } from './workflow-engine';
 import { POST as dispatchTaskRoute } from '../app/api/tasks/[id]/dispatch/route';
 import { NextRequest } from 'next/server';
 import { buildPersistentAgentSessionId } from './openclaw/routing';
@@ -360,6 +360,133 @@ test('handleStageTransition immediately starts the next queued builder task afte
          AND task_id = ?
          AND status = 'active'`,
       [builderId, queuedTaskId]
+    );
+    assert.equal(builderSession?.task_id, queuedTaskId);
+    assert.equal(builderSession?.status, 'active');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('populateTaskRolesFromAgents assigns new builder work to the least-loaded builder', () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const busyBuilderId = crypto.randomUUID();
+  const idleBuilderId = crypto.randomUUID();
+  const testerId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+  const existingTaskId = crypto.randomUUID();
+
+  ensureWorkspace(workspaceId);
+  const templateId = seedStrictWorkflowTemplate(workspaceId);
+  seedAgent({ id: busyBuilderId, workspaceId, name: 'Builder Agent', role: 'builder', status: 'working' });
+  seedAgent({ id: idleBuilderId, workspaceId, name: 'Builder Agent 2', role: 'builder', status: 'standby' });
+  seedAgent({ id: testerId, workspaceId, name: 'Tester Agent', role: 'tester', status: 'standby' });
+  seedTask({ id: existingTaskId, workspaceId, templateId, status: 'in_progress', assignedAgentId: busyBuilderId });
+  seedTask({ id: taskId, workspaceId, templateId, status: 'planning' });
+
+  populateTaskRolesFromAgents(taskId, workspaceId);
+
+  const builderRole = queryOne<{ agent_id: string }>(
+    `SELECT agent_id
+     FROM task_roles
+     WHERE task_id = ? AND role = 'builder'`,
+    [taskId]
+  );
+  assert.equal(builderRole?.agent_id, idleBuilderId);
+});
+
+test('handleStageTransition can rebalance a queued builder task onto another free builder', { concurrency: false }, async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const releasedBuilderId = crypto.randomUUID();
+  const busyBuilderId = crypto.randomUUID();
+  const testerId = crypto.randomUUID();
+  const completedBuildTaskId = crypto.randomUUID();
+  const busyBuilderTaskId = crypto.randomUUID();
+  const queuedTaskId = crypto.randomUUID();
+  const releasedBuilderSessionId = buildPersistentAgentSessionId({ id: releasedBuilderId, name: 'Builder Agent' });
+
+  ensureWorkspace(workspaceId);
+  const templateId = seedStrictWorkflowTemplate(workspaceId);
+  seedAgent({ id: releasedBuilderId, workspaceId, name: 'Builder Agent', role: 'builder', status: 'working' });
+  seedAgent({ id: busyBuilderId, workspaceId, name: 'Builder Agent 2', role: 'builder', status: 'working' });
+  seedAgent({ id: testerId, workspaceId, name: 'Tester Agent', role: 'tester', status: 'standby' });
+  seedTask({ id: completedBuildTaskId, workspaceId, templateId, status: 'testing', assignedAgentId: releasedBuilderId });
+  seedTask({ id: busyBuilderTaskId, workspaceId, templateId, status: 'in_progress', assignedAgentId: busyBuilderId });
+  seedTask({ id: queuedTaskId, workspaceId, templateId, status: 'assigned', assignedAgentId: busyBuilderId, updatedAt: '2026-04-10T14:00:00.000Z' });
+  run(
+    `UPDATE tasks
+     SET title = 'Queued shared-pool builder task',
+         status_reason = 'Waiting for Builder Agent 2 to finish "Busy builder task" before starting this task.'
+     WHERE id = ?`,
+    [queuedTaskId]
+  );
+  seedTaskRole(completedBuildTaskId, 'builder', releasedBuilderId);
+  seedTaskRole(completedBuildTaskId, 'tester', testerId);
+  seedTaskRole(queuedTaskId, 'builder', busyBuilderId);
+  seedSession({
+    agentId: releasedBuilderId,
+    taskId: completedBuildTaskId,
+    openclawSessionId: releasedBuilderSessionId,
+    status: 'active',
+  });
+  seedSession({
+    agentId: busyBuilderId,
+    taskId: busyBuilderTaskId,
+    openclawSessionId: buildPersistentAgentSessionId({ id: busyBuilderId, name: 'Builder Agent 2' }),
+    status: 'active',
+  });
+  stubGatewayClient({ allowDispatch: true });
+
+  const originalFetch = global.fetch;
+  global.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.endsWith(`/api/tasks/${completedBuildTaskId}/dispatch`)) {
+      return dispatchTaskRoute(
+        new NextRequest(url, { method: 'POST', headers: init?.headers }),
+        { params: Promise.resolve({ id: completedBuildTaskId }) }
+      );
+    }
+    if (url.endsWith(`/api/tasks/${queuedTaskId}/dispatch`)) {
+      return dispatchTaskRoute(
+        new NextRequest(url, { method: 'POST', headers: init?.headers }),
+        { params: Promise.resolve({ id: queuedTaskId }) }
+      );
+    }
+    throw new Error(`Unexpected fetch in workflow-engine test: ${url}`);
+  };
+
+  try {
+    const result = await handleStageTransition(completedBuildTaskId, 'testing', {
+      previousStatus: 'in_progress',
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.handedOff, true);
+    assert.equal(result.newAgentId, testerId);
+
+    const queuedTask = queryOne<{ status: string; assigned_agent_id: string | null; status_reason: string | null }>(
+      'SELECT status, assigned_agent_id, status_reason FROM tasks WHERE id = ?',
+      [queuedTaskId]
+    );
+    assert.equal(queuedTask?.status, 'in_progress');
+    assert.equal(queuedTask?.assigned_agent_id, releasedBuilderId);
+    assert.equal(queuedTask?.status_reason, null);
+
+    const builderRole = queryOne<{ agent_id: string }>(
+      `SELECT agent_id
+       FROM task_roles
+       WHERE task_id = ? AND role = 'builder'`,
+      [queuedTaskId]
+    );
+    assert.equal(builderRole?.agent_id, releasedBuilderId);
+
+    const builderSession = queryOne<{ task_id: string | null; status: string }>(
+      `SELECT task_id, status
+       FROM openclaw_sessions
+       WHERE agent_id = ?
+         AND task_id = ?
+         AND status = 'active'`,
+      [releasedBuilderId, queuedTaskId]
     );
     assert.equal(builderSession?.task_id, queuedTaskId);
     assert.equal(builderSession?.status, 'active');

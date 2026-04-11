@@ -8,6 +8,9 @@ interface ActivityPanelProps {
   productId: string;
 }
 
+const MAX_VISIBLE_CYCLES = 4;
+const HIDDEN_EVENT_TYPES = new Set(['idea_stored']);
+
 const EVENT_ICONS: Record<string, React.ReactNode> = {
   phase_init: <Zap className="w-3.5 h-3.5 text-blue-400" />,
   phase_llm_submitted: <Loader className="w-3.5 h-3.5 text-yellow-400" />,
@@ -51,6 +54,10 @@ function groupByCycle(entries: AutopilotActivityEntry[]): Map<string, AutopilotA
 function cycleLabel(cycleType: string, index: number): string {
   const type = cycleType === 'research' ? 'Research' : 'Ideation';
   return `${type} Cycle #${index}`;
+}
+
+function curateEntries(entries: AutopilotActivityEntry[]): AutopilotActivityEntry[] {
+  return entries.filter((entry) => !HIDDEN_EVENT_TYPES.has(entry.event_type));
 }
 
 export function ActivityPanel({ productId }: ActivityPanelProps) {
@@ -118,9 +125,11 @@ export function ActivityPanel({ productId }: ActivityPanelProps) {
     const bLatest = bEntries[bEntries.length - 1]?.created_at || '';
     return bLatest.localeCompare(aLatest);
   });
+  const visibleCycleKeys = cycleKeys.slice(0, MAX_VISIBLE_CYCLES);
+  const hiddenCycleCount = Math.max(cycleKeys.length - visibleCycleKeys.length, 0);
 
   const cycleTypeCounts = new Map<string, number>();
-  for (const key of cycleKeys) {
+  for (const key of visibleCycleKeys) {
     const cycleType = key.split('-')[0];
     cycleTypeCounts.set(cycleType, (cycleTypeCounts.get(cycleType) || 0) + 1);
   }
@@ -136,7 +145,7 @@ export function ActivityPanel({ productId }: ActivityPanelProps) {
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-mc-accent" />
           <span className="text-sm font-medium text-mc-text">Activity</span>
-          <span className="text-xs text-mc-text-secondary">({entries.length})</span>
+          <span className="text-xs text-mc-text-secondary">({visibleCycleKeys.length})</span>
         </div>
         {/* Desktop: collapse button */}
         <button
@@ -159,8 +168,14 @@ export function ActivityPanel({ productId }: ActivityPanelProps) {
           <p className="text-xs text-mc-text-secondary text-center py-4">No activity yet</p>
         )}
 
-        {cycleKeys.map((key, idx) => {
-          const group = grouped.get(key)!;
+        {hiddenCycleCount > 0 && (
+          <p className="text-[11px] text-mc-text-secondary">
+            Showing the {visibleCycleKeys.length} most recent cycles. Older activity is hidden.
+          </p>
+        )}
+
+        {visibleCycleKeys.map((key) => {
+          const group = curateEntries(grouped.get(key)!);
           const cycleType = key.split('-')[0];
           const seen = (cycleTypeSeen.get(cycleType) || 0) + 1;
           cycleTypeSeen.set(cycleType, seen);
@@ -221,9 +236,9 @@ export function ActivityPanel({ productId }: ActivityPanelProps) {
         className="lg:hidden fixed bottom-4 right-4 z-40 w-12 h-12 rounded-full bg-mc-accent text-white shadow-lg flex items-center justify-center"
       >
         <Activity className="w-5 h-5" />
-        {entries.length > 0 && (
+        {visibleCycleKeys.length > 0 && (
           <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center">
-            {Math.min(entries.length, 99)}
+            {Math.min(visibleCycleKeys.length, 99)}
           </span>
         )}
       </button>

@@ -195,7 +195,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
             setSubmitting(false);
           }
           // Always clear submitting state when we have a question
-          if (data.currentQuestion) {
+          if (effectiveQuestion) {
             setIsSubmittingAnswer(false);
             setSubmitting(false);
           }
@@ -210,7 +210,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
             setStalePlanning(true);
           }
 
-          if (data.currentQuestion || data.complete || data.dispatchError || data.transcriptIssue) {
+          if (effectiveQuestion || effectiveComplete || effectiveDispatchError || effectiveTranscriptIssue) {
             setIsWaitingForResponse(false);
             stopPolling();
           }
@@ -465,8 +465,11 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
   };
 
   // Cancel planning
-  const cancelPlanning = async () => {
-    if (!confirm('Are you sure you want to cancel planning? This will reset the planning state.')) {
+  const cancelPlanning = async (restartMode = false) => {
+    const msg = restartMode
+      ? 'Restart planning? This will clear the current planning state so you can start over.'
+      : 'Are you sure you want to cancel planning? This will reset the planning state.';
+    if (!confirm(msg)) {
       return;
     }
 
@@ -508,8 +511,84 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
     );
   }
 
+  // Planning complete but no structured spec was recovered.
+  const spec = state?.spec;
+  const hasRecoverableSpec =
+    !!spec &&
+    typeof spec === 'object' &&
+    Object.keys(spec).length > 0 &&
+    (typeof spec.title === 'string' && spec.title.trim().length > 0 ||
+      typeof spec.summary === 'string' && spec.summary.trim().length > 0);
+
+  if (state?.isComplete && !hasRecoverableSpec) {
+    return (
+      <div className="p-4 space-y-4">
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+            <div>
+              <p className="font-medium text-amber-300">Planning completed without a recoverable spec</p>
+              <p>{state.statusReason || 'The planner did not produce a structured approval payload. Restart planning to generate a clean plan.'}</p>
+            </div>
+          </div>
+        </div>
+
+        {transcriptIssue && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+              <div>
+                <p className="font-medium text-amber-300">Transcript recovery needs attention</p>
+                <p>{transcriptIssue.message}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => cancelPlanning(true)}
+            disabled={canceling}
+            className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-sm rounded-lg border border-amber-500/30 disabled:opacity-50 flex items-center gap-2"
+          >
+            {canceling ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Restarting...
+              </>
+            ) : (
+              <>
+                <X className="w-4 h-4" />
+                Restart Planning
+              </>
+            )}
+          </button>
+          <span className="text-xs text-mc-text-secondary">
+            This resets the current planning state so you can start over cleanly.
+          </span>
+        </div>
+
+        {state.messages && state.messages.length > 0 && (
+          <div className="rounded-lg border border-mc-border bg-mc-bg p-4">
+            <h3 className="mb-2 text-sm font-medium text-mc-text">Conversation snapshot</h3>
+            <div className="space-y-2 text-sm text-mc-text-secondary">
+              {state.messages.map((msg, index) => (
+                <div key={index}>
+                  <span className="font-medium text-mc-text">{msg.role === 'user' ? 'You' : 'Orchestrator'}:</span>{' '}
+                  <span>{msg.content.substring(0, 200)}{msg.content.length > 200 ? '...' : ''}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Planning complete - show spec and agents
-  if (state?.isComplete && state?.spec) {
+  if (state?.isComplete && hasRecoverableSpec) {
+    // spec is guaranteed non-null by hasRecoverableSpec check above
+    const approvedSpec = spec!;
     return (
       <div className="p-4 space-y-6">
         <div className="flex items-center justify-between">
@@ -579,25 +658,25 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
         
         {/* Spec Summary */}
         <div className="bg-mc-bg border border-mc-border rounded-lg p-4">
-          <h3 className="font-medium mb-2">{state.spec.title}</h3>
-          <p className="text-sm text-mc-text-secondary mb-4">{state.spec.summary}</p>
+          <h3 className="font-medium mb-2">{approvedSpec.title}</h3>
+          <p className="text-sm text-mc-text-secondary mb-4">{approvedSpec.summary}</p>
           
-          {state.spec.deliverables?.length > 0 && (
+          {approvedSpec.deliverables?.length > 0 && (
             <div className="mb-3">
               <h4 className="text-sm font-medium mb-1">Deliverables:</h4>
               <ul className="list-disc list-inside text-sm text-mc-text-secondary">
-                {state.spec.deliverables.map((d, i) => (
+                {approvedSpec.deliverables.map((d, i) => (
                   <li key={i}>{d}</li>
                 ))}
               </ul>
             </div>
           )}
           
-          {state.spec.success_criteria?.length > 0 && (
+          {approvedSpec.success_criteria?.length > 0 && (
             <div>
               <h4 className="text-sm font-medium mb-1">Success Criteria:</h4>
               <ul className="list-disc list-inside text-sm text-mc-text-secondary">
-                {state.spec.success_criteria.map((c, i) => (
+                {approvedSpec.success_criteria.map((c, i) => (
                   <li key={i}>{c}</li>
                 ))}
               </ul>
@@ -701,7 +780,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           <span>Planning in progress...</span>
         </div>
         <button
-          onClick={cancelPlanning}
+          onClick={() => cancelPlanning()}
           disabled={canceling}
           className="flex items-center gap-2 px-3 py-2 text-sm text-mc-accent-red hover:bg-mc-accent-red/10 rounded disabled:opacity-50"
         >
@@ -733,7 +812,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
           </div>
         )}
 
-        {state?.currentQuestion ? (
+        {state?.currentQuestion && !isWaitingForResponse ? (
           <div className="max-w-xl mx-auto">
             <h3 className="text-lg font-medium mb-6">
               {state.currentQuestion.question}
@@ -854,11 +933,11 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
         ) : (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              {stalePlanning ? (
+              {stalePlanning || transcriptIssue ? (
                 <>
                   <AlertCircle className="w-8 h-8 text-amber-400 mx-auto mb-3" />
                   <p className="text-amber-300 font-medium mb-2">
-                    {transcriptIssue ? 'Planning transcript needs recovery' : 'Planning appears stuck'}
+                    {transcriptIssue ? 'Planning needs recovery' : 'Planning appears stuck'}
                   </p>
                   <p className="text-mc-text-secondary text-sm mb-4 max-w-sm">
                     {transcriptIssue
@@ -884,7 +963,7 @@ export function PlanningTab({ taskId, onSpecLocked }: PlanningTabProps) {
                       )}
                     </button>
                     <button
-                      onClick={cancelPlanning}
+                      onClick={() => cancelPlanning()}
                       disabled={canceling}
                       className="px-4 py-2 text-mc-text-secondary hover:text-mc-accent-red text-sm rounded-lg border border-mc-border hover:border-mc-accent-red/30"
                     >
