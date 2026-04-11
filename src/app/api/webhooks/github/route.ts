@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
 
     // Broadcast the update so UI refreshes
     broadcast({
-      type: 'task_status_changed',
+      type: 'task_updated',
       payload: { taskId, status: 'done' }
     });
 
