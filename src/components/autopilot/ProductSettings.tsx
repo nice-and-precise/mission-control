@@ -15,6 +15,7 @@ export function ProductSettings({ product, onSave }: Props) {
     name: product.name,
     description: product.description || '',
     repo_url: product.repo_url || '',
+    canonical_program_path: product.canonical_program_path || '',
     live_url: product.live_url || '',
     default_branch: product.default_branch || 'main',
     build_mode: product.build_mode || 'plan_first',
@@ -31,6 +32,7 @@ export function ProductSettings({ product, onSave }: Props) {
     form.name !== product.name ||
     form.description !== (product.description || '') ||
     form.repo_url !== (product.repo_url || '') ||
+    form.canonical_program_path !== (product.canonical_program_path || '') ||
     form.live_url !== (product.live_url || '') ||
     form.default_branch !== (product.default_branch || 'main') ||
     form.build_mode !== (product.build_mode || 'plan_first') ||
@@ -48,6 +50,7 @@ export function ProductSettings({ product, onSave }: Props) {
         name: form.name,
         description: form.description || undefined,
         repo_url: form.repo_url || null,
+        canonical_program_path: form.canonical_program_path || null,
         live_url: form.live_url || null,
         default_branch: form.default_branch || 'main',
         build_mode: form.build_mode,
@@ -196,6 +199,17 @@ export function ProductSettings({ product, onSave }: Props) {
               </a>
             )}
           </div>
+        </div>
+
+        <div>
+          <label className={labelClass}>Canonical Program Path</label>
+          <input
+            type="text"
+            value={form.canonical_program_path}
+            onChange={e => setForm(f => ({ ...f, canonical_program_path: e.target.value }))}
+            className={inputClass}
+            placeholder="docs/PRODUCT_PROGRAM.md"
+          />
         </div>
 
         <div>

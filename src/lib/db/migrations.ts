@@ -2019,6 +2019,20 @@ const migrations: Migration[] = [
 
       console.log('[Migration 039] ideas table recreated with compliance category');
     }
+  },
+  {
+    id: '040',
+    name: 'add_canonical_program_path',
+    up: (db) => {
+      console.log('[Migration 040] Adding canonical_program_path to products...');
+
+      const productsInfo = db.prepare("PRAGMA table_info(products)").all() as { name: string }[];
+
+      if (!productsInfo.some(col => col.name === 'canonical_program_path')) {
+        db.exec(`ALTER TABLE products ADD COLUMN canonical_program_path TEXT`);
+        console.log('[Migration 040] Added canonical_program_path to products');
+      }
+    }
   }
 ];
 
