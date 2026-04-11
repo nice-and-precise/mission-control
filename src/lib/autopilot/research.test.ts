@@ -2,6 +2,7 @@ import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import fs from 'node:fs';
 import { closeDb, queryOne, run } from '@/lib/db';
 
 const TEST_DB_PATH = process.env.DATABASE_PATH || join(tmpdir(), `mission-control-research-tests-${process.pid}.sqlite`);
@@ -46,17 +47,18 @@ function ensureWorkspace(workspaceId: string) {
   );
 }
 
-function seedProduct(productId: string, workspaceId: string) {
+function seedProduct(productId: string, workspaceId: string, overrides?: { productProgram?: string; settings?: string }) {
   ensureWorkspace(workspaceId);
   run(
     `INSERT INTO products (
        id, workspace_id, name, repo_url, product_program, icon,
-       cost_cap_per_task, cost_cap_monthly, reserved_cost_usd, budget_status, created_at, updated_at
-     ) VALUES (?, ?, 'BoreReady', 'https://github.com/nice-and-precise/squti.git', ?, '🚀', 15, 40, 0, 'clear', datetime('now'), datetime('now'))`,
+       settings, cost_cap_per_task, cost_cap_monthly, reserved_cost_usd, budget_status, created_at, updated_at
+     ) VALUES (?, ?, 'BoreReady', 'https://github.com/nice-and-precise/squti.git', ?, '🚀', ?, 15, 40, 0, 'clear', datetime('now'), datetime('now'))`,
     [
       productId,
       workspaceId,
-      'Train workers for confined-space safety with a Frappe LMS-backed program and identify implementation gaps.',
+      overrides?.productProgram || 'Train workers for confined-space safety with a Frappe LMS-backed program and identify implementation gaps.',
+      overrides?.settings || JSON.stringify({ repo_checkout_path: '/__tests__/disabled-product-program-sync' }),
     ],
   );
 }
@@ -128,6 +130,66 @@ test('runResearchCycle retries invalid JSON and completes for a qwen workspace o
   );
   assert.equal(storedCycle?.current_phase, 'completed');
   assert.match(storedCycle?.report || '', /"technology"/);
+});
+
+test('runResearchCycle stores product program provenance for completed cycles', async () => {
+  process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
+  process.env.AUTOPILOT_MODEL = 'openclaw';
+  process.env.OPENCLAW_AUTOPILOT_COMPLETION_MODE = 'http';
+
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const productId = crypto.randomUUID();
+  const programText = '# Product Program\n\nCanonical BoreReady test program.';
+  const programPath = join(tmpdir(), `mc-program-${crypto.randomUUID()}.md`);
+  fs.writeFileSync(programPath, programText);
+  seedProduct(productId, workspaceId, {
+    productProgram: programText,
+    settings: JSON.stringify({ canonical_program_path: programPath }),
+  });
+
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    model: 'openclaw',
+    choices: [{
+      message: {
+        content: '{"sections":{"missing_artifacts":{"artifacts":[],"blockers":[],"priority_order":[]},"factual_gaps":{"statute_mismatches":[],"dli_doc_mismatches":[],"source_citation_issues":[]},"contradictions":{"repo_vs_board":[],"repo_vs_prs":[],"internal_doc_conflicts":[]},"domain_lock_violations":{"prohibited_terms_found":[],"wrong_domain_references":[]}}}',
+      },
+      finish_reason: 'stop',
+    }],
+    usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  const mod = await import(`./research?test-provenance=${Date.now()}`);
+  const cycleId = await mod.runResearchCycle(productId);
+  const cycle = await waitForResearchCycle(cycleId);
+
+  assert.equal(cycle.status, 'completed');
+  const storedCycle = queryOne<{ product_program_sha: string | null; product_program_snapshot: string | null }>(
+    'SELECT product_program_sha, product_program_snapshot FROM research_cycles WHERE id = ?',
+    [cycleId],
+  );
+  assert.equal(storedCycle?.product_program_sha?.length, 64);
+  assert.equal(storedCycle?.product_program_snapshot, programText);
+});
+
+test('runResearchCycle blocks when canonical Product Program differs from Mission Control DB copy', async () => {
+  const workspaceId = `ws-${crypto.randomUUID()}`;
+  const productId = crypto.randomUUID();
+  const programPath = join(tmpdir(), `mc-program-drift-${crypto.randomUUID()}.md`);
+  fs.writeFileSync(programPath, '# Product Program\n\nCanonical repo truth.');
+
+  seedProduct(productId, workspaceId, {
+    productProgram: '# Product Program\n\nStale DB truth.',
+    settings: JSON.stringify({ canonical_program_path: programPath }),
+  });
+
+  const mod = await import(`./research?test-drift=${Date.now()}`);
+  await assert.rejects(
+    () => mod.runResearchCycle(productId),
+    /Product Program is out of sync/i,
+  );
 });
 
 test('getResearchCycles interrupts stale running cycles with no recent heartbeat', async () => {

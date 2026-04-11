@@ -29,6 +29,10 @@ const EVENT_ICONS: Record<string, React.ReactNode> = {
   recovery_requeued: <Loader className="w-3.5 h-3.5 text-orange-400" />,
   recovery_interrupted: <AlertCircle className="w-3.5 h-3.5 text-red-400" />,
   recovery_completed: <CheckCircle className="w-3.5 h-3.5 text-green-400" />,
+  program_sync_started: <Loader className="w-3.5 h-3.5 text-cyan-400 animate-spin" />,
+  program_sync_completed: <CheckCircle className="w-3.5 h-3.5 text-green-400" />,
+  program_audit_completed: <CheckCircle className="w-3.5 h-3.5 text-green-400" />,
+  program_sync_blocked_run: <AlertCircle className="w-3.5 h-3.5 text-amber-300" />,
 };
 
 function getEventIcon(eventType: string) {
@@ -57,7 +61,7 @@ function groupByCycle(entries: AutopilotActivityEntry[]): Map<string, AutopilotA
 }
 
 function cycleLabel(cycleType: string, index: number): string {
-  const type = cycleType === 'research' ? 'Research' : 'Ideation';
+  const type = cycleType === 'research' ? 'Research' : cycleType === 'ideation' ? 'Ideation' : 'Program Audit';
   return `${type} Cycle #${index}`;
 }
 

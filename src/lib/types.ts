@@ -589,6 +589,55 @@ export interface Product {
   workspace_icon?: string;
 }
 
+export interface ProductProgramAudit {
+  id: string;
+  product_id: string;
+  status: 'completed' | 'failed';
+  triggered_by: 'manual' | 'automatic';
+  drift_detected: number;
+  synced: number;
+  db_program_sha_before?: string;
+  db_program_sha_after?: string;
+  canonical_program_sha?: string;
+  summary_json?: string;
+  created_at: string;
+  completed_at: string;
+}
+
+export interface ProductProgramDriftSummary {
+  canonical_available: boolean;
+  drift_detected: boolean;
+  message: string;
+  canonical_program_path?: string;
+  db_program_sha: string;
+  canonical_program_sha?: string;
+  recent_completed_tasks: Array<{
+    id: string;
+    title: string;
+    updated_at: string;
+    merge_status?: string;
+    merge_pr_url?: string;
+    idea_id?: string;
+  }>;
+  latest_research?: {
+    id: string;
+    status: string;
+    completed_at?: string;
+    product_program_sha?: string;
+    matches_db_program: boolean;
+    matches_canonical_program: boolean;
+  };
+  latest_ideation?: {
+    id: string;
+    status: string;
+    completed_at?: string;
+    product_program_sha?: string;
+    matches_db_program: boolean;
+    matches_canonical_program: boolean;
+  };
+  latest_audit?: ProductProgramAudit;
+}
+
 // Health Score types
 export type HealthComponent = 'research' | 'pipeline' | 'swipe' | 'build' | 'cost';
 
@@ -696,6 +745,8 @@ export interface ResearchCycle {
   id: string;
   product_id: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+  product_program_sha?: string;
+  product_program_snapshot?: string;
   report?: string; // JSON
   ideas_generated: number;
   cost_usd: number;
@@ -716,6 +767,8 @@ export interface IdeationCycle {
   product_id: string;
   research_cycle_id?: string;
   status: 'running' | 'completed' | 'failed' | 'interrupted';
+  product_program_sha?: string;
+  product_program_snapshot?: string;
   current_phase?: IdeationCyclePhase;
   phase_data?: string; // JSON
   session_key?: string;
@@ -731,7 +784,7 @@ export interface AutopilotActivityEntry {
   id: string;
   product_id: string;
   cycle_id: string;
-  cycle_type: 'research' | 'ideation';
+  cycle_type: 'research' | 'ideation' | 'program';
   event_type: string;
   message: string;
   detail?: string;

@@ -238,26 +238,172 @@ When something looks wrong:
 
 - recover the specific card first
 - do not restart the full gateway unless the gateway itself is unhealthy or multiple unrelated dispatches fail
+
+## Product Program Guardrails
+
+- Research and ideation do not run from a stale Product Program anymore when canonical repo truth is configured.
+- Use the Program tab's `Audit & Sync Program` action after repo-side Product Program merges and before kicking off the next cycle.
+- Completed research and ideation cycles now retain `product_program_sha` and `product_program_snapshot` so you can audit which revision drove the run.
 - if lane ownership is wrong after a stage transition, audit the route for direct status mutation bypassing workflow handoff
+
+## Planning Approval and Recovery
+
+### Normal approval flow
+
+1. A Planning Agent writes a planning spec (`planning_spec` JSON with objectives, deliverables, validation).
+2. Once planning is complete (`planning_complete = 1`), call `POST /api/tasks/{id}/planning/approve`.
+3. The approve route locks the spec in `planning_specs`, assigns a builder, and dispatches.
+
+### "Spec already locked" error
+
+If you get HTTP 400 `Spec already locked`, it means a record already exists in `planning_specs` for this task. This happens when:
+
+- A prior planning round produced a spec lock, but the task was never dispatched (e.g., session ended, or task was manually reset).
+- A card was manually moved back to planning after a failed round.
+
+**Code fix (2026-04-11):** The approve route now auto-clears stale specs when the task is still in `planning` or `inbox` status, so this error should only appear for tasks that have already progressed past planning.
+
+**Manual recovery (if needed):**
+
+```bash
+# Delete the stale planning_specs record
+sqlite3 mission-control.db "DELETE FROM planning_specs WHERE task_id = '<task-id>';"
+
+# Then re-approve
+curl -X POST -H "Authorization: Bearer $MC_API_TOKEN" \
+  "http://localhost:4000/api/tasks/<task-id>/planning/approve"
+```
+
+### Stuck planning cards ("Planning already started")
+
+If `POST /api/tasks/{id}/planning` returns `Planning already started`, a `planning_session_key` exists from a prior session. The planning LLM session may have ended or become stale.
+
+**Recovery:** Use the DELETE handler to reset planning entirely:
+
+```bash
+# Reset task to inbox — clears session_key, messages, spec, agents, planning_specs
+curl -X DELETE -H "Authorization: Bearer $MC_API_TOKEN" \
+  "http://localhost:4000/api/tasks/<task-id>/planning"
+
+# Then restart planning
+curl -X POST -H "Authorization: Bearer $MC_API_TOKEN" \
+  "http://localhost:4000/api/tasks/<task-id>/planning"
+```
+
+The DELETE handler resets the task to `inbox` status with all planning fields cleared.
+
+### Inbox card promotion
+
+Inbox cards have no planning spec. To approve them directly (skipping the planning LLM):
+
+1. Write the spec and set `planning_complete` via SQL or PATCH:
+
+```bash
+sqlite3 mission-control.db "
+  UPDATE tasks
+  SET planning_spec = '{\"objectives\":[\"...\"],\"deliverables\":[\"...\"],\"validation_criteria\":[\"...\"]}',
+      planning_complete = 1,
+      status = 'planning'
+  WHERE id = '<task-id>';
+"
+```
+
+2. Then approve as normal: `POST /api/tasks/{id}/planning/approve`
+
+### PR merge does not always close cards automatically
+
+The GitHub PR-merge webhook (`src/app/api/webhooks/github-pr-merged/route.ts`) is now implemented. When configured on GitHub, it automatically marks tasks `done` and updates `merge_status` to `merged` when a PR is merged.
+
+**If the webhook is not yet configured on GitHub** (requires one-time setup in repo Settings → Webhooks), merging a PR still requires a manual status update:
+
+```bash
+sqlite3 mission-control.db "UPDATE tasks SET status = 'done' WHERE id = '<task-id>';"
+```
+
+**Webhook setup (one-time):** GitHub repo Settings → Webhooks → Add webhook
+- URL: `https://<MC-domain>/api/webhooks/github-pr-merged`
+- Content type: `application/json`
+- Event: `pull_request`
+- Secret: value of `GITHUB_WEBHOOK_SECRET` in your MC `.env`
+
+### Preventing duplicate dispatches
+
+Before approving a card, verify it doesn't already have a merged PR or active work:
+
+```bash
+# Check for existing PRs or completed work
+sqlite3 mission-control.db "
+  SELECT td.deliverable_type, td.deliverable_url, td.status
+  FROM task_deliverables td WHERE td.task_id = '<task-id>';
+"
+```
+
+If the card already has merged deliverables, mark it `done` instead of re-approving — otherwise the builder will create a duplicate PR.
 
 ## Code Paths That Matter
 
 - [src/app/api/tasks/route.ts](../src/app/api/tasks/route.ts): task creation invariants
 - [src/app/api/tasks/[id]/dispatch/route.ts](../src/app/api/tasks/%5Bid%5D/dispatch/route.ts): dispatch, queue handling, model binding
 - [src/app/api/tasks/[id]/test/route.ts](../src/app/api/tasks/%5Bid%5D/test/route.ts): automated test pass/fail stage transitions
+- [src/app/api/tasks/[id]/planning/approve/route.ts](../src/app/api/tasks/%5Bid%5D/planning/approve/route.ts): spec lock, builder assignment, dispatch
+- [src/app/api/tasks/[id]/planning/route.ts](../src/app/api/tasks/%5Bid%5D/planning/route.ts): POST starts planning, DELETE resets to inbox
+- [src/lib/autopilot/research.ts](../src/lib/autopilot/research.ts): research cycle, compliance gap audit
+- [src/lib/autopilot/ideation.ts](../src/lib/autopilot/ideation.ts): idea generation, tier filter, similarity dedup
+- [src/lib/autopilot/swipe.ts](../src/lib/autopilot/swipe.ts): swipe deck, createTaskFromIdea, build_mode routing
+- [src/lib/autopilot/scheduling.ts](../src/lib/autopilot/scheduling.ts): cron-driven research/ideation/maybe-pool cycles
+- [src/lib/agent-signals.ts](../src/lib/agent-signals.ts): TASK_COMPLETE/TEST_PASS/VERIFY_PASS signal handling
+- [src/lib/workspace-isolation.ts](../src/lib/workspace-isolation.ts): triggerWorkspaceMerge, PR creation, branch management
 - [src/lib/workflow-engine.ts](../src/lib/workflow-engine.ts): authoritative stage ownership and queue draining
 - [src/app/api/openclaw/sessions/route.ts](../src/app/api/openclaw/sessions/route.ts): full task session inspection
+
+## Upstream Influences on Card Quality
+
+Cards inherit quality from the upstream research → ideation pipeline. Problems at each stage cascade:
+
+### Research quality
+
+- If the product program is stale or incomplete, research will miss gaps or report false positives.
+- Research drives ideation directly — a weak report produces weak ideas.
+- Always run `POST /api/products/{id}/research/run` before ideation if the product program has changed.
+
+### Ideation quality
+
+- Ideation is bounded by the research report. Ideas without a backing finding are lower quality.
+- The tier filter (only tier-2 and tier-3) and similarity dedup (>90% match to rejected ideas) are automatic post-LLM guards. If ideas slip through with wrong tiers, check the LLM output in `ideation_cycles.phase_data`.
+- If ideation produces fewer ideas than expected (1 instead of 5-15), see the "Ideation-Level Failure Diagnosis" section below.
+
+### Swipe decisions
+
+- Rejected ideas train the preference model and the similarity dedup. Bad rejects can suppress future good ideas.
+- "Maybe" ideas resurface in 7 days via `maybe_reevaluation` schedule.
+- "Fire" (urgent) ideas bypass planning and enter `inbox` directly — they skip the planning spec step. Use fire sparingly.
+
+### build_mode impact
+
+- `plan_first` (default): Approved ideas → `planning` status → requires planning spec → requires approval → dispatches to builder. Most controlled path.
+- `auto_build`: Approved ideas → `assigned` status → immediately queued for dispatch. Skips planning entirely. Use only for well-scoped S/M tasks with clear specs in the idea itself.
+
+### Preventing upstream waste
+
+Before running a research+ideation cycle, verify:
+- Product program is current (`product.product_program` matches reality)
+- Research report is fresh (check `research_cycles` for recent completed cycle)
+- Swipe history reflects actual preferences (100 most recent swipes are used)
+- No duplicate pending ideas in the swipe deck from a prior cycle
 
 ## Bottom Line
 
 The correct pattern is:
 
-1. Create cards with complete metadata.
-2. Attach evidence before quality gates.
-3. Use task-scoped root sessions as the runtime source of truth.
-4. Treat queued cards as waiting, not stalled.
-5. Route every stage change through the workflow engine.
-6. Recover individual broken cards before considering full control-plane restarts.
+1. Keep the product program current — it drives research and ideation.
+2. Run research before ideation. Ideation without fresh research produces low-quality ideas.
+3. Create cards with complete metadata (via swipe deck, not manual SQL when possible).
+4. Attach evidence before quality gates.
+5. Use task-scoped root sessions as the runtime source of truth.
+6. Treat queued cards as waiting, not stalled.
+7. Route every stage change through the workflow engine.
+8. After merging a PR, the GitHub PR-merge webhook auto-closes the task if configured; otherwise mark `done` manually.
+9. Recover individual broken cards before considering full control-plane restarts.
 
 ## Ideation-Level Failure Diagnosis
 

@@ -2019,6 +2019,80 @@ const migrations: Migration[] = [
 
       console.log('[Migration 039] ideas table recreated with compliance category');
     }
+  },
+  {
+    id: '040',
+    name: 'add_product_program_provenance_and_audits',
+    up: (db) => {
+      console.log('[Migration 040] Adding product program provenance fields and audit table...');
+
+      const researchInfo = db.prepare("PRAGMA table_info(research_cycles)").all() as { name: string }[];
+      if (!researchInfo.some(col => col.name === 'product_program_sha')) {
+        db.exec(`ALTER TABLE research_cycles ADD COLUMN product_program_sha TEXT`);
+      }
+      if (!researchInfo.some(col => col.name === 'product_program_snapshot')) {
+        db.exec(`ALTER TABLE research_cycles ADD COLUMN product_program_snapshot TEXT`);
+      }
+
+      const ideationInfo = db.prepare("PRAGMA table_info(ideation_cycles)").all() as { name: string }[];
+      if (!ideationInfo.some(col => col.name === 'product_program_sha')) {
+        db.exec(`ALTER TABLE ideation_cycles ADD COLUMN product_program_sha TEXT`);
+      }
+      if (!ideationInfo.some(col => col.name === 'product_program_snapshot')) {
+        db.exec(`ALTER TABLE ideation_cycles ADD COLUMN product_program_snapshot TEXT`);
+      }
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS product_program_audits (
+          id TEXT PRIMARY KEY,
+          product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
+          triggered_by TEXT NOT NULL DEFAULT 'manual' CHECK(triggered_by IN ('manual', 'automatic')),
+          drift_detected INTEGER NOT NULL DEFAULT 0,
+          synced INTEGER NOT NULL DEFAULT 0,
+          db_program_sha_before TEXT,
+          db_program_sha_after TEXT,
+          canonical_program_sha TEXT,
+          summary_json TEXT,
+          created_at TEXT NOT NULL,
+          completed_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_product_program_audits_product ON product_program_audits(product_id, created_at DESC)`);
+
+      const autopilotActivityRow = db.prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'autopilot_activity_log'`
+      ).get() as { sql?: string } | undefined;
+      const autopilotActivitySql = autopilotActivityRow?.sql || '';
+
+      if (autopilotActivitySql && !autopilotActivitySql.includes("'program'")) {
+        db.exec(`ALTER TABLE autopilot_activity_log RENAME TO autopilot_activity_log_old`);
+        db.exec(`
+          CREATE TABLE autopilot_activity_log (
+            id TEXT PRIMARY KEY,
+            product_id TEXT NOT NULL REFERENCES products(id),
+            cycle_id TEXT NOT NULL,
+            cycle_type TEXT NOT NULL CHECK(cycle_type IN ('research', 'ideation', 'program')),
+            event_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            detail TEXT,
+            cost_usd REAL,
+            tokens_used INTEGER,
+            created_at TEXT NOT NULL
+          )
+        `);
+        db.exec(`
+          INSERT INTO autopilot_activity_log (id, product_id, cycle_id, cycle_type, event_type, message, detail, cost_usd, tokens_used, created_at)
+          SELECT id, product_id, cycle_id, cycle_type, event_type, message, detail, cost_usd, tokens_used, created_at
+          FROM autopilot_activity_log_old
+        `);
+        db.exec(`DROP TABLE autopilot_activity_log_old`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_autopilot_activity_product ON autopilot_activity_log(product_id, created_at DESC)`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_autopilot_activity_cycle ON autopilot_activity_log(cycle_id, created_at)`);
+      }
+
+      console.log('[Migration 040] Product program provenance migration completed');
+    }
   }
 ];
 

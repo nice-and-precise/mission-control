@@ -8,14 +8,15 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Snapshot
 
-- Date verified: `2026-04-09`
+- Date verified: `2026-04-11`
 - Upstream base: `v2.4.0`
-- Local checkout state: `OpenClaw 2026.4.9 restored; Mission Control reconnected; BoreReady verification lane unstuck`
+- Local checkout state: `OpenClaw 2026.4.10; Planning spec normalization broadened; BoreReady live planning verified`
 - Git ref: `main`
-- Baseline commit: `ca1d88d` (queue/session hijack fix on top of origin/main)
+- Baseline commit: `8c08971` (planning spec normalization fix, squash-merged PR #33)
 - GitHub PR state:
-  - PR `#1` remains the earlier repo-reconciliation merge into `origin/main`
-  - this restore work is local branch state on top of `origin/main`; local `HEAD` does not currently equal `origin/main`
+  - PR `#32` merged (planning transport fix, type narrowing, auto-repair guard, model unification)
+  - PR `#33` merged (planning spec normalization for non-standard planner field names)
+  - local `main` equals `origin/main`
 - Git remote model on this machine:
   - `origin` -> `nice-and-precise/mission-control`
   - `source` -> `crshdn/mission-control` (optional read-only comparison remote, with push disabled locally)
@@ -37,9 +38,10 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 The following facts were re-verified against the live local runtime on `2026-04-11`:
 
-- the runtime checkout at [the repo root](../) is on `main` at commit `0018717`, and local Mission Control remains healthy on `http://localhost:4000`
+- the runtime checkout at [the repo root](../) is on `main` at commit `8c08971`, and local Mission Control remains healthy on `http://localhost:4000`
   - authenticated `GET /api/health` returned `200`
   - authenticated `GET /api/openclaw/status` reported `connected: true`
+  - OpenClaw version: `2026.4.10` with Active Memory plugin enabled for main agent
 - planning startup no longer depends on a nonexistent `PLANNING.md` file
   - upstream `crshdn/mission-control` and this fork both previously referenced `Read PLANNING.md for your protocol` in the planning route
   - neither repo actually contains a `PLANNING.md`
@@ -137,6 +139,13 @@ The following facts were re-verified against the live local runtime on `2026-04-
 - planning transcript recovery now also retries one wrong-schema planner reply automatically
   - if the planner returns valid JSON in the wrong shape, Mission Control sends one structured correction prompt on the same session before surfacing manual recovery
   - if the planner still fails after that automatic retry, the Planning tab surfaces the recovery state explicitly instead of waiting forever
+- planning spec normalization now handles non-standard planner field names (PR `#33`, merged `2026-04-11`)
+  - the Qwen 3.6 Plus planner returns `task` instead of `title`, `validation` instead of `success_criteria`, `changes` (array of `{location, action}` objects) instead of `deliverables`, and `checks` (string array) instead of `success_criteria`
+  - `parsePlanningSpecValue()` now falls back through `task` for title/summary, extracts deliverable strings from `changes` objects, and chains `validation`/`checks` into success criteria
+  - `finalizePlanningCompletion()` now merges a top-level `execution_plan` into the spec before normalization, since some planners place it alongside rather than inside `spec`
+  - verified live: 6 BoreReady planning cards triggered, 5/5 completed cards now have populated titles, deliverables, and execution plans (was 0/2 before the fix)
+  - planning response time observed: 60–90 seconds per card via Qwen 3.6 Plus through OpenClaw gateway (acceptable for the async planning flow)
+  - one card (statute-traceability-index update) received no planner response across 3 attempts; likely an OpenClaw session timeout or model capacity issue, not a normalization bug
 - The session detail route no longer crashes on `sessions.list` payload shape differences
   - authenticated `GET /api/openclaw/sessions/{id}` now returns a normal `404` for a missing session instead of a `500`
 - Static error-page build regression is not reproducible on the current checkout
