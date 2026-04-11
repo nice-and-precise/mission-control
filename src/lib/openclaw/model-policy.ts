@@ -163,10 +163,9 @@ export function getDispatchDefaultModelForRole(role?: string | null): string {
   switch ((role || '').trim().toLowerCase()) {
     case 'reviewer':
     case 'builder':
-      return 'qwen/qwen3.6-plus';
     case 'tester':
-      return 'opencode-go-mm/minimax-m2.5';
     case 'learner':
+      return 'qwen/qwen3.6-plus';
     default:
       return getAutopilotDefaultModel();
   }

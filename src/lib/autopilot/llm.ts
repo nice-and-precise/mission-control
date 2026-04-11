@@ -26,12 +26,47 @@ const execFileAsync = promisify(execFile);
 
 export type CompletionTransport = 'http' | 'session' | 'agent-cli';
 
+export type CompletionStatusEvent =
+  | {
+      type: 'transport_started';
+      transport: CompletionTransport;
+      requestedModel: string;
+      attempt: number;
+    }
+  | {
+      type: 'transport_retry';
+      transport: 'http';
+      requestedModel: string;
+      attempt: number;
+      delayMs: number;
+      error: string;
+    }
+  | {
+      type: 'transport_fallback';
+      fromTransport: CompletionTransport;
+      toTransport: CompletionTransport;
+      requestedModel: string;
+      reason: string;
+    }
+  | {
+      type: 'transport_fallback_skipped';
+      fromTransport: CompletionTransport;
+      requestedModel: string;
+      reason: string;
+    }
+  | {
+      type: 'json_retry';
+      requestedModel: string;
+      remainingMs: number;
+    };
+
 export interface CompletionOptions {
   model?: string;
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  onStatus?: (event: CompletionStatusEvent) => void | Promise<void>;
 }
 
 export interface CompletionResult {
@@ -72,6 +107,25 @@ interface ParsedCliResult {
       };
     };
   };
+}
+
+async function notifyStatus(
+  callback: CompletionOptions['onStatus'],
+  event: CompletionStatusEvent,
+): Promise<void> {
+  if (!callback) {
+    return;
+  }
+
+  try {
+    await callback(event);
+  } catch (error) {
+    console.error('[LLM] Completion status callback failed:', error);
+  }
+}
+
+function remainingTimeMs(deadline: number): number {
+  return Math.max(deadline - Date.now(), 0);
 }
 
 function normalizeCompletionMode(value: string | undefined): CompletionTransport {
@@ -131,12 +185,28 @@ export function resolveCompletionTransport(
   return configuredMode;
 }
 
-function resolveHttpFallbackTransport(model: string): CompletionTransport {
+function resolveHttpFallbackTransport(model: string): CompletionTransport | null {
   if (!isOpenClawAgentTarget(model)) {
-    return 'session';
+    // Provider-model HTTP completions are the fix for the giant-session-context bug.
+    // Falling back to a session-backed path reintroduces that failure mode.
+    return AUTOPILOT_COMPLETION_MODE === 'http' ? null : 'session';
   }
 
   return AUTOPILOT_COMPLETION_MODE === 'session' ? 'session' : 'agent-cli';
+}
+
+async function runCompletionTransport(
+  transport: CompletionTransport,
+  prompt: string,
+  options: CompletionOptions,
+): Promise<CompletionResult> {
+  if (transport === 'agent-cli') {
+    return completeViaAgentCli(prompt, options);
+  }
+  if (transport === 'session') {
+    return completeViaSession(prompt, options);
+  }
+  return completeViaHttp(prompt, options);
 }
 
 function getSessionCompletionAgentTarget(model: string): string {
@@ -234,6 +304,13 @@ async function completeViaSession(prompt: string, options: CompletionOptions): P
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = options;
 
+  await notifyStatus(options.onStatus, {
+    type: 'transport_started',
+    transport: 'session',
+    requestedModel: model,
+    attempt: 1,
+  });
+
   const agentTarget = getSessionCompletionAgentTarget(model);
   const sessionKey = buildSessionKey(agentTarget);
   const client = getOpenClawClient();
@@ -310,6 +387,13 @@ async function completeViaAgentCli(prompt: string, options: CompletionOptions): 
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = options;
 
+  await notifyStatus(options.onStatus, {
+    type: 'transport_started',
+    transport: 'agent-cli',
+    requestedModel: model,
+    attempt: 1,
+  });
+
   const agentId = getAgentIdForCompletion(model);
   const timeoutSeconds = Math.max(30, Math.ceil(timeoutMs / 1000));
   const { stdout } = await execFileAsync(
@@ -383,7 +467,7 @@ async function completeViaHttp(prompt: string, options: CompletionOptions): Prom
   const deadline = Date.now() + timeoutMs;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const remainingMs = deadline - Date.now();
+    const remainingMs = remainingTimeMs(deadline);
     if (remainingMs <= 0) {
       break;
     }
@@ -393,12 +477,27 @@ async function completeViaHttp(prompt: string, options: CompletionOptions): Prom
       if (delay <= 0) {
         break;
       }
+      await notifyStatus(options.onStatus, {
+        type: 'transport_retry',
+        transport: 'http',
+        requestedModel: model,
+        attempt: attempt + 1,
+        delayMs: delay,
+        error: lastError?.message || 'Retrying after transport failure.',
+      });
       console.log(`[LLM] Retry ${attempt}/${MAX_RETRIES} after ${delay}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
 
+    await notifyStatus(options.onStatus, {
+      type: 'transport_started',
+      transport: 'http',
+      requestedModel: model,
+      attempt: attempt + 1,
+    });
+
     const controller = new AbortController();
-    const requestTimeoutMs = Math.max(1, deadline - Date.now());
+    const requestTimeoutMs = Math.max(1, remainingTimeMs(deadline));
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
     try {
@@ -701,28 +800,55 @@ export async function complete(prompt: string, options: CompletionOptions = {}):
   const {
     model = DEFAULT_MODEL,
   } = options;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
 
   await validateProviderModelOverride(model);
   const transport = resolveCompletionTransport(model);
 
-  if (transport === 'agent-cli') {
-    return completeViaAgentCli(prompt, options);
-  }
-  if (transport === 'session') {
-    return completeViaSession(prompt, options);
-  }
-
   try {
-    return await completeViaHttp(prompt, options);
+    return await runCompletionTransport(transport, prompt, {
+      ...options,
+      timeoutMs,
+    });
   } catch (error) {
+    if (transport !== 'http') {
+      throw error;
+    }
+
     const fallbackTransport = resolveHttpFallbackTransport(model);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (!fallbackTransport) {
+      await notifyStatus(options.onStatus, {
+        type: 'transport_fallback_skipped',
+        fromTransport: 'http',
+        requestedModel: model,
+        reason: errorMessage,
+      });
+      throw error;
+    }
+
+    const remainingMs = remainingTimeMs(deadline);
+    if (remainingMs <= 0) {
+      throw error;
+    }
+
+    await notifyStatus(options.onStatus, {
+      type: 'transport_fallback',
+      fromTransport: 'http',
+      toTransport: fallbackTransport,
+      requestedModel: model,
+      reason: errorMessage,
+    });
     console.warn(
       `[LLM] HTTP completion path failed for requested model ${model}; ` +
-      `falling back to ${fallbackTransport}: ${error instanceof Error ? error.message : String(error)}`,
+      `falling back to ${fallbackTransport}: ${errorMessage}`,
     );
-    return fallbackTransport === 'session'
-      ? completeViaSession(prompt, options)
-      : completeViaAgentCli(prompt, options);
+    return runCompletionTransport(fallbackTransport, prompt, {
+      ...options,
+      timeoutMs: remainingMs,
+    });
   }
 }
 
@@ -740,7 +866,13 @@ export async function completeJSON<T = unknown>(prompt: string, options: Complet
   finishReason?: string;
   usage: CompletionResult['usage'];
 }> {
-  const firstResult = await complete(prompt, options);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+
+  const firstResult = await complete(prompt, {
+    ...options,
+    timeoutMs,
+  });
   const firstParsed = extractStructuredJSON<T>(firstResult.content);
 
   if (firstParsed !== null) {
@@ -756,8 +888,22 @@ export async function completeJSON<T = unknown>(prompt: string, options: Complet
     };
   }
 
+  const remainingMs = remainingTimeMs(deadline);
+  if (remainingMs <= 0) {
+    const parseError = buildJSONParseError(firstResult, false);
+    parseError.message = `${parseError.message} No time remained for strict JSON retry.`;
+    throw parseError;
+  }
+
+  await notifyStatus(options.onStatus, {
+    type: 'json_retry',
+    requestedModel: firstResult.requestedModel,
+    remainingMs,
+  });
+
   const retryResult = await complete(prompt, {
     ...options,
+    timeoutMs: remainingMs,
     temperature: 0,
     systemPrompt: buildStrictJSONRetrySystemPrompt(options.systemPrompt),
   });

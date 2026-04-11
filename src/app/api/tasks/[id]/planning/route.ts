@@ -2,9 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb, queryAll, queryOne, run } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
-import { finalizePlanningCompletion, reconcilePlanningTranscript } from '@/lib/planning-utils';
+import {
+  attemptAutomaticPlanningRecovery,
+  finalizePlanningCompletion,
+  reconcilePlanningTranscript,
+} from '@/lib/planning-utils';
+import { parsePlanningSpecValue } from '@/lib/planning-agents';
 import { cleanupTaskScopedAgents } from '@/lib/planning-agents';
 import { resolvePlanningModelForWorkspace } from '@/lib/openclaw/workspace-model-overrides';
+import { buildChatSendMessage } from '@/lib/openclaw/session-commands';
 // File system imports removed - using OpenClaw API instead
 
 export const dynamic = 'force-dynamic';
@@ -41,11 +47,11 @@ export async function GET(
     }
 
     let statusReason = task.status_reason || null;
-    let spec = task.planning_spec ? JSON.parse(task.planning_spec) : null;
+    let spec = parsePlanningSpecValue(task.planning_spec ? JSON.parse(task.planning_spec) : null);
     let agents = task.planning_agents ? JSON.parse(task.planning_agents) : null;
     let isComplete = !!task.planning_complete;
 
-    const resolution = isComplete
+    let resolution = isComplete
       ? {
           messages: task.planning_messages ? JSON.parse(task.planning_messages) : [],
           currentQuestion: null,
@@ -57,12 +63,40 @@ export async function GET(
 
     if (!isComplete && resolution.completion) {
       const finalized = await finalizePlanningCompletion(taskId, resolution.messages, resolution.completion);
-      spec = finalized.spec || {};
+      spec = finalized.spec;
       agents = finalized.agents;
       isComplete = true;
       statusReason = 'Planning complete — awaiting approval before execution';
+    } else if (!isComplete && task.planning_session_key) {
+      try {
+        const repairedMessages = await attemptAutomaticPlanningRecovery(
+          taskId,
+          task.planning_session_key,
+          resolution.messages,
+        );
+        if (repairedMessages) {
+          resolution = {
+            ...resolution,
+            messages: repairedMessages,
+            currentQuestion: null,
+            completion: null,
+            transcriptIssue: null,
+            changed: false,
+          };
+          statusReason = 'Planning auto-recovery in progress — waiting for a valid planner reply';
+        }
+      } catch (repairError) {
+        console.error('Failed to auto-repair planning transcript:', repairError);
+      }
     } else if (!isComplete && resolution.changed) {
       run('UPDATE tasks SET planning_messages = ? WHERE id = ?', [JSON.stringify(resolution.messages), taskId]);
+    }
+
+    if (isComplete && task.planning_spec && spec) {
+      const normalizedSpecText = JSON.stringify(spec);
+      if (normalizedSpecText !== task.planning_spec) {
+        run('UPDATE tasks SET planning_spec = ? WHERE id = ?', [normalizedSpecText, taskId]);
+      }
     }
 
     const lockedSpec = getDb().prepare('SELECT id FROM planning_specs WHERE task_id = ?').get(taskId) as { id: string } | undefined;
@@ -108,6 +142,9 @@ export async function POST(
       workspace_id: string;
       planning_session_key?: string;
       planning_messages?: string;
+      repo_url?: string | null;
+      repo_branch?: string | null;
+      workspace_path?: string | null;
     } | undefined;
 
     if (!task) {
@@ -162,6 +199,11 @@ export async function POST(
     const planningPrefix = basePrefix + 'planning:';
     const sessionKey = `${planningPrefix}${taskId}`;
     const planningModel = await resolvePlanningModelForWorkspace(task.workspace_id);
+    const canonicalRepoContext = [
+      task.repo_url ? `Canonical repository URL: ${task.repo_url}` : null,
+      task.repo_branch ? `Canonical repository branch: ${task.repo_branch}` : null,
+      task.workspace_path ? `Task workspace path: ${task.workspace_path}` : null,
+    ].filter(Boolean).join('\n');
 
     // Build the initial planning prompt
     const planningPrompt = `PLANNING REQUEST
@@ -169,7 +211,19 @@ export async function POST(
 Task Title: ${task.title}
 Task Description: ${task.description || 'No description provided'}
 
-You are starting a planning session for this task. Read PLANNING.md for your protocol.
+${canonicalRepoContext ? `${canonicalRepoContext}
+
+` : ''}Planning protocol:
+- Use the task description, technical approach, research backing, and canonical repository context above as ground truth.
+- If a canonical repository URL/branch is provided above, treat it as the target. Do not ask the user to choose between duplicate local copies unless the task explicitly says multiple repos must be changed.
+- Do not execute the task itself during planning. Do not scan files, produce findings, or return a work product during this phase.
+- Do not return execution-style payloads such as scan reports, audit findings, file lists, missing-artifact lists, or remediation summaries during planning. Those outputs are invalid in this phase.
+- If the task is straightforward and you do not need clarification, return a planning completion payload immediately instead of doing the work.
+- Do not inspect the wider workspace or run discovery/tool calls during planning unless the task description is missing information required to form the next question.
+- Your output must be structured JSON only. Do not add prose before or after the JSON.
+- Only these top-level response shapes are valid in planning:
+  - Question shape: { "question": "...", "options": [...] }
+  - Completion shape: { "status": "complete", "spec": {...}, "agents": [...], "execution_plan": {...} }
 
 Generate your FIRST question to understand what the user needs. Remember:
 - Questions must be multiple choice
@@ -211,10 +265,15 @@ Respond with ONLY valid JSON in this format:
       console.warn('[Planning] Pre-bind model patch failed, retrying after first send:', bindingError);
     }
 
+    // Planning restarts reuse the same deterministic task-scoped session key.
+    // Start each run fresh so the new planning loop does not inherit stale
+    // OpenClaw transcript state from the prior attempt.
+    const planningRunMessage = buildChatSendMessage(planningPrompt, 'planning_start');
+
     // Send planning request to the planning session
     await client.call('chat.send', {
       sessionKey: sessionKey,
-      message: planningPrompt,
+      message: planningRunMessage,
       idempotencyKey: `planning-start-${taskId}-${Date.now()}`,
     });
 

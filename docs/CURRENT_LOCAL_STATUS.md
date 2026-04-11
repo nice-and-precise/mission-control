@@ -35,6 +35,22 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Verified Runtime Behavior
 
+The following facts were re-verified against the live local runtime on `2026-04-11`:
+
+- the runtime checkout at [the repo root](../) is on `main` at commit `0018717`, and local Mission Control remains healthy on `http://localhost:4000`
+  - authenticated `GET /api/health` returned `200`
+  - authenticated `GET /api/openclaw/status` reported `connected: true`
+- planning startup no longer depends on a nonexistent `PLANNING.md` file
+  - upstream `crshdn/mission-control` and this fork both previously referenced `Read PLANNING.md for your protocol` in the planning route
+  - neither repo actually contains a `PLANNING.md`
+  - OpenClaw's official CLI docs do not define `PLANNING.md` as a supported built-in protocol file
+- planning is now grounded to canonical repo metadata when the task provides it
+  - planning start and answer prompts now pass through `repo_url`, `repo_branch`, and `workspace_path`
+  - this prevents the planner from asking the operator to choose between duplicate local copies when the task already declares its canonical repo target
+- restarting planning now starts a fresh OpenClaw run on the stable planning session key
+  - Mission Control prepends `/new` when it starts planning on an existing task-scoped planning key
+  - this prevents stale transcript context from the prior planning attempt from leaking into the next restart
+
 The following facts were re-verified against the live local runtime on `2026-04-09`:
 
 - OpenClaw is now running locally on `2026.4.9`
@@ -113,11 +129,14 @@ The following facts were re-verified against the live local runtime on `2026-04-
   - a timed-out empty ledger is currently surfaced truthfully as `status: "degraded"` with a warning, which is acceptable operator behavior for this baseline
 - Local provider-family routing is now normalized around three active families
   - Codex work stays on `openai-codex/*`
-  - planning, research, ideation, and any explicit Qwen lane use `qwen/qwen3.6-plus`
-  - non-Qwen live lanes stay on OpenCode Go (`opencode-go/*`, `opencode-go-mm/*`)
+  - all local Mission Control planning, research, ideation, builder, reviewer, tester, and learner lanes now target `qwen/qwen3.6-plus` by default
+  - OpenCode Go remains installed as catalog/fallback inventory only; it is no longer the intended default live lane on this machine
 - Autopilot JSON parsing now includes one strict retry before surfacing a failure
   - if a research/planning/ideation reply is wrapped in prose, fenced JSON, or otherwise recoverable text, Mission Control attempts local extraction first
   - if the first reply is still not valid JSON, Mission Control retries once with `temperature: 0` and a stricter JSON-only instruction before marking the cycle failed
+- planning transcript recovery now also retries one wrong-schema planner reply automatically
+  - if the planner returns valid JSON in the wrong shape, Mission Control sends one structured correction prompt on the same session before surfacing manual recovery
+  - if the planner still fails after that automatic retry, the Planning tab surfaces the recovery state explicitly instead of waiting forever
 - The session detail route no longer crashes on `sessions.list` payload shape differences
   - authenticated `GET /api/openclaw/sessions/{id}` now returns a normal `404` for a missing session instead of a `500`
 - Static error-page build regression is not reproducible on the current checkout

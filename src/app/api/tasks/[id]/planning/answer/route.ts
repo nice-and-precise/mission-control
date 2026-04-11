@@ -25,6 +25,9 @@ export async function POST(
       description: string;
       planning_session_key?: string;
       planning_messages?: string;
+      repo_url?: string | null;
+      repo_branch?: string | null;
+      workspace_path?: string | null;
     } | undefined;
 
     if (!task) {
@@ -35,16 +38,35 @@ export async function POST(
       return NextResponse.json({ error: 'Planning not started' }, { status: 400 });
     }
 
+    const canonicalRepoContext = [
+      task.repo_url ? `Canonical repository URL: ${task.repo_url}` : null,
+      task.repo_branch ? `Canonical repository branch: ${task.repo_branch}` : null,
+      task.workspace_path ? `Task workspace path: ${task.workspace_path}` : null,
+    ].filter(Boolean).join('\n');
+
     // Build the answer message
     const answerText = answer === 'other' && otherText 
       ? `Other: ${otherText}`
       : answer;
 
-    const answerPrompt = `User's answer: ${answerText}
+    const answerPrompt = `${canonicalRepoContext ? `${canonicalRepoContext}
+
+` : ''}User's answer: ${answerText}
 
 Based on this answer and the conversation so far, either:
 1. Ask your next question (if you need more information)
 2. Complete the planning (if you have enough information)
+
+Rules:
+- If canonical repository context is provided above, use it as ground truth. Do not ask which local copy is canonical.
+- Do not execute the task itself during planning. Do not scan files, produce findings, or return a work product during this phase.
+- Do not return execution-style payloads such as scan reports, audit findings, file lists, missing-artifact lists, or remediation summaries during planning. Those outputs are invalid in this phase.
+- If no more clarification is needed, return the planning completion payload immediately.
+- Do not inspect the wider workspace or run discovery/tool calls during planning unless the task text is missing critical information required for the next question.
+- Return structured JSON only.
+- Only these top-level response shapes are valid in planning:
+  - Question shape: { "question": "...", "options": [...] }
+  - Completion shape: { "status": "complete", "spec": {...}, "agents": [...], "execution_plan": {...} }
 
 Respond with ONLY valid JSON. Do not add commentary, explanations, status updates, markdown fences, or any prose before or after the JSON.
 

@@ -118,62 +118,10 @@ test('gateway HTTP completions route provider model overrides through x-openclaw
   assert.equal(body.model, 'openclaw');
 });
 
-test('provider model requests bypass agent-cli and select session transport', async () => {
-  process.env.OPENCLAW_AUTOPILOT_COMPLETION_MODE = 'agent-cli';
-  process.env.AUTOPILOT_MODEL = 'openclaw';
-
-  const client = getOpenClawClient() as unknown as {
-    isConnected: () => boolean;
-    connect: () => Promise<void>;
-    patchSessionModel: (sessionKey: string, model: string) => Promise<unknown>;
-    getSessionByKey: (sessionKey: string) => Promise<unknown>;
-    call: (method: string, params?: unknown) => Promise<unknown>;
-  };
-
-  let patchedSession: { sessionKey: string; model: string } | null = null;
-  let sentSessionKey: string | null = null;
-
-  client.isConnected = () => true;
-  client.connect = async () => undefined;
-  client.patchSessionModel = async (sessionKey: string, model: string) => {
-    patchedSession = { sessionKey, model };
-    return { key: sessionKey, resolved: { modelProvider: 'qwen', model: 'qwen3.6-plus' } };
-  };
-  client.getSessionByKey = async (sessionKey: string) => ({
-    key: sessionKey,
-    status: 'completed',
-    modelProvider: 'qwen',
-    model: 'qwen3.6-plus',
-    inputTokens: 10,
-    outputTokens: 20,
-    totalTokens: 30,
-  });
-  client.call = async (method: string, params?: unknown) => {
-    if (method === 'chat.send') {
-      sentSessionKey = (params as { sessionKey?: string }).sessionKey || null;
-    }
-    return {};
-  };
-
-  setGatewaySessionHistoryResolverForTests(async (sessionKey) => ({
-    sessionKey,
-    items: [{
-      role: 'assistant',
-      content: 'session result',
-      stopReason: 'stop',
-      timestamp: Date.now() + 1_000,
-    }],
-  }));
-
+test('provider model requests resolve to session transport when completion mode is agent-cli', async () => {
   const mod = await import(`./llm?test-session-transport=${Date.now()}`);
-  const result = await mod.complete('hello', { model: 'qwen/qwen3.6-plus' });
 
-  assert.equal(result.transport, 'session');
-  assert.equal(result.requestedModel, 'qwen/qwen3.6-plus');
-  assert.equal(result.resolvedModel, 'qwen/qwen3.6-plus');
-  assert.equal(result.finishReason, 'stop');
-  assert.equal(patchedSession?.model, 'qwen/qwen3.6-plus');
-  assert.equal(sentSessionKey, patchedSession?.sessionKey || null);
+  assert.equal(mod.resolveCompletionTransport('qwen/qwen3.6-plus', 'agent-cli'), 'session');
 });
 
 test('extractStructuredJSON handles direct, fenced, and embedded JSON', async () => {
@@ -212,6 +160,7 @@ test('completeJSON retries once with stricter JSON settings when the first respo
   process.env.AUTOPILOT_MODEL = 'openclaw';
 
   const requestBodies: Array<Record<string, unknown>> = [];
+  const statusEvents: string[] = [];
   let callCount = 0;
 
   globalThis.fetch = async (_input, init) => {
@@ -236,13 +185,70 @@ test('completeJSON retries once with stricter JSON settings when the first respo
   const result = await mod.completeJSON<{ sections: { codebase: { findings: string[] } } }>('hello', {
     model: 'openclaw',
     systemPrompt: 'Return JSON only.',
+    onStatus: (event) => {
+      statusEvents.push(event.type);
+    },
   });
 
   assert.equal(callCount, 2);
   assert.deepEqual(result.data.sections.codebase.findings, ['recovered']);
   assert.equal(result.transport, 'http');
+  assert.ok(statusEvents.includes('json_retry'));
   assert.equal((requestBodies[1].temperature as number) || 0, 0);
   assert.match(String((requestBodies[1].messages as Array<{ role: string; content: string }>)[0]?.content || ''), /Return exactly one valid JSON object or array/i);
+});
+
+test('provider-model HTTP completions skip session fallback and report fallback-skipped status', async () => {
+  process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
+  process.env.OPENCLAW_AUTOPILOT_COMPLETION_MODE = 'http';
+  process.env.AUTOPILOT_MODEL = 'openclaw';
+
+  const statusEvents: string[] = [];
+  let sessionPathUsed = false;
+
+  const client = getOpenClawClient() as unknown as {
+    isConnected?: () => boolean;
+    connect?: () => Promise<void>;
+    patchSessionModel?: (sessionKey: string, model: string) => Promise<unknown>;
+    getSessionByKey?: (sessionKey: string) => Promise<unknown>;
+    call?: (method: string, params?: unknown) => Promise<unknown>;
+  };
+  client.isConnected = () => true;
+  client.connect = async () => {
+    sessionPathUsed = true;
+  };
+  client.patchSessionModel = async () => {
+    sessionPathUsed = true;
+    return {};
+  };
+  client.getSessionByKey = async () => {
+    sessionPathUsed = true;
+    return {};
+  };
+  client.call = async () => {
+    sessionPathUsed = true;
+    return {};
+  };
+
+  globalThis.fetch = async () => {
+    throw new Error('fetch failed');
+  };
+
+  const mod = await import(`./llm?test-provider-fallback-skip=${Date.now()}`);
+
+  await assert.rejects(
+    () => mod.complete('hello', {
+      model: 'qwen/qwen3.6-plus',
+      timeoutMs: 25,
+      onStatus: (event: { type: string }) => {
+        statusEvents.push(event.type);
+      },
+    }),
+    /fetch failed/i,
+  );
+
+  assert.equal(sessionPathUsed, false);
+  assert.ok(statusEvents.includes('transport_fallback_skipped'));
 });
 
 test('completeJSON failure text includes transport and model diagnostics', async () => {

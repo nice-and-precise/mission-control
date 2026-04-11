@@ -1,6 +1,61 @@
 import { getDb } from '@/lib/db';
 import type { GeneratedPlanningSpec, SuggestedPlanningAgent } from '@/lib/types';
 
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
+}
+
+function toExecutionPlanSteps(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((step) => {
+      if (typeof step === 'string') return step.trim();
+      if (!step || typeof step !== 'object') return '';
+      const candidate = step as Record<string, unknown>;
+      return String(candidate.action || candidate.step || candidate.title || '').trim();
+    })
+    .filter(Boolean);
+}
+
+function buildLooseSpecConstraints(candidate: Record<string, unknown>): Record<string, unknown> {
+  const knownKeys = new Set([
+    'title',
+    'summary',
+    'deliverables',
+    'success_criteria',
+    'constraints',
+    'execution_plan',
+    'goal',
+    'canonical_repo',
+    'canonical_branch',
+    'prohibited_terms_source',
+    'prohibited_terms',
+    'target_artifacts',
+    'method',
+    'output',
+    'steps',
+    'estimated_duration_minutes',
+    'risk',
+  ]);
+
+  const passthrough: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(candidate)) {
+    if (!knownKeys.has(key)) {
+      passthrough[key] = value;
+    }
+  }
+  if (candidate.canonical_repo) passthrough.canonical_repo = candidate.canonical_repo;
+  if (candidate.canonical_branch) passthrough.canonical_branch = candidate.canonical_branch;
+  if (candidate.prohibited_terms_source) passthrough.prohibited_terms_source = candidate.prohibited_terms_source;
+  if (Array.isArray(candidate.prohibited_terms)) passthrough.prohibited_terms = candidate.prohibited_terms;
+  if (typeof candidate.risk === 'string' && candidate.risk.trim()) passthrough.risk = candidate.risk.trim();
+  if (typeof candidate.estimated_duration_minutes === 'number') {
+    passthrough.estimated_duration_minutes = candidate.estimated_duration_minutes;
+  }
+
+  return passthrough;
+}
+
 export function parsePlanningSpecValue(value: string | object | null | undefined): GeneratedPlanningSpec | null {
   if (!value) return null;
 
@@ -9,17 +64,57 @@ export function parsePlanningSpecValue(value: string | object | null | undefined
     if (!parsed || typeof parsed !== 'object') return null;
 
     const candidate = parsed as Record<string, unknown>;
-    return {
-      title: String(candidate.title || ''),
-      summary: String(candidate.summary || ''),
-      deliverables: Array.isArray(candidate.deliverables) ? candidate.deliverables.map(String) : [],
-      success_criteria: Array.isArray(candidate.success_criteria) ? candidate.success_criteria.map(String) : [],
-      constraints: candidate.constraints && typeof candidate.constraints === 'object'
+    const title = String(candidate.title || candidate.goal || '').trim();
+    const summary = String(candidate.summary || candidate.goal || candidate.method || candidate.output || '').trim();
+    const deliverables = toStringArray(candidate.deliverables);
+    const successCriteria = toStringArray(candidate.success_criteria);
+    const explicitConstraints =
+      candidate.constraints && typeof candidate.constraints === 'object'
         ? candidate.constraints as Record<string, unknown>
-        : {},
-      execution_plan: candidate.execution_plan && typeof candidate.execution_plan === 'object'
-        ? candidate.execution_plan as GeneratedPlanningSpec['execution_plan']
-        : undefined,
+        : null;
+    const executionPlanCandidate =
+      candidate.execution_plan && typeof candidate.execution_plan === 'object'
+        ? candidate.execution_plan as Record<string, unknown>
+        : null;
+    const executionPlanSteps = executionPlanCandidate
+      ? toExecutionPlanSteps(executionPlanCandidate.steps)
+      : toExecutionPlanSteps(candidate.steps);
+
+    const normalizedDeliverables = deliverables.length > 0
+      ? deliverables
+      : toStringArray(candidate.target_artifacts);
+
+    const normalizedSuccessCriteria = successCriteria.length > 0
+      ? successCriteria
+      : toStringArray(candidate.output).length > 0
+        ? toStringArray(candidate.output)
+        : (typeof candidate.output === 'string' && candidate.output.trim())
+          ? [candidate.output.trim()]
+          : [];
+
+    const normalizedConstraints = explicitConstraints || buildLooseSpecConstraints(candidate);
+
+    return {
+      title,
+      summary,
+      deliverables: normalizedDeliverables,
+      success_criteria: normalizedSuccessCriteria,
+      constraints: normalizedConstraints,
+      execution_plan: executionPlanCandidate
+        ? {
+            approach: typeof executionPlanCandidate.approach === 'string'
+              ? executionPlanCandidate.approach
+              : typeof candidate.method === 'string'
+                ? candidate.method
+                : undefined,
+            steps: executionPlanSteps,
+          }
+        : executionPlanSteps.length > 0 || typeof candidate.method === 'string'
+          ? {
+              approach: typeof candidate.method === 'string' ? candidate.method : undefined,
+              steps: executionPlanSteps,
+            }
+          : undefined,
     };
   } catch {
     return null;

@@ -1,7 +1,10 @@
+import { createHash } from 'crypto';
 import { getDb, queryOne, run } from './db';
 import { broadcast } from './events';
-import { cleanupTaskScopedAgents } from './planning-agents';
+import { cleanupTaskScopedAgents, parsePlanningSpecValue } from './planning-agents';
 import type { GeneratedPlanningSpec, SuggestedPlanningAgent, Task } from './types';
+import { getOpenClawClient } from './openclaw/client';
+import { buildChatSendMessage } from './openclaw/session-commands';
 import {
   extractTextContent,
   getOversizedHistoryOmissionMessage,
@@ -52,6 +55,32 @@ export interface PlanningTaskRow {
   planning_complete?: number;
 }
 
+const INVALID_PLANNING_PAYLOAD_MESSAGE =
+  'The planner replied without a valid question or completion payload after the last planning prompt. Retry or restart planning to recover.';
+const PLANNING_AUTO_REPAIR_PREFIX = '[Mission Control planning recovery]';
+function buildPlanningAutoRepairMessage(messages: PlanningMessage[]): string {
+  const normalizedMessages = normalizePlanningMessages(messages);
+  const originalContext = normalizedMessages
+    .filter((message) => message.role === 'user' && !isPlanningAutoRepairPrompt(message.content))
+    .map((message, index) => `${index === 0 ? 'Original planning request' : `User answer ${index}`}:\n${message.content}`)
+    .join('\n\n');
+
+  return `${PLANNING_AUTO_REPAIR_PREFIX}
+
+Start a fresh planning run on this same task. The previous assistant reply did not match the planning contract.
+
+Rules:
+- Do not execute the task during planning.
+- Do not scan files, produce findings, file lists, scan reports, or remediation summaries in this phase.
+- Return ONLY valid JSON in exactly one of these top-level shapes:
+  - Question shape: { "question": "...", "options": [...] }
+  - Completion shape: { "status": "complete", "spec": {...}, "agents": [...], "execution_plan": {...} }
+
+Use the conversation context below as ground truth and answer the planning request again from scratch.
+
+${originalContext}`;
+}
+
 type OpenClawMessagesResolver = (
   sessionKey: string,
 ) => Promise<{
@@ -66,8 +95,8 @@ let openClawMessagesResolverForTests: OpenClawMessagesResolver | null = null;
 
 function normalizeSuggestedPlanningAgents(agents: SuggestedPlanningAgent[] | null | undefined): SuggestedPlanningAgent[] {
   return (agents || []).map((agent) => ({
-    name: agent.name,
-    role: agent.role,
+    name: agent.name || agent.agent_id || 'Planner Suggested Agent',
+    role: agent.role || agent.instructions || 'builder',
     avatar_emoji: agent.avatar_emoji,
     soul_md: agent.soul_md,
     instructions: agent.instructions,
@@ -284,9 +313,13 @@ export function normalizePlanningMessages(messages: unknown): PlanningMessage[] 
     .filter((message): message is PlanningMessage => message !== null);
 }
 
+function isPlanningAutoRepairPrompt(content: string): boolean {
+  return content.trim().startsWith(PLANNING_AUTO_REPAIR_PREFIX);
+}
+
 export function resolvePlanningTranscript(messages: PlanningMessage[]): PlanningTranscriptResolution {
   const normalizedMessages = normalizePlanningMessages(messages);
-  let sawAssistantReplyWithoutStructuredPayload = false;
+  let sawAssistantReplyWithoutValidPlanningPayload = false;
 
   for (let index = normalizedMessages.length - 1; index >= 0; index -= 1) {
     const message = normalizedMessages[index];
@@ -295,10 +328,10 @@ export function resolvePlanningTranscript(messages: PlanningMessage[]): Planning
         messages: normalizedMessages,
         completion: null,
         currentQuestion: null,
-        transcriptIssue: sawAssistantReplyWithoutStructuredPayload
+        transcriptIssue: sawAssistantReplyWithoutValidPlanningPayload
           ? {
               code: 'unstructured_response',
-              message: 'The planner replied without a valid question or completion payload after your last answer. Retry the answer or restart planning to recover.',
+              message: INVALID_PLANNING_PAYLOAD_MESSAGE,
             }
           : null,
       };
@@ -308,7 +341,7 @@ export function resolvePlanningTranscript(messages: PlanningMessage[]): Planning
 
     const parsed = extractJSON(message.content) as Record<string, unknown> | null;
     if (!parsed) {
-      sawAssistantReplyWithoutStructuredPayload = true;
+      sawAssistantReplyWithoutValidPlanningPayload = true;
       continue;
     }
 
@@ -339,6 +372,8 @@ export function resolvePlanningTranscript(messages: PlanningMessage[]): Planning
         transcriptIssue: null,
       };
     }
+
+    sawAssistantReplyWithoutValidPlanningPayload = true;
   }
 
   return {
@@ -347,6 +382,78 @@ export function resolvePlanningTranscript(messages: PlanningMessage[]): Planning
     currentQuestion: null,
     transcriptIssue: null,
   };
+}
+
+export function shouldAutoRepairPlanningTranscript(messages: PlanningMessage[]): boolean {
+  const normalizedMessages = normalizePlanningMessages(messages);
+  if (normalizedMessages.length === 0) return false;
+
+  const resolution = resolvePlanningTranscript(normalizedMessages);
+  if (resolution.completion || resolution.currentQuestion || resolution.transcriptIssue?.code !== 'unstructured_response') {
+    return false;
+  }
+
+  const lastMessage = normalizedMessages[normalizedMessages.length - 1];
+  if (!lastMessage || lastMessage.role !== 'assistant') {
+    return false;
+  }
+
+  for (let index = normalizedMessages.length - 2; index >= 0; index -= 1) {
+    const candidate = normalizedMessages[index];
+    if (candidate.role !== 'user') continue;
+    return !isPlanningAutoRepairPrompt(candidate.content);
+  }
+
+  return true;
+}
+
+export async function attemptAutomaticPlanningRecovery(
+  taskId: string,
+  sessionKey: string,
+  messages: PlanningMessage[],
+): Promise<PlanningMessage[] | null> {
+  if (!shouldAutoRepairPlanningTranscript(messages)) {
+    return null;
+  }
+
+  const normalizedMessages = normalizePlanningMessages(messages);
+  const lastAssistantMessage = normalizedMessages[normalizedMessages.length - 1];
+  if (!lastAssistantMessage || lastAssistantMessage.role !== 'assistant') {
+    return null;
+  }
+
+  const recoveryContent = buildPlanningAutoRepairMessage(normalizedMessages);
+  const recoveryMessage = {
+    role: 'user' as const,
+    content: recoveryContent,
+    timestamp: Date.now(),
+  };
+  const updatedMessages = [recoveryMessage];
+  const idempotencyKey = `planning-auto-repair-${taskId}-${createHash('sha256')
+    .update(lastAssistantMessage.content)
+    .digest('hex')
+    .slice(0, 16)}`;
+
+  const client = getOpenClawClient();
+  if (!client.isConnected()) {
+    await client.connect();
+  }
+
+  await client.call('chat.send', {
+    sessionKey,
+    message: buildChatSendMessage(recoveryContent, 'planning_start'),
+    idempotencyKey,
+  });
+
+  run(
+    `UPDATE tasks
+        SET planning_messages = ?,
+            updated_at = datetime('now')
+      WHERE id = ?`,
+    [JSON.stringify(updatedMessages), taskId],
+  );
+
+  return updatedMessages;
 }
 
 export function mergeStoredMessagesWithOpenClaw(
@@ -401,7 +508,7 @@ export async function reconcilePlanningTranscript(
         changed = true;
         resolution = resolvePlanningTranscript(messages);
       }
-      transcriptIssue = fetchedTranscriptIssue || transcriptIssue;
+      transcriptIssue = fetchedTranscriptIssue || resolution.transcriptIssue || transcriptIssue;
     } catch (err) {
       const errorMessage = (err as Error).message;
       console.error('[reconcilePlanningTranscript] OpenClaw fetch failed, returning stored messages:', errorMessage);
@@ -431,8 +538,15 @@ export async function finalizePlanningCompletion(
     statusReason?: string;
     activityMessage?: string | null;
   },
-): Promise<PlanningCompletionPayload & { agents: SuggestedPlanningAgent[] }> {
+): Promise<Omit<PlanningCompletionPayload, 'spec'> & { spec: GeneratedPlanningSpec; agents: SuggestedPlanningAgent[] }> {
   const db = getDb();
+  const normalizedSpec = parsePlanningSpecValue(completion.spec || {}) || {
+    title: '',
+    summary: '',
+    deliverables: [],
+    success_criteria: [],
+    constraints: {},
+  };
   const savedAgents = normalizeSuggestedPlanningAgents(completion.agents);
 
   // Planner suggestions are informational task metadata only. If an earlier
@@ -455,7 +569,7 @@ export async function finalizePlanningCompletion(
     WHERE id = ?
   `).run(
     JSON.stringify(messages),
-    JSON.stringify(completion.spec || {}),
+    JSON.stringify(normalizedSpec),
     JSON.stringify(savedAgents),
     options?.statusReason || 'Planning complete — awaiting approval before execution',
     taskId,
@@ -476,6 +590,7 @@ export async function finalizePlanningCompletion(
 
   return {
     ...completion,
+    spec: normalizedSpec,
     agents: savedAgents,
   };
 }

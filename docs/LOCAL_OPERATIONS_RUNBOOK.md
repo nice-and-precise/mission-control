@@ -328,13 +328,14 @@ Keep `AUTOPILOT_MODEL=openclaw` and `OPENCLAW_AUTOPILOT_COMPLETION_MODE=session`
 Current local routing policy:
 
 - Codex work stays on `openai-codex/*`
-- planning, research, ideation, and any explicit Qwen lane use `qwen/qwen3.6-plus`
-- everything else falls back to OpenCode Go (`opencode-go/*`, `opencode-go-mm/*`)
+- Mission Control planning, research, ideation, builder, reviewer, tester, and learner lanes use `qwen/qwen3.6-plus`
+- OpenCode Go stays installed as a fallback/discovery provider family, not as the intended default live lane
 
 Autopilot JSON recovery note:
 
 - research, planning, and ideation now retry once with a stricter JSON-only system prompt before surfacing a parse failure
 - if the first model reply is truncated or wrapped in extra text, Mission Control will try to recover locally before issuing that retry
+- planning also auto-corrects one wrong-schema JSON reply on the same session before surfacing manual transcript recovery
 
 Qwen onboarding note:
 
@@ -466,11 +467,11 @@ Use this when you want to throw away the current plan and restart planning clean
 
 1. Cancel planning in Mission Control.
    Source: [planning/route.ts](/Users/jordan/.openclaw/workspace/mission-control/src/app/api/tasks/[id]/planning/route.ts)
-2. Reset the corresponding OpenClaw planning conversation before starting again.
-   OpenClaw’s official docs say `/new` or `/reset` starts a fresh conversation for the same chat key:
+2. Start planning again from Mission Control.
+   Mission Control now prepends `/new` on the reused planning session key, which matches OpenClaw’s documented fresh-conversation pattern for the same chat key:
    <https://docs.openclaw.ai/help/faq>
-3. Start planning again from Mission Control.
-4. If you skip step 2, Mission Control will clear its own task state, but the reused planning session key may still carry older OpenClaw session context.
+3. Refresh the task modal once if the old question is still visible after restart.
+4. Do not look for a repo-local `PLANNING.md` file in this workflow. OpenClaw’s official CLI docs do not define `PLANNING.md` as a built-in protocol file, so the planning protocol for this checkout is now inlined in Mission Control’s planning prompts.
 
 ## Workflow 409 Recovery
 
