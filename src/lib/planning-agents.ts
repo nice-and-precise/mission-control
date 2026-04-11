@@ -17,6 +17,21 @@ function toExecutionPlanSteps(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function extractChangeActions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (!item || typeof item !== 'object') return '';
+      const c = item as Record<string, unknown>;
+      const loc = String(c.location || '').trim();
+      const action = String(c.action || c.description || '').trim();
+      if (!action) return '';
+      return loc ? `${loc}: ${action}` : action;
+    })
+    .filter(Boolean);
+}
+
 function buildLooseSpecConstraints(candidate: Record<string, unknown>): Record<string, unknown> {
   const knownKeys = new Set([
     'title',
@@ -64,8 +79,8 @@ export function parsePlanningSpecValue(value: string | object | null | undefined
     if (!parsed || typeof parsed !== 'object') return null;
 
     const candidate = parsed as Record<string, unknown>;
-    const title = String(candidate.title || candidate.goal || '').trim();
-    const summary = String(candidate.summary || candidate.goal || candidate.method || candidate.output || '').trim();
+    const title = String(candidate.title || candidate.goal || candidate.task || '').trim();
+    const summary = String(candidate.summary || candidate.goal || candidate.method || candidate.output || candidate.task || '').trim();
     const deliverables = toStringArray(candidate.deliverables);
     const successCriteria = toStringArray(candidate.success_criteria);
     const explicitConstraints =
@@ -82,7 +97,9 @@ export function parsePlanningSpecValue(value: string | object | null | undefined
 
     const normalizedDeliverables = deliverables.length > 0
       ? deliverables
-      : toStringArray(candidate.target_artifacts);
+      : toStringArray(candidate.target_artifacts).length > 0
+        ? toStringArray(candidate.target_artifacts)
+        : extractChangeActions(candidate.changes);
 
     const normalizedSuccessCriteria = successCriteria.length > 0
       ? successCriteria
@@ -90,7 +107,9 @@ export function parsePlanningSpecValue(value: string | object | null | undefined
         ? toStringArray(candidate.output)
         : (typeof candidate.output === 'string' && candidate.output.trim())
           ? [candidate.output.trim()]
-          : [];
+          : (typeof candidate.validation === 'string' && candidate.validation.trim())
+            ? [candidate.validation.trim()]
+            : toStringArray(candidate.checks);
 
     const normalizedConstraints = explicitConstraints || buildLooseSpecConstraints(candidate);
 
