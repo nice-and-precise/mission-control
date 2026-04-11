@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { run, queryAll, queryOne } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import type { Task } from '@/lib/types';
 
 function verifyGitHubSignature(signature: string, rawBody: string): boolean {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
     );
 
     // Fetch the updated task for broadcast
-    const updatedTask = queryOne(
+    const updatedTask = queryOne<Task>(
       `SELECT * FROM tasks WHERE id = ?`,
       [taskId]
     );
