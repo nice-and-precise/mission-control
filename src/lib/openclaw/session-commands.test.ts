@@ -12,6 +12,11 @@ test('task dispatch messages start a fresh run', () => {
     buildChatSendMessage('Build the validator.', 'task_dispatch'),
     '/new\n\nBuild the validator.',
   );
+  assert.equal(shouldStartFreshRun('planning_start'), true);
+  assert.equal(
+    buildChatSendMessage('Plan the validator task.', 'planning_start'),
+    '/new\n\nPlan the validator task.',
+  );
 });
 
 test('non-dispatch chat flows do not prepend the fresh-run command', () => {

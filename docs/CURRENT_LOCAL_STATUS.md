@@ -35,6 +35,22 @@ For day-to-day local commands, use [LOCAL_OPERATIONS_RUNBOOK.md](LOCAL_OPERATION
 
 ## Verified Runtime Behavior
 
+The following facts were re-verified against the live local runtime on `2026-04-11`:
+
+- the runtime checkout at [the repo root](../) is on `main` at commit `0018717`, and local Mission Control remains healthy on `http://localhost:4000`
+  - authenticated `GET /api/health` returned `200`
+  - authenticated `GET /api/openclaw/status` reported `connected: true`
+- planning startup no longer depends on a nonexistent `PLANNING.md` file
+  - upstream `crshdn/mission-control` and this fork both previously referenced `Read PLANNING.md for your protocol` in the planning route
+  - neither repo actually contains a `PLANNING.md`
+  - OpenClaw's official CLI docs do not define `PLANNING.md` as a supported built-in protocol file
+- planning is now grounded to canonical repo metadata when the task provides it
+  - planning start and answer prompts now pass through `repo_url`, `repo_branch`, and `workspace_path`
+  - this prevents the planner from asking the operator to choose between duplicate local copies when the task already declares its canonical repo target
+- restarting planning now starts a fresh OpenClaw run on the stable planning session key
+  - Mission Control prepends `/new` when it starts planning on an existing task-scoped planning key
+  - this prevents stale transcript context from the prior planning attempt from leaking into the next restart
+
 The following facts were re-verified against the live local runtime on `2026-04-09`:
 
 - OpenClaw is now running locally on `2026.4.9`

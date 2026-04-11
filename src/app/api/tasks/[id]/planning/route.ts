@@ -5,6 +5,7 @@ import { broadcast } from '@/lib/events';
 import { finalizePlanningCompletion, reconcilePlanningTranscript } from '@/lib/planning-utils';
 import { cleanupTaskScopedAgents } from '@/lib/planning-agents';
 import { resolvePlanningModelForWorkspace } from '@/lib/openclaw/workspace-model-overrides';
+import { buildChatSendMessage } from '@/lib/openclaw/session-commands';
 // File system imports removed - using OpenClaw API instead
 
 export const dynamic = 'force-dynamic';
@@ -108,6 +109,9 @@ export async function POST(
       workspace_id: string;
       planning_session_key?: string;
       planning_messages?: string;
+      repo_url?: string | null;
+      repo_branch?: string | null;
+      workspace_path?: string | null;
     } | undefined;
 
     if (!task) {
@@ -162,6 +166,11 @@ export async function POST(
     const planningPrefix = basePrefix + 'planning:';
     const sessionKey = `${planningPrefix}${taskId}`;
     const planningModel = await resolvePlanningModelForWorkspace(task.workspace_id);
+    const canonicalRepoContext = [
+      task.repo_url ? `Canonical repository URL: ${task.repo_url}` : null,
+      task.repo_branch ? `Canonical repository branch: ${task.repo_branch}` : null,
+      task.workspace_path ? `Task workspace path: ${task.workspace_path}` : null,
+    ].filter(Boolean).join('\n');
 
     // Build the initial planning prompt
     const planningPrompt = `PLANNING REQUEST
@@ -169,7 +178,13 @@ export async function POST(
 Task Title: ${task.title}
 Task Description: ${task.description || 'No description provided'}
 
-You are starting a planning session for this task. Read PLANNING.md for your protocol.
+${canonicalRepoContext ? `${canonicalRepoContext}
+
+` : ''}Planning protocol:
+- Use the task description, technical approach, research backing, and canonical repository context above as ground truth.
+- If a canonical repository URL/branch is provided above, treat it as the target. Do not ask the user to choose between duplicate local copies unless the task explicitly says multiple repos must be changed.
+- Do not inspect the wider workspace or run discovery/tool calls during planning unless the task description is missing information required to form the next question.
+- Your output must be structured JSON only. Do not add prose before or after the JSON.
 
 Generate your FIRST question to understand what the user needs. Remember:
 - Questions must be multiple choice
@@ -211,10 +226,15 @@ Respond with ONLY valid JSON in this format:
       console.warn('[Planning] Pre-bind model patch failed, retrying after first send:', bindingError);
     }
 
+    // Planning restarts reuse the same deterministic task-scoped session key.
+    // Start each run fresh so the new planning loop does not inherit stale
+    // OpenClaw transcript state from the prior attempt.
+    const planningRunMessage = buildChatSendMessage(planningPrompt, 'planning_start');
+
     // Send planning request to the planning session
     await client.call('chat.send', {
       sessionKey: sessionKey,
-      message: planningPrompt,
+      message: planningRunMessage,
       idempotencyKey: `planning-start-${taskId}-${Date.now()}`,
     });
 

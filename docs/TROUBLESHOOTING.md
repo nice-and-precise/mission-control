@@ -133,6 +133,25 @@ then the planner replied, but not in a machine-readable question/completion shap
 2. If the planner is still non-JSON, cancel and restart planning for that task.
 3. If transcript history already contains a valid completion payload, use the recovery path and approve the recovered plan.
 
+### If planning asks which repo copy is canonical or immediately falls into transcript recovery
+
+**Symptom:** The first planning question asks which duplicate repo copy is canonical, or the tab flips to `Transcript recovery needs attention` right after you answer a repo-choice question.
+
+**Root cause:** This failure mode came from prompt/session drift, not from the task itself:
+- upstream Mission Control told the planner to `Read PLANNING.md for your protocol`, but neither the upstream repo nor this fork actually contains that file
+- the planning prompts were not grounding the planner with the task's canonical `repo_url` / `repo_branch`
+- restarting planning reused the same deterministic OpenClaw session key, so the next attempt could inherit stale transcript context unless the new run started fresh
+
+**Current behavior in this checkout:**
+- planning start now inlines the protocol instead of pointing at a nonexistent `PLANNING.md`
+- planning start and follow-up answers include canonical repo context when the task has it
+- restarting planning starts a fresh OpenClaw run on the same stable planning session key
+
+**Recovery:**
+1. Refresh the Planning tab once if you are still seeing the old repo-choice question.
+2. If the task already shows the recovery banner, use `Recover Plan for Approval` only when the transcript clearly contains a valid completion.
+3. Otherwise cancel and restart planning; the new run should now start from a clean question grounded to the task's canonical repo context.
+
 ---
 
 ## 8. Planning/research is still hitting an old Qwen or OpenRouter model
@@ -165,7 +184,7 @@ If the model catalog is stale, restart the gateway and `npm run dev`, then start
 
 ---
 
-## 8. Tester or reviewer dispatch returns 400 "Wrong stage owner"
+## 9. Tester or reviewer dispatch returns 400 "Wrong stage owner"
 
 **Symptom:** Manually triggering a test or review dispatch via the API returns `400` with a message about stage ownership.
 
@@ -180,7 +199,7 @@ Use the correct dispatch route for the current stage: `/api/tasks/{id}/test` for
 
 ---
 
-## 9. Ghost "Auto Fixer" agent appears in the Agents list
+## 10. Ghost "Auto Fixer" agent appears in the Agents list
 
 **Symptom:** An agent named "Auto Fixer" with no model, no soul docs, and no session key appears in the DB or the settings UI.
 
@@ -198,7 +217,7 @@ To enable real fixer capability, manually seed a fixer-role agent with a model, 
 
 ---
 
-## 10. Activity log shows `governance_warning` — "No fixer agent configured"
+## 11. Activity log shows `governance_warning` — "No fixer agent configured"
 
 **Symptom:** You see a `governance_warning` activity row on a task after several consecutive stage failures, but no agent was reassigned.
 
@@ -211,7 +230,7 @@ To enable real fixer capability, manually seed a fixer-role agent with a model, 
 
 ---
 
-## 11. Queued builder card shows `Run ended without completion callback...`
+## 12. Queued builder card shows `Run ended without completion callback...`
 
 **Symptom:** A builder-owned task in `assigned` shows the generic ended-session banner instead of a waiting message, usually while another builder task is already active.
 
@@ -248,7 +267,7 @@ Expected result:
 
 ---
 
-## 12. `npm ci` or tests fail after switching to a newer Node major
+## 13. `npm ci` or tests fail after switching to a newer Node major
 
 **Symptom:** Native-module tests fail after a Node upgrade, often with `better-sqlite3` ABI/build errors.
 
@@ -268,7 +287,7 @@ If `node --version` is not `v24.13.0`, treat any native-module test failure as a
 
 ---
 
-## 13. Ideation produces only 1 idea per cycle
+## 14. Ideation produces only 1 idea per cycle
 
 **Symptom:** Autopilot ideation consistently generates exactly 1 idea/card instead of the expected 8-12.
 
