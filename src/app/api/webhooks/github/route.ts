@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { run } from '@/lib/db';
+import { run, queryAll, queryOne } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 
 function verifyGitHubSignature(signature: string, rawBody: string): boolean {
