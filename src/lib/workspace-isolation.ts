@@ -774,18 +774,52 @@ async function mergeWorktree(
     // Create PR if pushed and requested (or if repo_url suggests GitHub)
     let prUrl: string | undefined;
     if (pushed && (options?.createPR !== false) && task.repo_url?.includes('github.com')) {
+      // Guard: skip PR creation if a PR already exists for this branch (open or merged)
+      let prAlreadyExists = false;
       try {
-        const prBody = `## Autopilot Build\n\n- **Task:** ${task.title}\n- **Task ID:** ${task.id}\n- **Branch:** ${branch}\n- **Base:** ${baseBranch}`;
-        const result = execSync(
-          `gh pr create --title "\u{1F916} Autopilot: ${task.title}" --body "${prBody.replace(/"/g, '\\"')}" --base "${baseBranch}" --head "${branch}" 2>&1`,
-          { cwd: workspacePath, encoding: 'utf-8', timeout: 30000 }
+        const existingPrJson = execSync(
+          `gh pr list --head "${branch}" --state all --json state,number,url 2>&1`,
+          { cwd: workspacePath, encoding: 'utf-8', timeout: 15000 }
         ).trim();
-        // gh pr create outputs the PR URL
-        if (result.includes('github.com')) {
-          prUrl = result.split('\n').pop()?.trim();
+        const existingPrs: Array<{ state: string; number: number; url: string }> = JSON.parse(existingPrJson);
+        if (Array.isArray(existingPrs) && existingPrs.length > 0) {
+          const existing = existingPrs[0];
+          prUrl = existing.url;
+          prAlreadyExists = true;
+          console.log(`[Workspace] Skipping PR creation — branch ${branch} already has #${existing.number} (${existing.state})`);
         }
       } catch (err) {
-        console.warn('[Workspace] PR creation failed:', (err as Error).message);
+        console.warn('[Workspace] Failed to check existing PRs, will attempt creation:', (err as Error).message);
+      }
+
+      // Also skip if branch has no commits ahead of base (changes already merged)
+      if (!prAlreadyExists) {
+        try {
+          const aheadCount = execSync(
+            `git rev-list --count "${baseBranch}..${branch}" 2>&1`,
+            { cwd: workspacePath, encoding: 'utf-8', timeout: 10000 }
+          ).trim();
+          if (aheadCount === '0') {
+            prAlreadyExists = true;
+            console.log(`[Workspace] Skipping PR creation — branch ${branch} is 0 commits ahead of ${baseBranch} (already merged)`);
+          }
+        } catch { /* non-fatal — proceed with PR creation */ }
+      }
+
+      if (!prAlreadyExists) {
+        try {
+          const prBody = `## Autopilot Build\n\n- **Task:** ${task.title}\n- **Task ID:** ${task.id}\n- **Branch:** ${branch}\n- **Base:** ${baseBranch}`;
+          const result = execSync(
+            `gh pr create --title "\u{1F916} Autopilot: ${task.title}" --body "${prBody.replace(/"/g, '\\"')}" --base "${baseBranch}" --head "${branch}" 2>&1`,
+            { cwd: workspacePath, encoding: 'utf-8', timeout: 30000 }
+          ).trim();
+          // gh pr create outputs the PR URL
+          if (result.includes('github.com')) {
+            prUrl = result.split('\n').pop()?.trim();
+          }
+        } catch (err) {
+          console.warn('[Workspace] PR creation failed:', (err as Error).message);
+        }
       }
     }
 
