@@ -67,7 +67,11 @@ export async function GET(
       agents = finalized.agents;
       isComplete = true;
       statusReason = 'Planning complete — awaiting approval before execution';
-    } else if (!isComplete && task.planning_session_key) {
+    } else if (
+      !isComplete &&
+      task.planning_session_key &&
+      resolution.transcriptIssue?.code === 'unstructured_response'
+    ) {
       try {
         const repairedMessages = await attemptAutomaticPlanningRecovery(
           taskId,
@@ -88,7 +92,9 @@ export async function GET(
       } catch (repairError) {
         console.error('Failed to auto-repair planning transcript:', repairError);
       }
-    } else if (!isComplete && resolution.changed) {
+    }
+
+    if (!isComplete && resolution.changed) {
       run('UPDATE tasks SET planning_messages = ? WHERE id = ?', [JSON.stringify(resolution.messages), taskId]);
     }
 
