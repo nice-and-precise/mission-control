@@ -21,9 +21,11 @@ nvm use
 
 Or download the matching version from [nodejs.org](https://nodejs.org/).
 
-### 2. OpenClaw Gateway
+### 2. OpenClaw Gateway + Choosing Your AI Model
 
-Mission Control orchestrates AI agents through OpenClaw. Install it:
+Mission Control orchestrates AI agents through OpenClaw. **You only configure models once — in OpenClaw, not in Mission Control.** Mission Control reads whatever models OpenClaw exposes.
+
+#### Install OpenClaw
 
 ```bash
 # macOS
@@ -32,20 +34,46 @@ brew install openclaw/tap/openclaw
 # Or follow: https://docs.openclaw.ai/getting-started/installation
 ```
 
-After install, configure your AI provider API key:
+#### Pick your AI provider and get an API key
+
+| Provider | Cost | Best for | Get key at |
+|----------|------|----------|------------|
+| **Qwen (Alibaba Cloud)** | Low — cheapest capable option | **Recommended default** | [bailian.console.aliyun.com](https://bailian.console.aliyun.com/) |
+| **OpenRouter** | Pay-per-use, access many models | Experimenting with multiple models | [openrouter.ai/keys](https://openrouter.ai/keys) |
+| **Anthropic (Claude)** | Mid–High | High-quality reasoning tasks | [console.anthropic.com](https://console.anthropic.com/) |
+| **OpenAI (GPT-4o)** | Mid–High | General purpose | [platform.openai.com](https://platform.openai.com/) |
+| **Google (Gemini)** | Low (free tier available) | Long-context tasks | [aistudio.google.com](https://aistudio.google.com/) |
+
+> **This project defaults to `qwen/qwen3.6-plus`.** It's cost-effective, handles long JSON outputs reliably, and is what the BoreReady pipeline is tuned for. If you're unsure, use Qwen.
+
+#### Configure the key in OpenClaw and start the gateway
 
 ```bash
 openclaw init
-# Follow prompts — you'll need an API key from your AI provider
-# Supported: Anthropic, OpenAI, Google, Qwen (Alibaba), OpenRouter, and others
-```
+# Select your provider and paste your API key when prompted
 
-Start the gateway:
-
-```bash
 openclaw start
 # Gateway runs on ws://127.0.0.1:18789 by default
 ```
+
+#### Verify your models are visible
+
+```bash
+openclaw models
+# Should list available models from your provider
+```
+
+In Mission Control, go to **Settings → Models** (or `GET /api/openclaw/models`) to confirm Mission Control can see the same list.
+
+#### Change the model per workspace (optional)
+
+The default autopilot model is `qwen/qwen3.6-plus`. To use a different model for a specific product's research and ideation cycles:
+
+1. Go to the product's **Workspace → Settings** tab in Mission Control
+2. Set **Autopilot Model Override** to any model string your gateway exposes (e.g. `anthropic/claude-3-5-sonnet`, `openai/gpt-4o`)
+3. Leave it blank to use the gateway default
+
+> **Tip:** Model strings use the format `provider/model-name`. Run `openclaw models` to see exactly what strings to use.
 
 ### 3. Git access
 
