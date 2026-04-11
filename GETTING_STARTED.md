@@ -36,7 +36,8 @@ After install, configure your AI provider API key:
 
 ```bash
 openclaw init
-# Follow prompts — you'll need an API key from Anthropic, OpenAI, Google, or OpenRouter
+# Follow prompts — you'll need an API key from your AI provider
+# Supported: Anthropic, OpenAI, Google, Qwen (Alibaba), OpenRouter, and others
 ```
 
 Start the gateway:
@@ -96,11 +97,13 @@ PROJECTS_PATH=~/Documents/Shared/projects
 Initialize the database and start:
 
 ```bash
-npm run db:seed   # Creates tables, agents, a default workspace, and sample tasks
-npm run dev       # Starts on http://localhost:4000
+npm run db:seed   # Seeds agents, a default workspace, and sample tasks (run once on first setup)
+npm run dev       # Starts on http://localhost:4000 (also auto-applies DB migrations on boot)
 ```
 
-Open **http://localhost:4000** — you should see the Mission Control dashboard with the seeded agents and sample tasks on the board.
+> **Note:** `db:seed` only needs to run once on a fresh database. If you skip it, `npm run dev` will still boot and apply all schema migrations — you just won't have the sample data.
+
+Open **http://localhost:4000** — you should see the Mission Control dashboard.
 
 ---
 
@@ -139,10 +142,11 @@ Agents are the AI workers. You need at least one to start:
 
 The real power is the autopilot pipeline:
 
-1. Go to **Product → Program** and write a product program (what you're building, what's done, what's needed)
-2. Go to **Product → Research** and run a research cycle
-3. Review generated **Ideas** with the swipe interface (Yes / No / Maybe)
-4. Approved ideas get planned and dispatched to agents automatically
+1. Go to the **Autopilot** page for your product and open the **Program** tab — write a product program (what you're building, what's done, what's needed next)
+2. If you have a canonical `PRODUCT_PROGRAM.md` in your repo, configure `canonical_program_path` in the product settings so Mission Control can detect drift and block stale research runs. Then click **Audit & Sync Program** to verify the DB copy is current.
+3. Open the **Research** tab and run a research cycle — this audits your product against the program checklist
+4. Review generated **Ideas** with the swipe interface (Approve / Reject / Maybe)
+5. Approved ideas get planned and dispatched to agents automatically
 
 ---
 
@@ -165,8 +169,11 @@ The real power is the autopilot pipeline:
 ```bash
 npm run dev          # Start development server (http://localhost:4000)
 npm run build        # Production build
-npm run db:seed      # Initialize/seed the database
-npm run db:reset     # Wipe database and re-seed (DESTRUCTIVE)
+npm run db:seed      # Seed agents, workspace, and sample tasks (first setup only)
+npm run db:backup    # Snapshot database to mission-control.db.backup
+npm run db:restore   # Restore from mission-control.db.backup
+npm run db:reset     # Wipe database and re-seed (DESTRUCTIVE — all data lost)
+npm test             # Run the full test suite
 ```
 
 ---
@@ -224,6 +231,7 @@ Mission Control is the dashboard and task manager. The browser communicates with
 ## Next Steps
 
 - Read [docs/HOW-THE-PIPELINE-WORKS.md](docs/HOW-THE-PIPELINE-WORKS.md) for the full autopilot deep-dive
+- Read [docs/NEXT-CYCLE-PLAYBOOK.md](docs/NEXT-CYCLE-PLAYBOOK.md) for the repeatable research → dispatch cycle
 - Read [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md) for how agents communicate
 - Check [CONTRIBUTING.md](CONTRIBUTING.md) for development conventions
 - See [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) for deployment options
