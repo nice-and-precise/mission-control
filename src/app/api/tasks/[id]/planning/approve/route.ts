@@ -38,7 +38,12 @@ export async function POST(
       'SELECT * FROM planning_specs WHERE task_id = ?'
     ).get(taskId);
     if (existingSpec) {
-      return NextResponse.json({ error: 'Spec already locked' }, { status: 400 });
+      // Allow re-approval if the task never left planning/inbox (stale spec from prior round)
+      if (task.status === 'planning' || task.status === 'inbox') {
+        getDb().prepare('DELETE FROM planning_specs WHERE task_id = ?').run(taskId);
+      } else {
+        return NextResponse.json({ error: 'Spec already locked' }, { status: 400 });
+      }
     }
 
     const parsedSpec = parsePlanningSpecValue(task.planning_spec);
