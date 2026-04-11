@@ -163,7 +163,7 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
             finishReason,
           } = await completeJSON(prompt, {
             model,
-            systemPrompt: 'You are a compliance gap auditor. Analyze the product against its finish-line artifact checklist and respond with a JSON research report only.',
+            systemPrompt: 'You are a compliance gap auditor. Analyze the product against its finish-line artifact checklist and respond with a concise JSON research report only. Keep descriptions ultra-brief.',
             timeoutMs: 600_000,
             onStatus: (event) => recordAutopilotTransportStatus({
               productId,

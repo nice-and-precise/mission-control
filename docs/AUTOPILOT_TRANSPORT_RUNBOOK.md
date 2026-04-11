@@ -42,8 +42,9 @@ The current code now does two important things:
 
 1. Provider-model autopilot runs in HTTP mode no longer fall back to a session-backed transport.
 2. The full completion pipeline now shares one total timeout budget across the first completion plus the strict JSON retry.
+3. Native Node `fetch` calls use a custom `undici` Agent to inject strict 10-minute timeout budgets into `headersTimeout` and `bodyTimeout`, preventing premature "fetch failed" socket disconnections at the strict 5-minute native default.
 
-This keeps the session-context blowup fix intact and prevents 30-minute black-box waits caused by stacked timeout budgets.
+This keeps the session-context blowup fix intact and prevents 30-minute black-box waits caused by stacked timeout budgets, while correctly allowing long-running Qwen evaluations up to 10 minutes without TCP timeouts.
 
 ## Transport Visibility
 

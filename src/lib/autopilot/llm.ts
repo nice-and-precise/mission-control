@@ -5,6 +5,7 @@ import { extractTextContent, loadGatewaySessionHistory } from '@/lib/openclaw/se
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
+import { Agent } from 'undici';
 
 /**
  * Lightweight LLM completion via OpenClaw Gateway's OpenAI-compatible endpoint.
@@ -499,6 +500,7 @@ async function completeViaHttp(prompt: string, options: CompletionOptions): Prom
     const controller = new AbortController();
     const requestTimeoutMs = Math.max(1, remainingTimeMs(deadline));
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    const requestStartedAt = Date.now();
 
     try {
       const response = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
@@ -511,7 +513,12 @@ async function completeViaHttp(prompt: string, options: CompletionOptions): Prom
           max_tokens: maxTokens,
         }),
         signal: controller.signal,
-      });
+        dispatcher: new Agent({
+          connectTimeout: 30_000,
+          headersTimeout: requestTimeoutMs,
+          bodyTimeout: requestTimeoutMs,
+        }),
+      } as RequestInit & { dispatcher?: any });
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -562,7 +569,8 @@ async function completeViaHttp(prompt: string, options: CompletionOptions): Prom
       const isNetwork = lastError.message.includes('fetch failed') || lastError.message.includes('ECONNREFUSED') || lastError.message.includes('ECONNRESET');
 
       if (isAbort || isNetwork) {
-        console.error(`[LLM] Attempt ${attempt + 1} failed (${isAbort ? 'timeout/abort' : 'network'}): ${lastError.message}`);
+        const elapsedMs = Date.now() - requestStartedAt;
+        console.error(`[LLM] Attempt ${attempt + 1} failed (${isAbort ? 'timeout/abort' : 'network'}) after ${elapsedMs}ms: ${lastError.message}`);
         continue;
       }
 
