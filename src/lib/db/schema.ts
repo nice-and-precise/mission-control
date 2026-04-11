@@ -364,6 +364,7 @@ CREATE TABLE IF NOT EXISTS products (
   description TEXT,
   repo_url TEXT,
   live_url TEXT,
+  canonical_program_path TEXT,
   product_program TEXT,
   icon TEXT DEFAULT '🚀',
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'archived')),

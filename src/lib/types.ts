@@ -569,6 +569,7 @@ export interface Product {
   description?: string;
   repo_url?: string;
   live_url?: string;
+  canonical_program_path?: string;
   product_program?: string;
   icon: string;
   status: ProductStatus;

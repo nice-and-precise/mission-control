@@ -89,6 +89,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Special case: /api/webhooks/github relies on its own HMAC signature verification
+  if (pathname === '/api/webhooks/github') {
+    return NextResponse.next();
+  }
+
   // Special case: /api/events/stream (SSE) - allow token as query param
   if (pathname === '/api/events/stream') {
     const queryToken = request.nextUrl.searchParams.get('token');
