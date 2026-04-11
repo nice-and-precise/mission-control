@@ -310,15 +310,21 @@ sqlite3 mission-control.db "
 
 2. Then approve as normal: `POST /api/tasks/{id}/planning/approve`
 
-### PR merge does not close cards
+### PR merge does not always close cards automatically
 
-In supervised mode, merging a PR on GitHub does **not** auto-update the task status. There is no GitHub webhook in the main Mission Control codebase. After merging a PR:
+The GitHub PR-merge webhook (`src/app/api/webhooks/github-pr-merged/route.ts`) is now implemented. When configured on GitHub, it automatically marks tasks `done` and updates `merge_status` to `merged` when a PR is merged.
+
+**If the webhook is not yet configured on GitHub** (requires one-time setup in repo Settings → Webhooks), merging a PR still requires a manual status update:
 
 ```bash
 sqlite3 mission-control.db "UPDATE tasks SET status = 'done' WHERE id = '<task-id>';"
 ```
 
-This is a known architectural gap. A prototype webhook handler exists in `projects/` but was never integrated into the main `src/app/api/webhooks/` directory (which only contains `agent-completion/`).
+**Webhook setup (one-time):** GitHub repo Settings → Webhooks → Add webhook
+- URL: `https://<MC-domain>/api/webhooks/github-pr-merged`
+- Content type: `application/json`
+- Event: `pull_request`
+- Secret: value of `GITHUB_WEBHOOK_SECRET` in your MC `.env`
 
 ### Preventing duplicate dispatches
 
@@ -396,7 +402,7 @@ The correct pattern is:
 5. Use task-scoped root sessions as the runtime source of truth.
 6. Treat queued cards as waiting, not stalled.
 7. Route every stage change through the workflow engine.
-8. After merging a PR, manually mark the task as `done` — there is no webhook for this.
+8. After merging a PR, the GitHub PR-merge webhook auto-closes the task if configured; otherwise mark `done` manually.
 9. Recover individual broken cards before considering full control-plane restarts.
 
 ## Ideation-Level Failure Diagnosis

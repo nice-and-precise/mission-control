@@ -117,11 +117,12 @@ Failures route back to `Builder` unless `Avery` explicitly changes the path.
 
 ### Supervised mode limitations
 
-In supervised mode (current default), three gaps exist:
+In supervised mode (current default), two gaps remain:
 
-1. **PR merge does not close cards.** There is no GitHub webhook handler in the main codebase. After merging a PR on GitHub, you must manually mark the task as `done` in the database or via API. A prototype webhook exists in `projects/` but was never integrated.
-2. **Spec approval requires operator action.** Planning specs are not auto-approved. The operator must review and call the approve endpoint.
-3. **`automation_tier` is stored but not enforced.** The `settings.automation_tier` field on products (`full_auto`, `semi_auto`) exists in the schema but is never checked at runtime. There is no auto-idea-approval, no auto-merge, and no CI polling based on this field.
+1. **Spec approval requires operator action.** Planning specs are not auto-approved. The operator must review and call the approve endpoint.
+2. **`automation_tier` is stored but not enforced.** The `settings.automation_tier` field on products (`full_auto`, `semi_auto`) exists in the schema but is never checked at runtime. There is no auto-idea-approval, no auto-merge, and no CI polling based on this field.
+
+> **GitHub PR-merge webhook is now integrated.** `src/app/api/webhooks/github-pr-merged/route.ts` automatically marks tasks `done` when their associated PR is merged. Configure it in GitHub repo Settings → Webhooks (URL: `https://<MC-domain>/api/webhooks/github-pr-merged`, event: `pull_request`, secret: `GITHUB_WEBHOOK_SECRET` in `.env`). Until the webhook is configured on GitHub, merging a PR still requires a manual status update.
 
 ### Workspace merge and PR creation
 
@@ -131,7 +132,7 @@ When a task reaches `done` status via `VERIFY_PASS` signal:
 2. The merge function commits workspace changes, pushes to a branch (e.g., `autopilot/<slug>-<taskId>`), and creates a GitHub PR via `gh pr create`.
 3. Task `merge_status` is set to `pr_created` and `merge_pr_url` is populated.
 4. **The PR is NOT auto-merged.** An operator must review and merge on GitHub.
-5. After merging, the operator must manually update task status to `done` (MC has no PR-merge webhook).
+5. When the PR is merged on GitHub, the `github-pr-merged` webhook fires and automatically sets the task to `done` and `merge_status` to `merged` — if the webhook is configured. Without the webhook, mark the task done manually via the API or SQL.
 
 When one task finishes, `dispatchNextQueuedTask()` checks for queued tasks assigned to the now-idle agent and dispatches the next one.
 
