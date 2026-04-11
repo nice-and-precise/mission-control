@@ -8,15 +8,18 @@ A step-by-step guide for new collaborators. Takes about 15 minutes to go from cl
 
 You need three things installed before Mission Control will work:
 
-### 1. Node.js 20+
+### 1. Node.js (pinned version)
+
+This repo pins its Node.js version in `.nvmrc`. Install nvm, then let it read the pin:
 
 ```bash
-# Using nvm (recommended)
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-nvm install 20
+# Restart your shell, then:
+nvm install   # installs the exact version from .nvmrc
+nvm use
 ```
 
-Or download from [nodejs.org](https://nodejs.org/).
+Or download the matching version from [nodejs.org](https://nodejs.org/).
 
 ### 2. OpenClaw Gateway
 
@@ -79,23 +82,25 @@ OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 # Get this from: openclaw config get gateway.token
 OPENCLAW_GATEWAY_TOKEN=your-gateway-token-here
 
-# Required for API security — generate a random token
-# openssl rand -hex 32
+# Recommended for security — if not set, authentication is DISABLED (local dev mode only)
+# Generate with: openssl rand -hex 32
 MC_API_TOKEN=your-api-token-here
 
-# Where your project repos live
-PROJECTS_PATH=~/Projects
-WORKSPACE_BASE_PATH=~/Projects
+# Base directory for all Mission Control files
+WORKSPACE_BASE_PATH=~/Documents/Shared
+
+# Projects sub-directory (each project gets a folder here)
+PROJECTS_PATH=~/Documents/Shared/projects
 ```
 
 Initialize the database and start:
 
 ```bash
-npm run db:seed   # Creates tables and default orchestrator agent
+npm run db:seed   # Creates tables, agents, a default workspace, and sample tasks
 npm run dev       # Starts on http://localhost:4000
 ```
 
-Open **http://localhost:4000** — you should see the Mission Control dashboard with an empty board.
+Open **http://localhost:4000** — you should see the Mission Control dashboard with the seeded agents and sample tasks on the board.
 
 ---
 
@@ -192,9 +197,9 @@ npm run db:reset     # Wipe database and re-seed (DESTRUCTIVE)
 ## Architecture Overview
 
 ```
-┌──────────────┐     WebSocket      ┌──────────────────┐
+┌──────────────┐  HTTP + SSE events  ┌──────────────────┐
 │   Browser     │◄──────────────────►│  Mission Control  │
-│  (Next.js UI) │   SSE events       │  (Next.js API)    │
+│  (Next.js UI) │                    │  (Next.js API)    │
 └──────────────┘                     └────────┬─────────┘
                                               │
                                      SQLite   │  WebSocket
@@ -212,7 +217,7 @@ npm run db:reset     # Wipe database and re-seed (DESTRUCTIVE)
                                      └──────────────────┘
 ```
 
-Mission Control is the dashboard and task manager. OpenClaw Gateway is the AI runtime that actually talks to models and executes agent sessions. They communicate over WebSocket.
+Mission Control is the dashboard and task manager. The browser communicates with it over HTTP with Server-Sent Events (SSE) for real-time updates. Mission Control talks to the OpenClaw Gateway over WebSocket — that is where agents actually run and call AI models.
 
 ---
 
