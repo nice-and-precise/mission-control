@@ -5,7 +5,10 @@ import { broadcast } from '@/lib/events';
 
 function verifyGitHubSignature(signature: string, rawBody: string): boolean {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
-  if (!secret) return true; // dev mode bypass if not set
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') return false; // fail closed in prod
+    return true; // dev mode bypass
+  }
 
   if (!signature || !signature.startsWith('sha256=')) {
     return false;
@@ -42,18 +45,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ignored: true, reason: 'PR not merged' });
     }
 
-    const headRef = body.pull_request.head.ref; // e.g. autopilot/feature-task_abcd1234
-    if (!headRef) {
-      return NextResponse.json({ ignored: true, reason: 'No head ref' });
+    const prUrl = body.pull_request.html_url;
+    if (!prUrl) {
+       return NextResponse.json({ ignored: true, reason: 'No PR html_url provided' });
     }
 
-    // Extract task ID from branch name or body
-    const match = headRef.match(/-(task_[a-z0-9-]+)$/i);
-    const taskId = match ? match[1] : null;
+    // Identify task via stable identifier: the PR URL stored in the DB
+    const tasks = queryAll<{ id: string }>(
+      `SELECT id FROM tasks WHERE merge_pr_url = ? OR pr_url = ?`,
+      [prUrl, prUrl]
+    );
 
-    if (!taskId) {
-      return NextResponse.json({ ignored: true, reason: 'No task ID found in branch name' });
+    if (!tasks || tasks.length === 0) {
+      return NextResponse.json({ ignored: true, reason: 'No matching task found for this PR' });
     }
+
+    const taskId = tasks[0].id;
 
     // Update the task to done
     run(
@@ -70,11 +77,19 @@ export async function POST(req: NextRequest) {
       [taskId, `Task merged into default branch via GitHub PR #${body.pull_request.number}`]
     );
 
+    // Fetch the updated task for broadcast
+    const updatedTask = queryOne(
+      `SELECT * FROM tasks WHERE id = ?`,
+      [taskId]
+    );
+
     // Broadcast the update so UI refreshes
-    broadcast({
-      type: 'task_updated',
-      payload: { taskId, status: 'done' }
-    });
+    if (updatedTask) {
+      broadcast({
+        type: 'task_updated',
+        payload: updatedTask
+      });
+    }
 
     console.log(`[GitHub Webhook] Marked task ${taskId} as done (PR #${body.pull_request.number} merged)`);
     return NextResponse.json({ success: true, task_id: taskId });

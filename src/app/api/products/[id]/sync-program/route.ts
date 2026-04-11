@@ -21,8 +21,9 @@ export async function POST(
     }
 
     // Convert github.com URL to raw.githubusercontent.com
-    // e.g. https://github.com/owner/repo -> https://raw.githubusercontent.com/owner/repo
-    let rawBase = product.repo_url;
+    // e.g. https://github.com/owner/repo.git -> https://raw.githubusercontent.com/owner/repo
+    let rawBase = product.repo_url.replace(/\/+$/, '').replace(/\.git$/, '');
+    
     if (rawBase.includes('github.com')) {
       rawBase = rawBase.replace('github.com', 'raw.githubusercontent.com');
     } else {
