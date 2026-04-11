@@ -238,6 +238,12 @@ When something looks wrong:
 
 - recover the specific card first
 - do not restart the full gateway unless the gateway itself is unhealthy or multiple unrelated dispatches fail
+
+## Product Program Guardrails
+
+- Research and ideation do not run from a stale Product Program anymore when canonical repo truth is configured.
+- Use the Program tab's `Audit & Sync Program` action after repo-side Product Program merges and before kicking off the next cycle.
+- Completed research and ideation cycles now retain `product_program_sha` and `product_program_snapshot` so you can audit which revision drove the run.
 - if lane ownership is wrong after a stage transition, audit the route for direct status mutation bypassing workflow handoff
 
 ## Planning Approval and Recovery

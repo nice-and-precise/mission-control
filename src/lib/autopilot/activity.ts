@@ -8,7 +8,7 @@ import { broadcast } from '@/lib/events';
 export function emitAutopilotActivity(input: {
   productId: string;
   cycleId: string;
-  cycleType: 'research' | 'ideation';
+  cycleType: 'research' | 'ideation' | 'program';
   eventType: string;
   message: string;
   detail?: string;

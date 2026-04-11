@@ -10,6 +10,7 @@ import { completeJSON } from './llm';
 import { batchCheckSimilarity, storeEmbedding, checkSimilarity } from './similarity';
 import { getResearchPrograms } from './ab-testing';
 import { recoverStaleCycles, startCycleHeartbeat } from './cycle-runtime';
+import { assertProductProgramInSync, getCurrentProgramProvenance } from './product-program-sync';
 import { recordAutopilotTransportStatus } from './transport-status';
 import type { Product, Idea, ResearchCycle, SwipeHistoryEntry, IdeationCycle } from '@/lib/types';
 
@@ -153,6 +154,7 @@ Respond with ONLY a JSON array of idea objects. No markdown, no code blocks, no 
 export async function runIdeationCycle(productId: string, cycleId?: string, existingIdeationId?: string): Promise<string> {
   const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
   if (!product) throw new Error(`Product ${productId} not found`);
+  assertProductProgramInSync(productId, 'ideation');
   recoverStaleCycles('ideation', productId);
   const model = await resolveAutopilotModelForWorkspace(product.workspace_id);
 
@@ -182,6 +184,7 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
 
   const ideationId = existingIdeationId || uuidv4();
   const now = new Date().toISOString();
+  const provenance = getCurrentProgramProvenance(productId, product);
 
   // Get A/B variant programs
   const programs = getResearchPrograms(productId);
@@ -190,9 +193,9 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
   // Phase: init — create ideation_cycles row
   if (!existingIdeationId) {
     run(
-      `INSERT INTO ideation_cycles (id, product_id, research_cycle_id, status, current_phase, started_at, last_heartbeat)
-       VALUES (?, ?, ?, 'running', 'init', ?, ?)`,
-      [ideationId, productId, cycleId || null, now, now]
+      `INSERT INTO ideation_cycles (id, product_id, research_cycle_id, status, current_phase, product_program_sha, product_program_snapshot, started_at, last_heartbeat)
+       VALUES (?, ?, ?, 'running', 'init', ?, ?, ?, ?)`,
+      [ideationId, productId, cycleId || null, provenance.sha, provenance.snapshot, now, now]
     );
   }
 

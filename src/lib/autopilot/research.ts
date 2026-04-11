@@ -11,6 +11,7 @@ import { recalculateAndBroadcast } from './health-score';
 import { completeJSON } from './llm';
 import { getResearchPrograms } from './ab-testing';
 import { recoverStaleCycles, startCycleHeartbeat } from './cycle-runtime';
+import { assertProductProgramInSync, getCurrentProgramProvenance } from './product-program-sync';
 import { recordAutopilotTransportStatus } from './transport-status';
 import type { Product, ResearchCycle } from '@/lib/types';
 
@@ -61,6 +62,7 @@ ${learnedPreferences ? `## Learned Preferences\n${learnedPreferences}` : ''}`;
 export async function runResearchCycle(productId: string, existingCycleId?: string, chainIdeation = false): Promise<string> {
   const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [productId]);
   if (!product) throw new Error(`Product ${productId} not found`);
+  assertProductProgramInSync(productId, 'research');
   recoverStaleCycles('research', productId);
   const model = await resolveAutopilotModelForWorkspace(product.workspace_id);
 
@@ -71,13 +73,14 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
 
   const cycleId = existingCycleId || uuidv4();
   const now = new Date().toISOString();
+  const provenance = getCurrentProgramProvenance(productId, product);
 
   // Phase: init
   if (!existingCycleId) {
     run(
-      `INSERT INTO research_cycles (id, product_id, status, current_phase, started_at, last_heartbeat)
-       VALUES (?, ?, 'running', 'init', ?, ?)`,
-      [cycleId, productId, now, now]
+      `INSERT INTO research_cycles (id, product_id, status, current_phase, product_program_sha, product_program_snapshot, started_at, last_heartbeat)
+       VALUES (?, ?, 'running', 'init', ?, ?, ?, ?)`,
+      [cycleId, productId, provenance.sha, provenance.snapshot, now, now]
     );
   }
 

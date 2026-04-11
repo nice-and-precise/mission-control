@@ -386,6 +386,8 @@ CREATE TABLE IF NOT EXISTS research_cycles (
   id TEXT PRIMARY KEY,
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   status TEXT DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'cancelled', 'interrupted')),
+  product_program_sha TEXT,
+  product_program_snapshot TEXT,
   report TEXT,
   ideas_generated INTEGER DEFAULT 0,
   cost_usd REAL DEFAULT 0,
@@ -407,6 +409,8 @@ CREATE TABLE IF NOT EXISTS ideation_cycles (
   product_id TEXT NOT NULL REFERENCES products(id),
   research_cycle_id TEXT REFERENCES research_cycles(id),
   status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'interrupted')),
+  product_program_sha TEXT,
+  product_program_snapshot TEXT,
   current_phase TEXT DEFAULT 'init',
   phase_data TEXT,
   session_key TEXT,
@@ -423,13 +427,28 @@ CREATE TABLE IF NOT EXISTS autopilot_activity_log (
   id TEXT PRIMARY KEY,
   product_id TEXT NOT NULL REFERENCES products(id),
   cycle_id TEXT NOT NULL,
-  cycle_type TEXT NOT NULL CHECK(cycle_type IN ('research', 'ideation')),
+  cycle_type TEXT NOT NULL CHECK(cycle_type IN ('research', 'ideation', 'program')),
   event_type TEXT NOT NULL,
   message TEXT NOT NULL,
   detail TEXT,
   cost_usd REAL,
   tokens_used INTEGER,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS product_program_audits (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
+  triggered_by TEXT NOT NULL DEFAULT 'manual' CHECK(triggered_by IN ('manual', 'automatic')),
+  drift_detected INTEGER NOT NULL DEFAULT 0,
+  synced INTEGER NOT NULL DEFAULT 0,
+  db_program_sha_before TEXT,
+  db_program_sha_after TEXT,
+  canonical_program_sha TEXT,
+  summary_json TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT NOT NULL
 );
 
 -- Ideas: product improvement ideas from research or manual entry
@@ -848,6 +867,7 @@ CREATE INDEX IF NOT EXISTS idx_ideas_variant ON ideas(variant_id);
 CREATE INDEX IF NOT EXISTS idx_ideation_cycles_product ON ideation_cycles(product_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_autopilot_activity_product ON autopilot_activity_log(product_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_autopilot_activity_cycle ON autopilot_activity_log(cycle_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_product_program_audits_product ON product_program_audits(product_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_ports_active ON workspace_ports(status, port);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_ports_active_unique
   ON workspace_ports(port)

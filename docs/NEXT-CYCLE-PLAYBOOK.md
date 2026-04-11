@@ -54,6 +54,7 @@ The product program is the source of truth for next gaps.
 2. **Check** the "Current Objective" — does it still reflect the highest priority?
 3. **Update** the finish-line checklist if any items have changed (e.g., "Artifact #10: ~~Phase 2 planning~~ → Phase 2 final validation")
 4. **Verify** the "Not Now" list still makes sense
+5. **Run** `Audit & Sync Program` if repo truth may have changed outside Mission Control. Research and ideation now block when the DB copy drifts from canonical repo truth.
 
 ### Template for post-landing update
 
@@ -88,6 +89,8 @@ git push origin <feature-branch>
 ## Step 3: Run Fresh Research Cycle (5 min)
 
 Now that the product is in a validated state, ask the research agent: "What new gaps have appeared?"
+
+Before triggering research, confirm the Program tab shows no Product Program drift. If drift is present, use `Audit & Sync Program` first. Every new cycle now stores the exact Product Program SHA and snapshot it ran against.
 
 ### Command
 

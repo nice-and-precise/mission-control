@@ -36,7 +36,9 @@ A research cycle audits the product repo against its finish-line artifact checkl
 
 - **Trigger:** Manual (`POST /api/products/{id}/research/run`), scheduled (cron via `product_schedules`), or chained from a prior ideation cycle.
 - **Input:** Product program, learned preferences from swipe history.
+- **Pre-run guard:** Mission Control compares its DB copy of the Product Program to the canonical repo file when `canonical_program_path` or `repo_checkout_path` is configured. If they differ, the run is blocked until an operator completes Program tab audit/sync.
 - **Output:** `research_cycles.report` JSON with sections: `missing_artifacts`, `factual_gaps`, `contradictions`, `domain_lock_violations`.
+- **Provenance:** Each cycle stores `product_program_sha` and `product_program_snapshot`, so you can prove exactly which Product Program revision the cycle used.
 - **Code:** [src/lib/autopilot/research.ts](../src/lib/autopilot/research.ts)
 
 ### Ideation cycles
@@ -44,12 +46,23 @@ A research cycle audits the product repo against its finish-line artifact checkl
 An ideation cycle takes a research report and generates actionable task ideas.
 
 - **Input:** Research report, last 100 swipes + learned preferences, product program.
+- **Pre-run guard:** Ideation uses the same Product Program drift guard as research and refuses to start from a stale DB copy.
 - **Output:** 5-15 ideas stored in `ideas` table with status `pending`.
+- **Provenance:** `ideation_cycles` also store `product_program_sha` and `product_program_snapshot` for later audit.
 - **Post-generation filters:**
   - **Tier filter:** Only `tier-2` and `tier-3` tags allowed. Ideas with `tier-1`, `tier-4`, or `tier-5` are rejected.
   - **Similarity dedup:** Ideas >90% similar to previously rejected ideas are auto-suppressed (logged in `idea_suppressions`).
 - **Required fields per idea:** title, description, category, artifact path, blocker_cleared, why_now, impact_score, feasibility_score, complexity (S/M/L/XL), technical_approach, research_backing, risks, tags.
 - **Code:** [src/lib/autopilot/ideation.ts](../src/lib/autopilot/ideation.ts)
+
+### Program audit and sync
+
+The Program tab now exposes an operator-only `Audit & Sync Program` action.
+
+- **Audit source:** canonical repo Product Program compared against Mission Control's DB copy.
+- **Audit record:** every run is written to `product_program_audits`.
+- **Activity feed:** the audit lifecycle emits program activity events so blocked runs and successful syncs are visible.
+- **Primary use:** run this after repo-side Product Program edits and before starting a new research or ideation cycle.
 
 ### Swipe deck
 
