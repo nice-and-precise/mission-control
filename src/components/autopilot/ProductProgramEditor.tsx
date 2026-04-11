@@ -37,6 +37,10 @@ export function ProductProgramEditor({ product, onSave }: ProductProgramEditorPr
   };
 
   const handleSync = async () => {
+    if (!product.canonical_program_path) {
+      alert('Please set a Canonical Program Path in Product Settings (the gear icon) first.');
+      return;
+    }
     setSyncing(true);
     try {
       const res = await fetch(`/api/products/${product.id}/sync-program`, { method: 'POST' });
@@ -61,16 +65,15 @@ export function ProductProgramEditor({ product, onSave }: ProductProgramEditorPr
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-mc-text">Product Program</h3>
         <div className="flex items-center gap-3">
-          {product.canonical_program_path && (
-            <button
-              onClick={handleSync}
-              disabled={syncing || saving}
-              className="min-h-11 px-4 rounded-lg bg-mc-bg-tertiary border border-mc-border text-mc-text-secondary hover:text-mc-text disabled:opacity-50 flex items-center gap-2 text-sm"
-            >
-              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing...' : 'Audit & Sync'}
-            </button>
-          )}
+          <button
+            onClick={handleSync}
+            disabled={syncing || saving}
+            className="min-h-11 px-4 rounded-lg bg-mc-bg-tertiary border border-mc-border text-mc-text-secondary hover:text-mc-text disabled:opacity-50 flex items-center gap-2 text-sm title-tooltip"
+            title={product.canonical_program_path ? `Sync from ${product.canonical_program_path}` : 'Set Canonical Program Path in settings first'}
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing...' : 'Audit & Sync'}
+          </button>
           <button
             onClick={handleSave}
             disabled={saving || syncing}
