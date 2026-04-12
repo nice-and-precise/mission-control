@@ -9,9 +9,12 @@ function toStringArray(value: unknown): string[] {
       if (typeof item === 'number' || typeof item === 'boolean') return String(item);
       if (!item || typeof item !== 'object') return '';
       // Extract meaningful text from objects instead of producing [object Object]
+      // Mirror extractChangeActions(): include location/path when present and combine with action/description.
       const c = item as Record<string, unknown>;
-      const text = String(c.label || c.name || c.title || c.description || c.action || c.value || '').trim();
-      if (text) return text;
+      const loc = String(c.location || c.path || '').trim();
+      const action = String(c.action || c.description || c.label || c.name || c.title || c.value || '').trim();
+      if (action) return loc ? `${loc}: ${action}` : action;
+      if (loc) return loc;
       // Last resort: compact JSON so the value is at least readable
       try { return JSON.stringify(item); } catch { return ''; }
     })
