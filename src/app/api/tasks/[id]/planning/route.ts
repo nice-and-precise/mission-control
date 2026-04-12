@@ -281,7 +281,7 @@ Respond with ONLY valid JSON in this format:
       sessionKey,
       model: planningModel,
       messages,
-      note: 'Planning started. Poll GET endpoint for updates.',
+      note: 'Planning started. Assistant response is included when the HTTP completion succeeded; poll GET endpoint if the messages array contains no assistant reply (timeout/error recovery path).',
     });
   } catch (error) {
     console.error('Failed to start planning:', error);

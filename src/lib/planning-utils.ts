@@ -73,6 +73,8 @@ STRICT RULES:
 
 const PLANNING_HTTP_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL?.replace('ws://', 'http://').replace('wss://', 'https://') || 'http://127.0.0.1:18789';
 const PLANNING_HTTP_TIMEOUT_MS = 120_000; // 2 minutes per planning turn
+const PLANNING_HTTP_MAX_RETRIES = 2; // up to 3 total attempts (0, 1, 2)
+const PLANNING_HTTP_RETRY_BASE_MS = 2_000; // 2s, 4s exponential backoff
 
 /**
  * Send a planning turn via the stateless HTTP /v1/chat/completions endpoint.
@@ -91,44 +93,69 @@ export async function completePlanningTurnHttp(
     ...conversationMessages,
   ];
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let lastError: Error = new Error('No attempts made');
 
-  try {
-    const response = await fetch(`${PLANNING_HTTP_GATEWAY_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: buildGatewayRequestHeaders(model),
-      body: JSON.stringify({
-        model: resolveGatewayModelTarget(model),
-        messages,
-        temperature: 0.4,
-        max_tokens: 4096,
-      }),
-      signal: controller.signal,
-      dispatcher: new Agent({
-        connectTimeout: 30_000,
-        headersTimeout: timeoutMs,
-        bodyTimeout: timeoutMs,
-      }),
-    } as RequestInit & { dispatcher?: unknown });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Planning HTTP completion failed (${response.status}): ${errorText}`);
+  for (let attempt = 0; attempt <= PLANNING_HTTP_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = PLANNING_HTTP_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+      console.log(`[Planning HTTP] Retry ${attempt}/${PLANNING_HTTP_MAX_RETRIES} after ${delay}ms: ${lastError.message}`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
-    const data = await response.json() as {
-      model?: string;
-      choices?: Array<{ message?: { content?: string }; finish_reason?: string | null }>;
-    };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const content = data.choices?.[0]?.message?.content || '';
-    const resolvedModel = data.model || model;
+    try {
+      const response = await fetch(`${PLANNING_HTTP_GATEWAY_URL}/v1/chat/completions`, {
+        method: 'POST',
+        headers: buildGatewayRequestHeaders(model),
+        body: JSON.stringify({
+          model: resolveGatewayModelTarget(model),
+          messages,
+          temperature: 0.4,
+          max_tokens: 4096,
+        }),
+        signal: controller.signal,
+        dispatcher: new Agent({
+          connectTimeout: 30_000,
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs,
+        }),
+      } as RequestInit & { dispatcher?: unknown });
 
-    return { content, model: resolvedModel };
-  } finally {
-    clearTimeout(timeout);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Planning HTTP completion failed (${response.status}): ${errorText}`);
+      }
+
+      const data = await response.json() as {
+        model?: string;
+        choices?: Array<{ message?: { content?: string }; finish_reason?: string | null }>;
+      };
+
+      const content = data.choices?.[0]?.message?.content || '';
+      const resolvedModel = data.model || model;
+
+      return { content, model: resolvedModel };
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const isAbort = lastError.name === 'AbortError' || lastError.message.includes('aborted');
+      const isNetwork =
+        lastError.message.includes('fetch failed') ||
+        lastError.message.includes('ECONNREFUSED') ||
+        lastError.message.includes('ECONNRESET');
+
+      if ((isAbort || isNetwork) && attempt < PLANNING_HTTP_MAX_RETRIES) {
+        continue;
+      }
+      throw lastError;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+
+  throw lastError;
 }
 function buildPlanningAutoRepairMessage(messages: PlanningMessage[]): string {
   const normalizedMessages = normalizePlanningMessages(messages);
@@ -524,11 +551,16 @@ export async function attemptAutomaticPlanningRecovery(
     updatedMessages.push(assistantMessage);
   } catch (err) {
     console.error('[Planning Auto-Repair] HTTP completion failed, falling back to OpenClaw session:', err);
-    // Fall back to session-based recovery
+    // Fall back to session-based recovery.
+    // Use a stable idempotency key: taskId + content hash + repair attempt count so
+    // concurrent poll requests and retries deduplicate against the same session send.
+    const repairAttemptCount = normalizedMessages.filter((m) =>
+      m.role === 'user' && isPlanningAutoRepairPrompt(m.content),
+    ).length;
     const idempotencyKey = `planning-auto-repair-${taskId}-${createHash('sha256')
       .update(lastAssistantMessage.content)
       .digest('hex')
-      .slice(0, 16)}-${Date.now()}`;
+      .slice(0, 16)}-attempt-${repairAttemptCount}`;
 
     const client = getOpenClawClient();
     if (!client.isConnected()) {

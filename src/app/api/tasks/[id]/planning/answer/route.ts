@@ -109,7 +109,7 @@ Respond with ONLY valid JSON. Do not add commentary, explanations, status update
     return NextResponse.json({
       success: true,
       messages,
-      note: 'Answer submitted. Poll GET endpoint for updates.',
+      note: 'Answer submitted. Assistant response is included when the HTTP completion succeeded; poll GET endpoint if the messages array contains no assistant reply (timeout/error recovery path).',
     });
   } catch (error) {
     console.error('Failed to submit answer:', error);
