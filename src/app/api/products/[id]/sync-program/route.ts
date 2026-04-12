@@ -1,62 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryOne, run } from '@/lib/db';
-import type { Product } from '@/lib/types';
+import { v4 as uuidv4 } from 'uuid';
+import { getDb, transaction } from '@/lib/db';
+import { getProduct } from '@/lib/autopilot/products';
+import {
+  hashProductProgram,
+  readCanonicalProductProgram,
+} from '@/lib/autopilot/product-program';
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const product = queryOne<Product>('SELECT * FROM products WHERE id = ?', [params.id]);
+    const product = getProduct(params.id);
     if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
 
-    if (!product.canonical_program_path) {
-      return NextResponse.json({ error: 'Canonical program path is not set for this product.' }, { status: 400 });
-    }
+    const canonical = await readCanonicalProductProgram(product);
+    const beforeSha = hashProductProgram(product.product_program || '');
+    const afterSha = hashProductProgram(canonical.content);
+    const driftDetected = beforeSha !== afterSha;
+    const now = new Date().toISOString();
+    const auditId = uuidv4();
 
-    if (!product.repo_url) {
-      return NextResponse.json({ error: 'Repository URL is not set for this product.' }, { status: 400 });
-    }
+    transaction(() => {
+      const db = getDb();
+      db.prepare(
+        `UPDATE products
+         SET product_program = ?, canonical_program_path = ?, updated_at = ?
+         WHERE id = ?`
+      ).run(canonical.content, product.canonical_program_path || canonical.resolvedPath, now, product.id);
 
-    // Convert github.com URL to raw.githubusercontent.com
-    // e.g. https://github.com/owner/repo.git -> https://raw.githubusercontent.com/owner/repo
-    let rawBase = product.repo_url.replace(/\/+$/, '').replace(/\.git$/, '');
-    
-    if (rawBase.includes('github.com')) {
-      rawBase = rawBase.replace('github.com', 'raw.githubusercontent.com');
-    } else {
-      return NextResponse.json({ error: 'Only GitHub URLs are currently supported for sync.' }, { status: 400 });
-    }
+      db.prepare(
+        `INSERT INTO product_program_audits (
+           id, product_id, status, triggered_by, drift_detected, synced,
+           db_program_sha_before, db_program_sha_after, canonical_program_sha,
+           summary_json, created_at, completed_at
+         )
+         VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        auditId,
+        product.id,
+        'completed',
+        driftDetected ? 1 : 0,
+        1,
+        beforeSha,
+        afterSha,
+        afterSha,
+        JSON.stringify({
+          source: canonical.source,
+          resolved_path: canonical.resolvedPath,
+          drift_detected: driftDetected,
+        }),
+        now,
+        now,
+      );
+    });
 
-    const branch = product.default_branch || 'main';
-    const filePath = product.canonical_program_path.startsWith('/') 
-      ? product.canonical_program_path.slice(1) 
-      : product.canonical_program_path;
-
-    const fetchUrl = `${rawBase}/${branch}/${filePath}`;
-
-    const res = await fetch(fetchUrl);
-    if (!res.ok) {
-      if (res.status === 404) {
-        return NextResponse.json({ error: `File not found at ${fetchUrl}. Check path and branch.` }, { status: 404 });
-      }
-      return NextResponse.json({ error: `Failed to fetch from GitHub: ${res.statusText}` }, { status: res.status });
-    }
-
-    const content = await res.text();
-
-    run(
-      `UPDATE products SET product_program = ?, updated_at = datetime('now') WHERE id = ?`,
-      [content, product.id]
-    );
-
-    const updated = queryOne<Product>('SELECT * FROM products WHERE id = ?', [product.id]);
+    const updated = getProduct(product.id);
     return NextResponse.json(updated);
-    
   } catch (err) {
     console.error('[SyncProgram]', err);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    const message = err instanceof Error ? err.message : 'Internal server error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

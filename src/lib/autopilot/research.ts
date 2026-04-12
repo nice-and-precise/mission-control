@@ -12,18 +12,20 @@ import { completeJSON } from './llm';
 import { getResearchPrograms } from './ab-testing';
 import { recoverStaleCycles, startCycleHeartbeat } from './cycle-runtime';
 import { recordAutopilotTransportStatus } from './transport-status';
+import { hashProductProgram } from './product-program';
 import type { Product, ResearchCycle } from '@/lib/types';
 
 function buildResearchPrompt(product: Product, learnedPreferences?: string): string {
-  return `You are a Compliance Gap Auditor for Mission Control. Your job is to audit a product against its finish-line artifact checklist and identify what is missing, incorrect, or contradicted.
+  return `You are a Repo-Truth Gap Auditor for Mission Control. Your job is to audit a product against its Product Program, governing constraints, and current repository truth to identify what is complete, what is still in flight, and what gaps remain.
 
 ## Your Process
 
-1. Read the Product Program carefully — it contains the Current Objective, the finish-line artifact checklist, and the Not Now exclusion list.
-2. For each artifact on the checklist, determine: does it exist on repo main? Is it reviewer-approved? Is it accurate against DLI source documents?
-3. Identify factual gaps: statute mismatches, DLI document mismatches, missing source citations.
-4. Identify contradictions: repo vs board state, repo vs open PRs, internal document conflicts.
-5. Check for domain-lock violations: prohibited terms from DOMAIN_LOCK.md, wrong-domain references.
+1. Read the Product Program carefully — it contains the Current Objective, milestone priorities, repo-truth rules, and the Not Now exclusion list.
+2. Determine what the repo already satisfies on main, what is still only in open PR/task state, and what remains incomplete or contradictory.
+3. Identify factual gaps: source mismatches, stale requirements, missing citations, or unsupported claims.
+4. Identify contradictions: PRD vs Product Program, repo vs board state, repo vs open PRs, and internal document conflicts.
+5. Identify the next research targets that should guide ideation once already-landed or in-flight work is accounted for.
+6. Check for domain-lock or scope violations.
 
 ## Output Format
 
@@ -33,11 +35,12 @@ Produce a JSON research report with this structure:
     "missing_artifacts": { "artifacts": [], "blockers": [], "priority_order": [] },
     "factual_gaps": { "statute_mismatches": [], "dli_doc_mismatches": [], "source_citation_issues": [] },
     "contradictions": { "repo_vs_board": [], "repo_vs_prs": [], "internal_doc_conflicts": [] },
+    "next_research_targets": { "milestone_a": [], "milestone_b": [], "milestone_c": [] },
     "domain_lock_violations": { "prohibited_terms_found": [], "wrong_domain_references": [] }
   }
 }
 
-Each finding must be specific and actionable — reference exact file paths, statute subdivisions, or DLI document names. Every finding should directly inform a finish-line task.
+Each finding must be specific and actionable — reference exact file paths, milestone buckets, PR numbers, source documents, or governing requirements. Treat merged repo content as complete, open PR content as in-flight but not complete on main, and board/task metadata as supporting evidence only.
 
 Do NOT report on topics from the Not Now list. Do NOT suggest platform features, dashboards, or software implementation.
 
@@ -71,18 +74,26 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
 
   const cycleId = existingCycleId || uuidv4();
   const now = new Date().toISOString();
+  const provenanceProgram = getResearchPrograms(productId);
+  const programSnapshot = provenanceProgram.length === 1
+    ? provenanceProgram[0].program
+    : (product.product_program || '');
+  const programSha = hashProductProgram(programSnapshot);
 
   // Phase: init
   if (!existingCycleId) {
     run(
-      `INSERT INTO research_cycles (id, product_id, status, current_phase, started_at, last_heartbeat)
-       VALUES (?, ?, 'running', 'init', ?, ?)`,
-      [cycleId, productId, now, now]
+      `INSERT INTO research_cycles (
+         id, product_id, status, current_phase, started_at, last_heartbeat,
+         product_program_sha, product_program_snapshot
+       )
+       VALUES (?, ?, 'running', 'init', ?, ?, ?, ?)`,
+      [cycleId, productId, now, now, programSha, programSnapshot]
     );
   }
 
   // Get research programs — may return multiple if A/B test is active in concurrent mode
-  const programs = getResearchPrograms(productId);
+  const programs = provenanceProgram;
   const isABTest = programs.some(p => p.variantId !== null);
 
   emitAutopilotActivity({
@@ -163,7 +174,7 @@ export async function runResearchCycle(productId: string, existingCycleId?: stri
             finishReason,
           } = await completeJSON(prompt, {
             model,
-            systemPrompt: 'You are a compliance gap auditor. Analyze the product against its finish-line artifact checklist and respond with a concise JSON research report only. Keep descriptions ultra-brief.',
+            systemPrompt: 'You are a repo-truth gap auditor. Analyze the product against its Product Program and current repository state, then respond with concise JSON only. Keep descriptions ultra-brief.',
             timeoutMs: 600_000,
             onStatus: (event) => recordAutopilotTransportStatus({
               productId,

@@ -11,6 +11,7 @@ import { batchCheckSimilarity, storeEmbedding, checkSimilarity } from './similar
 import { getResearchPrograms } from './ab-testing';
 import { recoverStaleCycles, startCycleHeartbeat } from './cycle-runtime';
 import { recordAutopilotTransportStatus } from './transport-status';
+import { hashProductProgram } from './product-program';
 import type { Product, Idea, ResearchCycle, SwipeHistoryEntry, IdeationCycle } from '@/lib/types';
 
 function isIdeaLikeRecord(value: unknown): value is Record<string, unknown> {
@@ -91,24 +92,24 @@ function buildIdeationPrompt(
     ? swipeHistory.map(s => `- ${s.action}: [${s.category}] (impact: ${s.impact_score}, feasibility: ${s.feasibility_score}, complexity: ${s.complexity})`).join('\n')
     : 'No swipe history yet.';
 
-  return `You are a Finish-Line Task Generator for Mission Control. Generate tasks that produce specific missing artifacts from the provider-compliance finish-line checklist. Every task must create or verify a concrete repo artifact.
+  return `You are a Product-Gap Task Generator for Mission Control. Generate tasks that close the highest-priority gaps documented in the Product Program and latest research report. Every task must create, reconcile, verify, or specify a concrete repo-backed output.
 
 ## Instructions
 
-1. Read the Product Program carefully — it contains the Current Objective, the finish-line artifact checklist, the Not Now exclusion list, and the card-generation contract.
+1. Read the Product Program carefully — it contains the Current Objective, milestone order, repo-truth rules, the Not Now exclusion list, and the card-generation contract.
 2. Read the research report from the latest compliance gap audit.
 3. Review the swipe history — understand what the user approves and rejects.
-4. Generate 5-15 tasks as a JSON array. Each task MUST target a specific artifact on the finish-line checklist.
+4. Generate 5-15 tasks as a JSON array. Each task MUST target a specific remaining gap or in-flight reconciliation item named by the Product Program or research report.
 
 ## Required Fields (Card-Generation Contract)
 
 Every idea MUST include ALL of these fields:
-   - title: specific and actionable — what is being created or verified
-   - description: detailed enough to build from
+   - title: specific and actionable — what is being created, reconciled, verified, or specified
+   - description: detailed enough to build from, including the concrete gap being closed
    - category: one of content, compliance, operations, improvement
-   - artifact: exact repo-relative file path to be created or modified (REQUIRED)
-   - blocker_cleared: which finish-line artifact # this unblocks, e.g. "Artifact #10" (REQUIRED)
-   - why_now: why this is needed for the DLI provider approval packet (REQUIRED)
+   - artifact: exact repo-relative primary file path to be created or modified (REQUIRED)
+   - blocker_cleared: the milestone bucket or carry-in item this advances, e.g. "Milestone A" or "Carry-in PR #100" (REQUIRED)
+   - why_now: why this closes a Product Program / PRD gap now (REQUIRED)
    - impact_score: 1-10
    - feasibility_score: 1-10
    - complexity: S (<4h), M (4-16h), L (16-40h), XL (40h+)
@@ -116,15 +117,16 @@ Every idea MUST include ALL of these fields:
    - technical_approach: how to build it
    - research_backing: evidence from compliance gap audit
    - risks: array of risk strings
-   - tags: array of tag strings — MUST include exactly one of "tier-2" or "tier-3" (NO other tier tags allowed: tier-1, tier-4, tier-5 are REJECTED)
+   - tags: array of tag strings — MUST include exactly one of "tier-2" or "tier-3" plus exactly one milestone tag: "milestone-a", "milestone-b", or "milestone-c"
 
 ## Rejection Rules (enforced automatically — do not generate ideas that match these)
 - Missing artifact, blocker_cleared, or why_now → REJECTED
 - Tier tag is not tier-2 or tier-3 → REJECTED
+- Missing milestone tag (milestone-a / milestone-b / milestone-c) → REJECTED by product contract even if the DB currently stores tags as plain text
 - References any topic on the Not Now list → REJECTED
 - Contains prohibited terms from DOMAIN_LOCK.md → REJECTED
-- artifact path does not map to the finish-line checklist → REJECTED
-- Describes a software feature rather than a document or validation script → REJECTED
+- artifact path does not map to the Product Program's active milestone work → REJECTED
+- Describes implementation work when the Product Program asks for research/spec/reconciliation only → REJECTED
 
 ## Product Program
 
@@ -186,13 +188,20 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
   // Get A/B variant programs
   const programs = getResearchPrograms(productId);
   const isABTest = programs.some(p => p.variantId !== null);
+  const programSnapshot = programs.length === 1
+    ? programs[0].program
+    : (product.product_program || '');
+  const programSha = hashProductProgram(programSnapshot);
 
   // Phase: init — create ideation_cycles row
   if (!existingIdeationId) {
     run(
-      `INSERT INTO ideation_cycles (id, product_id, research_cycle_id, status, current_phase, started_at, last_heartbeat)
-       VALUES (?, ?, ?, 'running', 'init', ?, ?)`,
-      [ideationId, productId, cycleId || null, now, now]
+      `INSERT INTO ideation_cycles (
+         id, product_id, research_cycle_id, status, current_phase, started_at, last_heartbeat,
+         product_program_sha, product_program_snapshot
+       )
+       VALUES (?, ?, ?, 'running', 'init', ?, ?, ?, ?)`,
+      [ideationId, productId, cycleId || null, now, now, programSha, programSnapshot]
     );
   }
 
@@ -286,7 +295,7 @@ export async function runIdeationCycle(productId: string, cycleId?: string, exis
             finishReason,
           } = await completeJSON<unknown>(prompt, {
             model,
-            systemPrompt: 'You are a finish-line task generator. Respond with a JSON array of task objects that each target a specific artifact on the finish-line checklist.',
+            systemPrompt: 'You are a product-gap task generator. Respond with a JSON array of task objects that each target a specific Product Program gap on the current milestone path.',
             timeoutMs: 600_000,
             onStatus: (event) => recordAutopilotTransportStatus({
               productId,
@@ -390,6 +399,7 @@ export async function storeIdeasFromPhaseData(
 
   // --- Post-generation tier filter: reject ideas with invalid tier tags ---
   const ALLOWED_TIERS = new Set(['tier-2', 'tier-3']);
+  const ALLOWED_MILESTONES = new Set(['milestone-a', 'milestone-b', 'milestone-c']);
   const tierFiltered: unknown[] = [];
   let tierRejected = 0;
 
@@ -397,16 +407,21 @@ export async function storeIdeasFromPhaseData(
     const idea = raw as Record<string, unknown>;
     const tags = Array.isArray(idea.tags) ? idea.tags.map(String) : [];
     const tierTags = tags.filter(t => /^tier-\d+$/.test(t));
+    const milestoneTags = tags.filter(t => ALLOWED_MILESTONES.has(t));
 
     // Reject if no tier tag, or if any tier tag is not tier-2 or tier-3
-    if (tierTags.length === 0 || tierTags.some(t => !ALLOWED_TIERS.has(t))) {
+    if (
+      tierTags.length === 0
+      || tierTags.some(t => !ALLOWED_TIERS.has(t))
+      || milestoneTags.length !== 1
+    ) {
       tierRejected++;
       console.log(`[TierFilter] Rejected: "${String(idea.title || 'Untitled')}" — tier tags: [${tierTags.join(', ')}]`);
       emitAutopilotActivity({
         productId, cycleId: ideationId, cycleType: 'ideation',
         eventType: 'idea_tier_rejected',
         message: `Idea rejected by tier filter: ${String(idea.title || 'Untitled')}`,
-        detail: `Tier tags: [${tierTags.join(', ')}] — only tier-2 and tier-3 allowed`,
+        detail: `Tier tags: [${tierTags.join(', ')}]; milestone tags: [${milestoneTags.join(', ')}] — require exactly one of tier-2/tier-3 and exactly one milestone-a/milestone-b/milestone-c`,
       });
       continue;
     }

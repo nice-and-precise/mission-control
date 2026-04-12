@@ -304,15 +304,17 @@ sqlite3 mission-control.db "
 
 2. Then approve as normal: `POST /api/tasks/{id}/planning/approve`
 
-### PR merge does not close cards
+### PR merge backfill for historical tasks
 
-In supervised mode, merging a PR on GitHub does **not** auto-update the task status. There is no GitHub webhook in the main Mission Control codebase. After merging a PR:
+Mission Control now includes a GitHub PR-merge webhook path, but older tasks can still be left behind with stale merge state if they were created before webhook setup or if the webhook was not active at merge time.
+
+For those historical tasks, backfill once:
 
 ```bash
 sqlite3 mission-control.db "UPDATE tasks SET status = 'done' WHERE id = '<task-id>';"
 ```
 
-This is a known architectural gap. A prototype webhook handler exists in `projects/` but was never integrated into the main `src/app/api/webhooks/` directory (which only contains `agent-completion/`).
+After webhook setup is verified, newly merged PRs should not require this manual step in the normal case.
 
 ### Preventing duplicate dispatches
 
@@ -390,7 +392,7 @@ The correct pattern is:
 5. Use task-scoped root sessions as the runtime source of truth.
 6. Treat queued cards as waiting, not stalled.
 7. Route every stage change through the workflow engine.
-8. After merging a PR, manually mark the task as `done` — there is no webhook for this.
+8. After merging a PR, confirm webhook-driven task closure worked; if not, treat it as stale historical state and backfill once instead of assuming the codebase lacks webhook support.
 9. Recover individual broken cards before considering full control-plane restarts.
 
 ## Ideation-Level Failure Diagnosis

@@ -3,6 +3,10 @@ import { getDb, queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { reconcileBudgetStateForScope } from '@/lib/costs/budget-policy';
 import { createWorkspaceRecord, getWorkspaceByIdOrSlug } from '@/lib/workspaces';
+import {
+  mergeCanonicalProgramPathIntoSettings,
+  normalizeProduct,
+} from './product-program';
 import type { Product, ProductWorkspaceMode } from '@/lib/types';
 
 type CreateProductInput = {
@@ -12,6 +16,7 @@ type CreateProductInput = {
   description?: string;
   repo_url?: string;
   live_url?: string;
+  canonical_program_path?: string | null;
   product_program?: string;
   icon?: string;
   settings?: string;
@@ -25,7 +30,46 @@ const PRODUCT_SELECT = `
   SELECT p.*,
          w.name as workspace_name,
          w.slug as workspace_slug,
-         w.icon as workspace_icon
+         w.icon as workspace_icon,
+         (
+           SELECT completed_at
+           FROM product_program_audits a
+           WHERE a.product_id = p.id
+           ORDER BY a.created_at DESC
+           LIMIT 1
+         ) as last_program_audit_at,
+         (
+           SELECT status
+           FROM product_program_audits a
+           WHERE a.product_id = p.id
+           ORDER BY a.created_at DESC
+           LIMIT 1
+         ) as last_program_audit_status,
+         (
+           SELECT canonical_program_sha
+           FROM product_program_audits a
+           WHERE a.product_id = p.id
+           ORDER BY a.created_at DESC
+           LIMIT 1
+         ) as last_canonical_program_sha,
+         (
+           SELECT product_program_sha
+           FROM research_cycles rc
+           WHERE rc.product_id = p.id
+             AND rc.product_program_sha IS NOT NULL
+             AND rc.product_program_sha != ''
+           ORDER BY rc.started_at DESC
+           LIMIT 1
+         ) as last_research_program_sha,
+         (
+           SELECT product_program_sha
+           FROM ideation_cycles ic
+           WHERE ic.product_id = p.id
+             AND ic.product_program_sha IS NOT NULL
+             AND ic.product_program_sha != ''
+           ORDER BY ic.started_at DESC
+           LIMIT 1
+         ) as last_ideation_program_sha
   FROM products p
   LEFT JOIN workspaces w ON w.id = p.workspace_id
 `;
@@ -40,6 +84,7 @@ export function createProduct(input: CreateProductInput): Product {
   const workspaceMode = input.workspace_mode || (input.workspace_id ? 'existing' : 'dedicated');
   let workspaceId = input.workspace_id?.trim();
   let managesWorkspace = 0;
+  const mergedSettings = mergeCanonicalProgramPathIntoSettings(input.settings || null, input.canonical_program_path);
 
   const createdProduct = db.transaction(() => {
     if (workspaceMode === 'dedicated') {
@@ -68,10 +113,10 @@ export function createProduct(input: CreateProductInput): Product {
     db.prepare(
       `INSERT INTO products (
          id, workspace_id, workspace_mode, manages_workspace, name, description, repo_url, live_url,
-         product_program, icon, settings, build_mode, default_branch, cost_cap_per_task, cost_cap_monthly,
+         canonical_program_path, product_program, icon, settings, build_mode, default_branch, cost_cap_per_task, cost_cap_monthly,
          reserved_cost_usd, budget_status, budget_block_reason, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'clear', NULL, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'clear', NULL, ?, ?)`
     ).run(
       id,
       workspaceId,
@@ -81,9 +126,10 @@ export function createProduct(input: CreateProductInput): Product {
       input.description || null,
       input.repo_url || null,
       input.live_url || null,
+      input.canonical_program_path || null,
       input.product_program || null,
       input.icon || '🚀',
-      input.settings || null,
+      mergedSettings,
       input.build_mode || 'plan_first',
       input.default_branch || 'main',
       input.cost_cap_per_task ?? DEFAULT_PRODUCT_TASK_CAP_USD,
@@ -92,14 +138,14 @@ export function createProduct(input: CreateProductInput): Product {
       now,
     );
 
-    return db.prepare(`${PRODUCT_SELECT} WHERE p.id = ?`).get(id) as Product;
+    return normalizeProduct(db.prepare(`${PRODUCT_SELECT} WHERE p.id = ?`).get(id) as Product);
   })();
 
   return createdProduct;
 }
 
 export function getProduct(id: string): Product | undefined {
-  return queryOne<Product>(`${PRODUCT_SELECT} WHERE p.id = ?`, [id]);
+  return normalizeProduct(queryOne<Product>(`${PRODUCT_SELECT} WHERE p.id = ?`, [id]));
 }
 
 export function listProducts(workspaceId?: string): Product[] {
@@ -108,15 +154,15 @@ export function listProducts(workspaceId?: string): Product[] {
       `${PRODUCT_SELECT}
        WHERE p.workspace_id = ?
          AND p.status != 'archived'
-       ORDER BY p.created_at DESC`,
+      ORDER BY p.created_at DESC`,
       [workspaceId]
-    );
+    ).map((product) => normalizeProduct(product) as Product);
   }
   return queryAll<Product>(
     `${PRODUCT_SELECT}
      WHERE p.status != 'archived'
      ORDER BY p.created_at DESC`
-  );
+  ).map((product) => normalizeProduct(product) as Product);
 }
 
 export function updateProduct(id: string, updates: Partial<{
@@ -124,10 +170,11 @@ export function updateProduct(id: string, updates: Partial<{
   description: string | null;
   repo_url: string | null;
   live_url: string | null;
+  canonical_program_path: string | null;
   product_program: string;
   icon: string;
   status: string;
-  settings: string;
+  settings: string | null;
   build_mode: string;
   default_branch: string;
   cost_cap_per_task: number | null;
@@ -136,8 +183,19 @@ export function updateProduct(id: string, updates: Partial<{
 }>): Product | undefined {
   const fields: string[] = [];
   const values: unknown[] = [];
+  const normalizedUpdates = { ...updates };
 
-  for (const [key, value] of Object.entries(updates)) {
+  if (Object.prototype.hasOwnProperty.call(normalizedUpdates, 'canonical_program_path')) {
+    const currentProduct = getProduct(id);
+    if (currentProduct) {
+      normalizedUpdates.settings = mergeCanonicalProgramPathIntoSettings(
+        normalizedUpdates.settings ?? currentProduct.settings ?? null,
+        normalizedUpdates.canonical_program_path ?? null,
+      );
+    }
+  }
+
+  for (const [key, value] of Object.entries(normalizedUpdates)) {
     if (value !== undefined) {
       fields.push(`${key} = ?`);
       values.push(value);
