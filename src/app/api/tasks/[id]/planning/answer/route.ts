@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { getOpenClawClient } from '@/lib/openclaw/client';
+import { completePlanningTurnHttp } from '@/lib/planning-utils';
+import { resolvePlanningModelForWorkspace } from '@/lib/openclaw/workspace-model-overrides';
 
 // POST /api/tasks/[id]/planning/answer - Submit an answer and get next question
 export async function POST(
@@ -23,6 +24,7 @@ export async function POST(
       id: string;
       title: string;
       description: string;
+      workspace_id: string;
       planning_session_key?: string;
       planning_messages?: string;
       repo_url?: string | null;
@@ -68,82 +70,41 @@ Rules:
   - Question shape: { "question": "...", "options": [...] }
   - Completion shape: { "status": "complete", "spec": {...}, "agents": [...], "execution_plan": {...} }
 
-Respond with ONLY valid JSON. Do not add commentary, explanations, status updates, markdown fences, or any prose before or after the JSON.
+Respond with ONLY valid JSON. Do not add commentary, explanations, status updates, markdown fences, or any prose before or after the JSON.`;
 
-For another question, respond with JSON:
-{
-  "question": "Your next question?",
-  "options": [
-    {"id": "A", "label": "Option A"},
-    {"id": "B", "label": "Option B"},
-    {"id": "other", "label": "Other"}
-  ]
-}
-
-If planning is complete, respond with JSON:
-{
-  "status": "complete",
-  "spec": {
-    "title": "Task title",
-    "summary": "Summary of what needs to be done",
-    "deliverables": ["List of deliverables"],
-    "success_criteria": ["How we know it's done"],
-    "constraints": {}
-  },
-  "agents": [
-    {
-      "name": "Agent Name",
-      "role": "Agent role",
-      "avatar_emoji": "🎯",
-      "soul_md": "Agent personality...",
-      "instructions": "Specific instructions..."
-    }
-  ],
-  "execution_plan": {
-    "approach": "How to execute",
-    "steps": ["Step 1", "Step 2"]
-  }
-}`;
-
-    // Parse existing messages
+    // Parse existing messages and add user answer
     const messages = task.planning_messages ? JSON.parse(task.planning_messages) : [];
     messages.push({ role: 'user', content: answerText, timestamp: Date.now() });
 
-    // Connect to OpenClaw and send the answer
-    const client = getOpenClawClient();
-    if (!client.isConnected()) {
-      console.log('[Planning Answer] Connecting to OpenClaw...');
-      await client.connect();
-    }
+    // Build full conversation for HTTP completion (system prompt handled by completePlanningTurnHttp)
+    const conversationForHttp: Array<{ role: string; content: string }> = messages
+      .map((msg: { role: string; content: string }) => ({ role: msg.role, content: msg.content }));
+    // Replace the last user message with the full answer prompt (includes rules)
+    conversationForHttp[conversationForHttp.length - 1] = { role: 'user', content: answerPrompt };
 
-    console.log('[Planning Answer] Sending answer to OpenClaw, session:', task.planning_session_key);
-    console.log('[Planning Answer] Answer text:', answerText);
+    // Resolve the planning model for this workspace
+    const planningModel = await resolvePlanningModelForWorkspace(task.workspace_id);
+
+    console.log('[Planning Answer] Starting HTTP completion, model:', planningModel);
+    const completionStartedAt = Date.now();
 
     try {
-      const sendStartedAt = Date.now();
-      const sendResult = await client.call('chat.send', {
-        sessionKey: task.planning_session_key,
-        message: answerPrompt,
-        idempotencyKey: `planning-answer-${taskId}-${Date.now()}`,
-      });
+      const result = await completePlanningTurnHttp(conversationForHttp, planningModel);
       console.log(
-        `[Planning Answer] Send successful for ${taskId} in ${Date.now() - sendStartedAt}ms, session=${task.planning_session_key}`,
-        sendResult,
+        `[Planning Answer] HTTP completion for ${taskId} finished in ${Date.now() - completionStartedAt}ms`,
       );
-    } catch (sendError) {
-      console.error('[Planning Answer] Failed to send to OpenClaw:', sendError);
-      return NextResponse.json({ error: 'Failed to send answer to orchestrator: ' + (sendError as Error).message }, { status: 500 });
+
+      // Store the assistant response inline
+      messages.push({ role: 'assistant', content: result.content, timestamp: Date.now() });
+    } catch (completionError) {
+      console.error(`[Planning Answer] HTTP completion failed for ${taskId} after ${Date.now() - completionStartedAt}ms:`, completionError);
+      // Store just the user message; poll endpoint will handle recovery.
     }
 
     // Update messages in DB
     getDb().prepare(`
-      UPDATE tasks SET planning_messages = ? WHERE id = ?
+      UPDATE tasks SET planning_messages = ?, updated_at = datetime('now') WHERE id = ?
     `).run(JSON.stringify(messages), taskId);
-
-    // Poll for response via OpenClaw API - removed aggressive polling
-    // Return immediately and let frontend poll for updates
-    // This eliminates 30 OpenClaw API calls per answer submission
-
 
     return NextResponse.json({
       success: true,

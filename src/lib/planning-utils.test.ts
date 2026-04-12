@@ -198,7 +198,7 @@ test('shouldAutoRepairPlanningTranscript allows one automatic repair after a wro
   assert.equal(shouldAutoRepairPlanningTranscript(messages), true);
 });
 
-test('shouldAutoRepairPlanningTranscript does not loop once an auto-repair prompt was already sent', () => {
+test('shouldAutoRepairPlanningTranscript allows retry after first auto-repair fails', () => {
   const messages: PlanningMessage[] = [
     { role: 'user', content: 'Start', timestamp: 1 },
     {
@@ -231,6 +231,22 @@ Return only valid planning JSON.`,
 \`\`\``,
       timestamp: 4,
     },
+  ];
+
+  // Now allows up to 3 repair attempts; 1 attempt so far → should allow another
+  assert.equal(shouldAutoRepairPlanningTranscript(messages), true);
+});
+
+test('shouldAutoRepairPlanningTranscript blocks after 3 failed auto-repair attempts', () => {
+  const messages: PlanningMessage[] = [
+    { role: 'user', content: 'Start', timestamp: 1 },
+    { role: 'assistant', content: '{"scan": "wrong"}', timestamp: 2 },
+    { role: 'user', content: '[Mission Control planning recovery]\nAttempt 1', timestamp: 3 },
+    { role: 'assistant', content: '{"scan": "still wrong"}', timestamp: 4 },
+    { role: 'user', content: '[Mission Control planning recovery]\nAttempt 2', timestamp: 5 },
+    { role: 'assistant', content: '{"scan": "still wrong"}', timestamp: 6 },
+    { role: 'user', content: '[Mission Control planning recovery]\nAttempt 3', timestamp: 7 },
+    { role: 'assistant', content: '{"scan": "still wrong"}', timestamp: 8 },
   ];
 
   assert.equal(shouldAutoRepairPlanningTranscript(messages), false);
@@ -344,6 +360,45 @@ test('parsePlanningSpecValue handles planner response using task/checks field na
   assert.equal(parsed?.summary, 'Reconciliation notes appended to corrected files');
   assert.deepEqual(parsed?.success_criteria, ['Reconciliation notes appended to corrected files']);
   assert.equal(parsed?.constraints.repository, 'https://github.com/nice-and-precise/squti.git');
+});
+
+test('parsePlanningSpecValue handles deliverables as array of objects without producing [object Object]', () => {
+  const parsed = parsePlanningSpecValue({
+    title: 'Create certification card spec',
+    summary: 'Bridge existing card format with full certification lifecycle',
+    deliverables: [
+      { location: 'docs/specs/CERTIFICATION_CARD_SYSTEM_SPEC.md', action: 'Create comprehensive specification' },
+      { location: 'docs/specs/CARD_FORMAT.md', action: 'Update cross-references' },
+    ],
+    success_criteria: ['Spec covers issuance triggers, storage, and verification'],
+  });
+
+  assert.equal(parsed?.title, 'Create certification card spec');
+  assert.equal(parsed?.deliverables.length, 2);
+  // Must NOT contain [object Object]
+  for (const d of parsed?.deliverables || []) {
+    assert.ok(!d.includes('[object Object]'), `Deliverable should not be [object Object]: ${d}`);
+  }
+  // Should extract a readable representation
+  assert.ok(parsed?.deliverables[0].length > 5, 'Deliverable should have meaningful text');
+});
+
+test('parsePlanningSpecValue handles mixed string and object deliverables', () => {
+  const parsed = parsePlanningSpecValue({
+    title: 'Mixed deliverables test',
+    summary: 'Test',
+    deliverables: [
+      'Plain string deliverable',
+      { name: 'Object deliverable' },
+      { description: 'Another object' },
+    ],
+    success_criteria: ['Done'],
+  });
+
+  assert.equal(parsed?.deliverables.length, 3);
+  assert.equal(parsed?.deliverables[0], 'Plain string deliverable');
+  assert.ok(!parsed?.deliverables[1].includes('[object Object]'));
+  assert.ok(!parsed?.deliverables[2].includes('[object Object]'));
 });
 
 test('planning GET recovers a stored completion payload and persists final state', async () => {

@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { Agent } from 'undici';
 import { getDb, queryOne, run } from './db';
 import { broadcast } from './events';
 import { cleanupTaskScopedAgents, parsePlanningSpecValue } from './planning-agents';
@@ -11,6 +12,7 @@ import {
   hasOversizedHistoryOmission,
   loadGatewaySessionHistory,
 } from './openclaw/session-history';
+import { buildGatewayRequestHeaders, resolveGatewayModelTarget } from './autopilot/llm';
 
 // Maximum input length for extractJSON to prevent ReDoS attacks
 const MAX_EXTRACT_JSON_LENGTH = 1_000_000; // 1MB
@@ -58,6 +60,76 @@ export interface PlanningTaskRow {
 const INVALID_PLANNING_PAYLOAD_MESSAGE =
   'The planner replied without a valid question or completion payload after the last planning prompt. Retry or restart planning to recover.';
 const PLANNING_AUTO_REPAIR_PREFIX = '[Mission Control planning recovery]';
+
+const PLANNING_SYSTEM_PROMPT = `You are a planning-only agent. Your sole task is to plan work by asking clarifying questions and then producing a structured completion spec.
+
+STRICT RULES:
+- Respond with ONLY valid JSON. No prose, no markdown, no explanations, no commentary before or after the JSON.
+- Do not execute the task itself. Do not scan files, produce findings, or return work product.
+- Only these top-level JSON response shapes are valid:
+  Question: { "question": "...", "options": [{"id": "A", "label": "..."}, ...] }
+  Completion: { "status": "complete", "spec": { "title": "...", "summary": "...", "deliverables": [...], "success_criteria": [...], "constraints": {} }, "agents": [...], "execution_plan": { "approach": "...", "steps": [...] } }
+- If the task is straightforward and you do not need clarification, return a completion payload immediately.`;
+
+const PLANNING_HTTP_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL?.replace('ws://', 'http://').replace('wss://', 'https://') || 'http://127.0.0.1:18789';
+const PLANNING_HTTP_TIMEOUT_MS = 120_000; // 2 minutes per planning turn
+
+/**
+ * Send a planning turn via the stateless HTTP /v1/chat/completions endpoint.
+ * This bypasses OpenClaw agent sessions entirely, avoiding SOUL.md injection
+ * and session overhead that causes slow/unreliable planning.
+ */
+export async function completePlanningTurnHttp(
+  conversationMessages: Array<{ role: string; content: string }>,
+  model: string,
+  options?: { timeoutMs?: number },
+): Promise<{ content: string; model: string }> {
+  const timeoutMs = options?.timeoutMs ?? PLANNING_HTTP_TIMEOUT_MS;
+
+  const messages: Array<{ role: string; content: string }> = [
+    { role: 'system', content: PLANNING_SYSTEM_PROMPT },
+    ...conversationMessages,
+  ];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${PLANNING_HTTP_GATEWAY_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: buildGatewayRequestHeaders(model),
+      body: JSON.stringify({
+        model: resolveGatewayModelTarget(model),
+        messages,
+        temperature: 0.4,
+        max_tokens: 4096,
+      }),
+      signal: controller.signal,
+      dispatcher: new Agent({
+        connectTimeout: 30_000,
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+      }),
+    } as RequestInit & { dispatcher?: unknown });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Planning HTTP completion failed (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json() as {
+      model?: string;
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string | null }>;
+    };
+
+    const content = data.choices?.[0]?.message?.content || '';
+    const resolvedModel = data.model || model;
+
+    return { content, model: resolvedModel };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 function buildPlanningAutoRepairMessage(messages: PlanningMessage[]): string {
   const normalizedMessages = normalizePlanningMessages(messages);
   const originalContext = normalizedMessages
@@ -384,6 +456,8 @@ export function resolvePlanningTranscript(messages: PlanningMessage[]): Planning
   };
 }
 
+const MAX_AUTO_REPAIR_ATTEMPTS = 3;
+
 export function shouldAutoRepairPlanningTranscript(messages: PlanningMessage[]): boolean {
   const normalizedMessages = normalizePlanningMessages(messages);
   if (normalizedMessages.length === 0) return false;
@@ -398,19 +472,21 @@ export function shouldAutoRepairPlanningTranscript(messages: PlanningMessage[]):
     return false;
   }
 
-  for (let index = normalizedMessages.length - 2; index >= 0; index -= 1) {
-    const candidate = normalizedMessages[index];
-    if (candidate.role !== 'user') continue;
-    return !isPlanningAutoRepairPrompt(candidate.content);
+  // Count existing auto-repair attempts; allow up to MAX_AUTO_REPAIR_ATTEMPTS
+  let repairAttempts = 0;
+  for (const msg of normalizedMessages) {
+    if (msg.role === 'user' && isPlanningAutoRepairPrompt(msg.content)) {
+      repairAttempts++;
+    }
   }
-
-  return true;
+  return repairAttempts < MAX_AUTO_REPAIR_ATTEMPTS;
 }
 
 export async function attemptAutomaticPlanningRecovery(
   taskId: string,
   sessionKey: string,
   messages: PlanningMessage[],
+  options?: { model?: string },
 ): Promise<PlanningMessage[] | null> {
   if (!shouldAutoRepairPlanningTranscript(messages)) {
     return null;
@@ -428,22 +504,43 @@ export async function attemptAutomaticPlanningRecovery(
     content: recoveryContent,
     timestamp: Date.now(),
   };
-  const updatedMessages = [recoveryMessage];
-  const idempotencyKey = `planning-auto-repair-${taskId}-${createHash('sha256')
-    .update(lastAssistantMessage.content)
-    .digest('hex')
-    .slice(0, 16)}`;
 
-  const client = getOpenClawClient();
-  if (!client.isConnected()) {
-    await client.connect();
+  // Build conversation for HTTP completion: original user messages + recovery prompt
+  const conversationForHttp: Array<{ role: string; content: string }> = normalizedMessages
+    .filter((msg) => msg.role === 'user' && !isPlanningAutoRepairPrompt(msg.content))
+    .map((msg) => ({ role: 'user', content: msg.content }));
+  conversationForHttp.push({ role: 'user', content: recoveryContent });
+
+  const model = options?.model || 'qwen/qwen3.6-plus';
+  const updatedMessages = [...normalizedMessages, recoveryMessage];
+
+  try {
+    const result = await completePlanningTurnHttp(conversationForHttp, model);
+    const assistantMessage = {
+      role: 'assistant' as const,
+      content: result.content,
+      timestamp: Date.now(),
+    };
+    updatedMessages.push(assistantMessage);
+  } catch (err) {
+    console.error('[Planning Auto-Repair] HTTP completion failed, falling back to OpenClaw session:', err);
+    // Fall back to session-based recovery
+    const idempotencyKey = `planning-auto-repair-${taskId}-${createHash('sha256')
+      .update(lastAssistantMessage.content)
+      .digest('hex')
+      .slice(0, 16)}-${Date.now()}`;
+
+    const client = getOpenClawClient();
+    if (!client.isConnected()) {
+      await client.connect();
+    }
+
+    await client.call('chat.send', {
+      sessionKey,
+      message: buildChatSendMessage(recoveryContent, 'planning_start'),
+      idempotencyKey,
+    });
   }
-
-  await client.call('chat.send', {
-    sessionKey,
-    message: buildChatSendMessage(recoveryContent, 'planning_start'),
-    idempotencyKey,
-  });
 
   run(
     `UPDATE tasks

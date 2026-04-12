@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, queryAll, queryOne, run } from '@/lib/db';
-import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
 import {
   attemptAutomaticPlanningRecovery,
+  completePlanningTurnHttp,
   finalizePlanningCompletion,
   reconcilePlanningTranscript,
 } from '@/lib/planning-utils';
 import { parsePlanningSpecValue } from '@/lib/planning-agents';
 import { cleanupTaskScopedAgents } from '@/lib/planning-agents';
 import { resolvePlanningModelForWorkspace } from '@/lib/openclaw/workspace-model-overrides';
-import { buildChatSendMessage } from '@/lib/openclaw/session-commands';
-// File system imports removed - using OpenClaw API instead
 
 export const dynamic = 'force-dynamic';
 
@@ -247,9 +245,9 @@ Respond with ONLY valid JSON in this format:
   ]
 }`;
 
-    // Persist session state before contacting OpenClaw so the task can be
-    // recovered from the UI even if the gateway call is slow or times out.
-    const messages = [{ role: 'user', content: planningPrompt, timestamp: Date.now() }];
+    // Persist session state before starting HTTP completion so the task can be
+    // recovered from the UI even if the completion is slow or times out.
+    const messages: Array<{ role: string; content: string; timestamp: number }> = [{ role: 'user', content: planningPrompt, timestamp: Date.now() }];
 
     getDb().prepare(`
       UPDATE tasks
@@ -257,38 +255,27 @@ Respond with ONLY valid JSON in this format:
       WHERE id = ?
     `).run(sessionKey, JSON.stringify(messages), taskId);
 
-    // Connect to OpenClaw and send the planning request
-    const client = getOpenClawClient();
-    if (!client.isConnected()) {
-      await client.connect();
-    }
-
-    let modelBoundBeforeFirstMessage = false;
+    // Use stateless HTTP completion instead of OpenClaw agent sessions.
+    // This bypasses SOUL.md injection that conflicts with JSON-only planning.
+    const completionStartedAt = Date.now();
+    console.log(`[Planning] Starting HTTP completion for ${taskId}, model=${planningModel}`);
     try {
-      await client.patchSessionModel(sessionKey, planningModel);
-      modelBoundBeforeFirstMessage = true;
-    } catch (bindingError) {
-      console.warn('[Planning] Pre-bind model patch failed, retrying after first send:', bindingError);
+      const result = await completePlanningTurnHttp(
+        [{ role: 'user', content: planningPrompt }],
+        planningModel,
+      );
+      console.log(`[Planning] HTTP completion for ${taskId} finished in ${Date.now() - completionStartedAt}ms`);
+
+      // Store the assistant response inline
+      messages.push({ role: 'assistant', content: result.content, timestamp: Date.now() });
+      getDb().prepare(`
+        UPDATE tasks SET planning_messages = ?, updated_at = datetime('now') WHERE id = ?
+      `).run(JSON.stringify(messages), taskId);
+    } catch (completionError) {
+      console.error(`[Planning] HTTP completion failed for ${taskId} after ${Date.now() - completionStartedAt}ms:`, completionError);
+      // Task stays in planning state; poll endpoint will attempt recovery.
     }
 
-    // Planning restarts reuse the same deterministic task-scoped session key.
-    // Start each run fresh so the new planning loop does not inherit stale
-    // OpenClaw transcript state from the prior attempt.
-    const planningRunMessage = buildChatSendMessage(planningPrompt, 'planning_start');
-
-    // Send planning request to the planning session
-    await client.call('chat.send', {
-      sessionKey: sessionKey,
-      message: planningRunMessage,
-      idempotencyKey: `planning-start-${taskId}-${Date.now()}`,
-    });
-
-    if (!modelBoundBeforeFirstMessage) {
-      await client.patchSessionModel(sessionKey, planningModel);
-    }
-
-    // Return immediately - frontend will poll for updates
-    // This eliminates the aggressive polling loop that was making 30+ OpenClaw API calls
     return NextResponse.json({
       success: true,
       sessionKey,
