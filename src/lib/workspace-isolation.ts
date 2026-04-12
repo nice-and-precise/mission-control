@@ -842,6 +842,10 @@ async function mergeWorktree(
       [status, prUrl || null, now, task.id]
     );
 
+    if (status === 'merged' || status === 'pr_created') {
+      releasePort(task.id);
+    }
+
     return { success: true, status: status as MergeResult['status'], prUrl, mergeCommit };
   } catch (err) {
     const errorMsg = (err as Error).message;
@@ -901,6 +905,10 @@ async function mergeSandbox(
       [mergeId, task.id, workspacePath, status, conflictFiles.length > 0 ? JSON.stringify(conflictFiles) : null, now, now]
     );
     run(`UPDATE tasks SET merge_status = ?, updated_at = ? WHERE id = ?`, [status, now, task.id]);
+
+    if (status === 'merged') {
+      releasePort(task.id);
+    }
 
     return { success: status === 'merged', status: status as MergeResult['status'], conflictFiles: conflictFiles.length > 0 ? conflictFiles : undefined };
   } catch (err) {
@@ -1038,6 +1046,7 @@ export async function triggerWorkspaceMerge(taskId: string): Promise<MergeResult
 
   const existingSuccessfulMerge = getRecordedSuccessfulMerge(task);
   if (existingSuccessfulMerge) {
+    releasePort(task.id);
     return existingSuccessfulMerge;
   }
 
@@ -1051,6 +1060,9 @@ export async function triggerWorkspaceMerge(taskId: string): Promise<MergeResult
 
   try {
     const result = await mergeWorkspace(task, { createPR: true });
+    if (result.success) {
+      releasePort(task.id);
+    }
     return result;
   } finally {
     releaseMergeLock(lockKey);

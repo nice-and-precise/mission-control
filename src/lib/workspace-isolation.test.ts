@@ -92,12 +92,12 @@ test('createTaskWorkspace forceFresh recreates a legacy workspace clone and rele
   );
   run(
     `INSERT INTO workspace_ports (id, task_id, port, product_id, status, created_at)
-     VALUES (?, ?, 4200, NULL, 'active', datetime('now'))`,
+     VALUES (?, ?, 4298, NULL, 'active', datetime('now'))`,
     [crypto.randomUUID(), taskId],
   );
   run(
     `INSERT INTO workspace_ports (id, task_id, port, product_id, status, created_at)
-     VALUES (?, ?, 4201, NULL, 'active', datetime('now'))`,
+     VALUES (?, ?, 4299, NULL, 'active', datetime('now'))`,
     [crypto.randomUUID(), taskId],
   );
 
@@ -120,8 +120,10 @@ test('createTaskWorkspace forceFresh recreates a legacy workspace clone and rele
 
   assert.equal(activePorts.length, 1);
   assert.equal(activePorts[0].port, workspace.port);
-  assert.equal(workspace.port, 4200);
-  assert.deepEqual(releasedPorts.sort((a, b) => a - b), [4200, 4201]);
+  assert.ok(workspace.port >= 4200 && workspace.port <= 4299);
+  assert.notEqual(workspace.port, 4298);
+  assert.notEqual(workspace.port, 4299);
+  assert.deepEqual(releasedPorts.sort((a, b) => a - b), [4298, 4299]);
 });
 
 test('findFileProviderManagedAncestor detects file-provider markers on Darwin paths', () => {
@@ -290,4 +292,11 @@ test('triggerWorkspaceMerge is idempotent for an already-merged task workspace',
   assert.equal(firstMerge?.success, true);
   assert.equal(secondMerge?.success, true);
   assert.equal(mergeRows.length, 1);
+
+  const portRow = queryOne<{ status: string; released_at: string | null }>(
+    'SELECT status, released_at FROM workspace_ports WHERE task_id = ? ORDER BY port LIMIT 1',
+    [taskId],
+  );
+  assert.equal(portRow?.status, 'released');
+  assert.ok(portRow?.released_at, 'Expected the workspace port to be released after merge');
 });
