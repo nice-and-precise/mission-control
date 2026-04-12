@@ -135,6 +135,7 @@ export default function ProductDashboardPage() {
       name: product.name,
       description: product.description || '',
       repo_url: product.repo_url || '',
+      canonical_program_path: product.canonical_program_path || '',
       live_url: product.live_url || '',
       default_branch: product.default_branch || 'main',
       build_mode: product.build_mode || 'plan_first',
@@ -154,6 +155,7 @@ export default function ProductDashboardPage() {
         name: settingsForm.name,
         description: settingsForm.description || undefined,
         repo_url: settingsForm.repo_url || null,
+        canonical_program_path: settingsForm.canonical_program_path || null,
         live_url: settingsForm.live_url || null,
         default_branch: settingsForm.default_branch || 'main',
         build_mode: settingsForm.build_mode,
@@ -415,6 +417,20 @@ export default function ProductDashboardPage() {
                     </a>
                   )}
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-mc-text-secondary uppercase tracking-wider mb-1">Canonical Program Path</label>
+                <input
+                  type="text"
+                  value={settingsForm.canonical_program_path || ''}
+                  onChange={e => setSettingsForm(f => ({ ...f, canonical_program_path: e.target.value }))}
+                  className="w-full bg-mc-bg border border-mc-border rounded-lg px-3 py-2 text-sm text-mc-text focus:outline-none focus:border-mc-accent"
+                  placeholder="/Users/jordan/.openclaw/workspace/squti/docs/PRODUCT_PROGRAM.md"
+                />
+                <p className="mt-1 text-xs text-mc-text-secondary">
+                  Used by the Program tab to audit and sync the repo-authored Product Program into Mission Control before research runs.
+                </p>
               </div>
 
               <div>

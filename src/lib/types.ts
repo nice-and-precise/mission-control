@@ -588,6 +588,12 @@ export interface Product {
   workspace_name?: string;
   workspace_slug?: string;
   workspace_icon?: string;
+  current_product_program_sha?: string;
+  last_program_audit_at?: string;
+  last_program_audit_status?: string;
+  last_canonical_program_sha?: string;
+  last_research_program_sha?: string;
+  last_ideation_program_sha?: string;
 }
 
 // Health Score types
@@ -710,6 +716,8 @@ export interface ResearchCycle {
   started_at: string;
   completed_at?: string;
   error_message?: string;
+  product_program_sha?: string;
+  product_program_snapshot?: string;
 }
 
 export interface IdeationCycle {
@@ -726,6 +734,8 @@ export interface IdeationCycle {
   error_message?: string;
   started_at: string;
   completed_at?: string;
+  product_program_sha?: string;
+  product_program_snapshot?: string;
 }
 
 export interface AutopilotActivityEntry {
