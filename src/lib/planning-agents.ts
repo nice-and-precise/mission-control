@@ -2,7 +2,20 @@ import { getDb } from '@/lib/db';
 import type { GeneratedPlanningSpec, SuggestedPlanningAgent } from '@/lib/types';
 
 function toStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (typeof item === 'number' || typeof item === 'boolean') return String(item);
+      if (!item || typeof item !== 'object') return '';
+      // Extract meaningful text from objects instead of producing [object Object]
+      const c = item as Record<string, unknown>;
+      const text = String(c.label || c.name || c.title || c.description || c.action || c.value || '').trim();
+      if (text) return text;
+      // Last resort: compact JSON so the value is at least readable
+      try { return JSON.stringify(item); } catch { return ''; }
+    })
+    .filter(Boolean);
 }
 
 function toExecutionPlanSteps(value: unknown): string[] {
